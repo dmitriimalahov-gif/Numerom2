@@ -1,0 +1,845 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Button } from './ui/button';
+import { Alert, AlertDescription } from './ui/alert';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Loader, Grid3X3, Info } from 'lucide-react';
+import { useAuth } from './AuthContext';
+import axios from 'axios';
+import { PLANET_COLORS, NUMBER_COLORS, withAlpha } from './constants/colors';
+
+const PythagoreanSquare = ({ fullScreen = false }) => {
+  const { user } = useAuth();
+  const [results, setResults] = useState(null);
+  const [planetaryEnergies, setPlanetaryEnergies] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // Detail modal state
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailTitle, setDetailTitle] = useState('');
+  const [detailText, setDetailText] = useState('');
+
+  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+
+  useEffect(() => { if (user?.birth_date) calculateSquare(); }, [user?.birth_date]);
+
+  const calculateSquare = async () => {
+    setLoading(true); setError('');
+    try { 
+      // Загружаем данные квадрата Пифагора
+      const squareResponse = await axios.post(`${backendUrl}/api/numerology/pythagorean-square`); 
+      setResults(squareResponse.data);
+      
+      // Загружаем персональные числа (для данных planetary_strength)
+      const personalResponse = await axios.post(`${backendUrl}/api/numerology/personal-numbers`);
+      if (personalResponse.data) {
+        setResults(prev => ({
+          ...prev,
+          ...personalResponse.data
+        }));
+      }
+      
+      // Загружаем планетарные энергии
+      const energiesResponse = await axios.get(`${backendUrl}/api/charts/planetary-energy/7`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (energiesResponse.data?.chart_data?.[0]) {
+        setPlanetaryEnergies(energiesResponse.data.chart_data[0]);
+      }
+    }
+    catch (error) { setError(error.response?.data?.detail || 'Ошибка при расчете'); }
+    finally { setLoading(false); }
+  };
+
+  // Helpers: reduce to single digit 1..9
+  const reduce1 = (value) => {
+    let n = Math.abs(parseInt(String(value).replace(/\D/g, '') || '0', 10));
+    while (n > 9) {
+      n = String(n).split('').reduce((s, d) => s + Number(d), 0);
+    }
+    if (n === 0) n = 1;
+    return n;
+  };
+
+  const parsed = useMemo(() => {
+    try {
+      if (!user?.birth_date) return null;
+      const [dd, mm, yyyy] = user.birth_date.split('.').map((v)=>parseInt(v,10));
+      return { dd, mm, yyyy };
+    } catch { return null; }
+  }, [user?.birth_date]);
+
+  const soulMindRulingFate = useMemo(() => {
+    if (!parsed) return null;
+    const soul = reduce1(parsed.dd);                  // Число Души (день)
+    const mind = reduce1(parsed.mm);                  // Число Ума (месяц)
+    const ruling = reduce1(parsed.dd + parsed.mm);    // Правящее/Управляющее (день+месяц)
+    const fate = reduce1(
+      [...String(parsed.dd), ...String(parsed.mm), ...String(parsed.yyyy)].reduce((s, d) => s + Number(d), 0)
+    );                                              // Число Судьбы (сумма всех цифр даты)
+    return { soul, mind, ruling, fate };
+  }, [parsed]);
+
+  // Mapping между позициями квадрата и планетами в энергетических данных
+  const planetEnergyMapping = {
+    'Surya': 'surya',      // позиция 1
+    'Chandra': 'chandra',  // позиция 2  
+    'Guru': 'guru',        // позиция 3
+    'Rahu': 'rahu',        // позиция 4
+    'Buddhi': 'budha',     // позиция 5
+    'Shukra': 'shukra',    // позиция 6
+    'Ketu': 'ketu',        // позиция 7
+    'Shani': 'shani',      // позиция 8
+    'Mangal': 'mangal'     // позиция 9
+  };
+
+  // Получить энергию планеты из API данных
+  const getPlanetEnergy = (planetKey) => {
+    const energyKey = planetEnergyMapping[planetKey];
+    return planetaryEnergies ? planetaryEnergies[energyKey] : null;
+  };
+
+  // Цвет фона ячейки в зависимости от уровня энергии
+  const getEnergyColor = (energy) => {
+    if (energy === null || energy === undefined) return '#f8fafc';
+    if (energy >= 80) return '#dcfce7'; // светло-зеленый - высокая энергия
+    if (energy >= 60) return '#fef3c7'; // светло-желтый - средняя-высокая
+    if (energy >= 40) return '#fed7aa'; // светло-оранжевый - средняя
+    if (energy >= 20) return '#fecaca'; // светло-красный - низкая
+    return '#f1f5f9'; // серый - очень низкая
+  };
+
+  // Цвет текста энергии
+  const getEnergyTextColor = (energy) => {
+    if (energy === null || energy === undefined) return '#64748b';
+    if (energy >= 80) return '#15803d';
+    if (energy >= 60) return '#ca8a04';
+    if (energy >= 40) return '#ea580c';
+    if (energy >= 20) return '#dc2626';
+    return '#64748b';
+  };
+
+  const planetNames = { Surya: 'Солнце', Chandra: 'Луна', Guru: 'Юпитер', Rahu: 'Раху', Buddhi: 'Меркурий', Shukra: 'Венера', Ketu: 'Кету', Shani: 'Сатурн', Mangal: 'Марс' };
+  const numberAt = (r, c) => [[1,4,7],[2,5,8],[3,6,9]][r][c];
+  const planetAt = (r, c) => [['Surya','Rahu','Ketu'],['Chandra','Buddhi','Shani'],['Guru','Shukra','Mangal']][r][c];
+  const numberTextColor = (n) => NUMBER_COLORS[n] || '#0f172a';
+  const numberTextShadow = (n) => 'none'; // Убираем тень для всех чисел, так как Chandra теперь серая
+  const labelTextShadow = (planetKey) => 'none'; // Убираем тень, так как Chandra теперь серая
+  const numberBg = (n) => withAlpha(NUMBER_COLORS[n] || '#cbd5e1', 0.16); // Убираем специальный фон для Chandra
+  const digitsStyle = (cell, n) => { const len = (cell || '').length; const size = len >= 8 ? 14 : len >= 6 ? 16 : len >= 4 ? 18 : 22; const lh = len >= 8 ? 1.05 : 1.1; return { fontSize: `${size}px`, lineHeight: lh, letterSpacing: '0.5px', textShadow: numberTextShadow(n) }; };
+
+  // Custom labels for 1..9 as requested + symbols
+  const customLabel = {1:'Surya',2:'Chandra',3:'Guru',4:'Rahu',5:'Buddhi',6:'Shukra',7:'Ketu',8:'Shani',9:'Mangal'};
+  const planetSymbol = {1:'☉',2:'☽',3:'♃',4:'☊',5:'☿',6:'♀',7:'☋',8:'♄',9:'♂'};
+
+  // Labels and expanded descriptions from methodology
+  const H_LABELS = ['Верхняя горизонталь', 'Средняя горизонталь', 'Нижняя горизонталь'];
+  const H_DESC = [
+    'Верхняя линия (1-2-3): Цели, устремления, интеллект и творческая реализация.\n\nЭта линия отражает уровень вашего сознания и умение выстраивать планы. Когда здесь много чисел — вы мыслитель, стратег, человек идей. При недостатке цифр может возникать сложность с постановкой целей и их воплощением.\n\nСильная линия дает: ясность мышления, творческие способности, лидерские качества.\nСлабая линия требует работы над: планированием, развитием интуиции, повышением самооценки.',
+    
+    'Средняя линия (4-5-6): Энергия повседневной жизни, коммуникации и практическая деятельность.\n\nЭто ваш уровень социального взаимодействия и способность справляться с бытовыми задачами. Баланс между внутренним миром и внешними обстоятельствами. Отвечает за организационные способности и умение находить общий язык с людьми.\n\nСильная линия дает: коммуникабельность, практичность, стабильность в делах.\nСлабая линия требует работы над: организованностью, социальными навыками, планированием быта.',
+    
+    'Нижняя линия (7-8-9): Материальная основа, стабильность и жизненная опора.\n\nЭто ваши корни, связь с землей, семьей, традициями. Отражает способность создавать материальную базу, обеспечивать стабильность и защищенность. Показывает отношение к труду, деньгам, семейным ценностям.\n\nСильная линия дает: материальную стабильность, практичность, надежность.\nСлабая линия требует работы над: финансовой грамотностью, семейными отношениями, укреплением здоровья.'
+  ];
+  
+  const V_LABELS = ['Левая вертикаль (1-4-7)', 'Средняя вертикаль (2-5-8)', 'Правая вертикаль (3-6-9)'];
+  const V_DESC = [
+    'Вертикаль Воли (1-4-7): Surya-Rahu-Ketu. Самооценка, независимость и духовное развитие.\n\nЭто ваша внутренняя сила, способность отстаивать свою позицию и идти своим путем. Линия лидерства и индивидуальности. Отвечает за силу характера, умение принимать решения и нести ответственность.\n\nСильная линия дает: лидерские качества, независимость, оригинальность мышления.\nСлабая линия может проявляться как: неуверенность в себе, зависимость от чужого мнения, сложности с самоопределением.\n\nДля укрепления: развивайте самостоятельность, учитесь говорить "нет", работайте над повышением самооценки.',
+    
+    'Вертикаль Сердца (2-5-8): Чандра-Буддха-Шани. Эмоции, логика и дисциплина.\n\nЭто ваша способность к анализу, обучению и систематической работе. Линия интеллекта и коммуникации. Отвечает за логическое мышление, способность к обучению, терпение и последовательность в достижении целей.\n\nСильная линия дает: аналитические способности, хорошую память, систематический подход.\nСлабая линия может проявляться как: рассеянность, непоследовательность, трудности в обучении.\n\nДля укрепления: развивайте навыки планирования, изучайте новое, практикуйте медитацию или другие техники концентрации.',
+    
+    'Вертикаль Действия (3-6-9): Гуру-Шукра-Мангал. Творчество, отношения и реализация.\n\nЭто ваша способность к творческому самовыражению, построению отношений и активному действию. Линия эмоциональности и гармонии. Отвечает за творческие способности, умение создавать красоту, любить и быть любимым.\n\nСильная линия дает: творческие таланты, гармоничные отношения, эмоциональную зрелость.\nСлабая линия может проявляться как: замкнутость, трудности в отношениях, подавленность эмоций.\n\nДля укрепления: занимайтесь творчеством, работайте над эмоциональным интеллектом, развивайте способность к эмпатии.'
+  ];
+  
+  const D_LABELS = ['Диагональ 1-5-9 (духовная)', 'Диагональ 3-5-7 (материальная)'];
+  const D_DESC = [
+    'Диагональ Духовности (1-5-9): Surya-Buddhi-Mangal. Путь саморазвития и личностного роста.\n\nЭто ваш духовный вектор развития, способность к самопознанию и трансформации. Линия внутреннего роста, мудрости и высшего понимания жизни. Показывает потенциал для духовного развития и способность видеть глубинный смысл происходящего.\n\nСильная диагональ дает: мудрость, интуицию, способность к духовному росту.\nСлабая диагональ может означать: материалистический взгляд на жизнь, отсутствие высших целей.\n\nДля развития: изучайте философию, медитируйте, ищите смысл в своих поступках, развивайте интуицию.',
+    
+    'Диагональ Материальности (3-5-7): Гуру-Буддха-Кету. Практическая реализация и жизненный опыт.\n\nЭто ваша способность к практическому воплощению идей и накоплению жизненного опыта. Линия мастерства, профессионализма и материального благополучия. Показывает умение работать с материей, создавать и реализовывать проекты.\n\nСильная диагональ дает: практичность, профессионализм, материальную стабильность.\nСлабая диагональ может означать: непractichность, сложности с воплощением идей в жизнь.\n\nДля развития: осваивайте практические навыки, работайте над дисциплиной, учитесь планировать и достигать материальных целей.'
+  ];
+
+  // Detailed planetary interpretations from methodology
+  const getPlanetInterpretation = (planetKey) => {
+    const interpretations = {
+      'Surya': `Surya — Солнце (1) ☉
+
+Энергия лидерства, творчества и индивидуальности. Солнце — это ваша сущность, ваше "Я", способность быть в центре внимания и вести за собой других.
+
+КАЧЕСТВА ЭНЕРГИИ:
+• Лидерство и инициативность
+• Творческий потенциал и оригинальность  
+• Независимость и самостоятельность
+• Организаторские способности
+• Щедрость и великодушие
+
+КАК ПРОЯВЛЯЕТСЯ:
+- В избытке: эгоцентризм, властность, нетерпимость к критике
+- В балансе: харизматичность, вдохновляющее лидерство, творческая самореализация
+- В недостатке: неуверенность в себе, зависимость от чужего мнения, отсутствие инициативы
+
+РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЗАЦИИ:
+• Развивайте творческие способности
+• Учитесь брать ответственность на себя
+• Практикуйте утренние солнечные медитации
+• Носите золотые украшения или цвета солнца
+• Укрепляйте физическое здоровье и осанку`,
+
+      'Chandra': `Чандра — Луна (2) ☽
+
+Энергия эмоций, интуиции и адаптации. Луна отвечает за ваш внутренний мир, способность чувствовать и реагировать на изменения.
+
+КАЧЕСТВА ЭНЕРГИИ:
+• Эмоциональность и чувствительность
+• Интуиция и психические способности
+• Адаптивность и гибкость
+• Забота и материнские инстинкты
+• Способность к сопереживанию
+
+КАК ПРОЯВЛЯЕТСЯ:
+- В избытке: эмоциональная нестабильность, обидчивость, зависимость от настроения
+- В балансе: эмоциональный интеллект, интуитивная мудрость, способность к глубоким отношениям
+- В недостатке: эмоциональная заблокированность, трудности в выражении чувств
+
+РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЗАЦИИ:
+• Практикуйте медитации на воду и лунные ритуалы
+• Развивайте эмоциональный интеллект
+• Создавайте уютную домашнюю атмосферу
+• Носите серебро и жемчуг
+• Работайте с лунными циклами в планировании`,
+
+      'Guru': `Гуру — Юпитер (3) ♃
+
+Энергия мудрости, обучения и расширения. Юпитер — это ваш внутренний учитель, способность к росту и передаче знаний.
+
+КАЧЕСТВА ЭНЕРГИИ:
+• Мудрость и философское мышление
+• Способность к обучению и преподаванию
+• Оптимизм и вера в лучшее
+• Справедливость и этические принципы
+• Стремление к росту и развитию
+
+КАК ПРОЯВЛЯЕТСЯ:
+- В избытке: самоуверенность, догматизм, склонность к проповедованию
+- В балансе: мудрое руководство, вдохновляющее обучение, справедливое суждение
+- В недостатке: отсутствие веры в себя, трудности с принятием решений, пессимизм
+
+РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЗАЦИИ:
+• Изучайте философию и духовные практики
+• Развивайте навыки преподавания и наставничества
+• Практикуйте благотворительность и помощь другим
+• Носите желтые цвета и золото
+• Читайте мудрые книги и размышляйте над ними`,
+
+      'Rahu': `Раху — Северный узел (4) ☊
+
+Энергия трансформации, амбиций и кармических задач. Раху показывает направление вашего духовного роста в этой жизни.
+
+КАЧЕСТВА ЭНЕРГИИ:
+• Амбициозность и стремление к достижениям
+• Способность к трансформации и изменениям
+• Инновационное мышление
+• Магнетизм и притягательность
+• Кармические уроки и вызовы
+
+КАК ПРОЯВЛЯЕТСЯ:
+- В избытке: одержимость целями, использование других, материализм
+- В балансе: здоровые амбиции, способность к позитивным изменениям, харизма
+- В недостатке: отсутствие четких целей, страх перемен, застой в развитии
+
+РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЗАЦИИ:
+• Работайте над кармическими уроками
+• Развивайте здоровые амбиции
+• Практикуйте техники трансформации сознания
+• Изучайте астрологию и эзотерические науки
+• Учитесь отпускать привязанности`,
+
+      'Buddhi': `Буддха — Меркурий (5) ☿
+
+Энергия интеллекта, коммуникации и адаптации. Меркурий отвечает за ваш ум, способность учиться и общаться.
+
+КАЧЕСТВА ЭНЕРГИИ:
+• Интеллект и аналитические способности
+• Коммуникативные навыки
+• Любознательность и обучаемость
+• Адаптивность и многозадачность
+• Логическое мышление
+
+КАК ПРОЯВЛЯЕТСЯ:
+- В избытке: чрезмерная болтливость, поверхностность, непостоянство
+- В балансе: ясное мышление, эффективная коммуникация, быстрое обучение
+- В недостатке: трудности в общении, проблемы с концентрацией, медлительность
+
+РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЗАЦИИ:
+• Развивайте навыки коммуникации и письма
+• Изучайте иностранные языки
+• Практикуйте логические игры и головоломки
+• Носите зеленые цвета и изумруды
+• Занимайтесь дыхательными практиками`,
+
+      'Shukra': `Шукра — Венера (6) ♀
+
+Энергия любви, красоты и гармонии. Венера отвечает за ваши отношения, творчество и способность наслаждаться жизнью.
+
+КАЧЕСТВА ЭНЕРГИИ:
+• Любовь и романтические чувства
+• Чувство красоты и эстетики
+• Творческие способности
+• Гармония в отношениях
+• Способность к наслаждению
+
+КАК ПРОЯВЛЯЕТСЯ:
+- В избытке: чрезмерная чувственность, зависимость от отношений, лень
+- В балансе: гармоничные отношения, творческое вдохновение, эстетический вкус
+- В недостатке: трудности в любви, отсутствие творческого вдохновения, грубость
+
+РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЗАЦИИ:
+• Развивайте творческие способности
+• Окружайте себя красотой и искусством
+• Работайте над гармонией в отношениях
+• Носите розовые цвета и драгоценные камни
+• Практикуйте искусство любви к себе`,
+
+      'Ketu': `Кету — Южный узел (7) ☋
+
+Энергия духовности, отрешенности и кармического опыта. Кету показывает таланты из прошлых жизней и путь к освобождению.
+
+КАЧЕСТВА ЭНЕРГИИ:
+• Духовная мудрость и интуиция
+• Способность к медитации и созерцанию
+• Отрешенность от материального
+• Психические способности
+• Кармическая память
+
+КАК ПРОЯВЛЯЕТСЯ:
+- В избытке: излишняя отрешенность, избегание ответственности, мистицизм
+- В балансе: духовная мудрость, интуитивное понимание, внутренняя свобода
+- В недостатке: материалистичность, отсутствие духовных интересов
+
+РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЗАЦИИ:
+• Развивайте медитативные практики
+• Изучайте духовные учения
+• Практикуйте отрешенность от результатов
+• Работайте с прошлыми воплощениями
+• Используйте интуицию в принятии решений`,
+
+      'Shani': `Шани — Сатурн (8) ♄
+
+Энергия дисциплины, ответственности и структуры. Сатурн — строгий учитель, который помогает достичь истинной зрелости.
+
+КАЧЕСТВА ЭНЕРГИИ:
+• Дисциплина и самоконтроль
+• Ответственность и надежность
+• Терпение и выносливость
+• Структурное мышление
+• Способность к долгосрочному планированию
+
+КАК ПРОЯВЛЯЕТСЯ:
+- В избытке: чрезмерная строгость, пессимизм, ограниченность
+- В балансе: мудрая дисциплина, надежность, способность к достижению целей
+- В недостатке: безответственность, отсутствие структуры, легкомыслие
+
+РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЗАЦИИ:
+• Развивайте самодисциплину постепенно
+• Учитесь планированию и структурированию
+• Практикуйте терпение и настойчивость
+• Носите темные цвета и сапфиры
+• Работайте над принятием ответственности`,
+
+      'Mangal': `Мангал — Марс (9) ♂
+
+Энергия действия, силы и решительности. Марс дает энергию для достижения целей и защиты того, что важно.
+
+КАЧЕСТВА ЭНЕРГИИ:
+• Энергия и витальная сила
+• Решительность и смелость
+• Способность к действию
+• Защитные инстинкты
+• Спортивные способности
+
+КАК ПРОЯВЛЯЕТСЯ:
+- В избытке: агрессивность, импульсивность, конфликтность
+- В балансе: здоровая активность, защита слабых, достижение целей
+- В недостатке: пассивность, отсутствие энергии, неспособность к действию
+
+РЕКОМЕНДАЦИИ ДЛЯ ГАРМОНИЗАЦИИ:
+• Занимайтесь спортом и физическими упражнениями
+• Развивайте здоровую конкуренцию
+• Учитесь направлять энергию конструктивно
+• Носите красные цвета и кораллы
+• Практикуйте боевые искусства или танцы`
+    };
+    return interpretations[planetKey] || 'Описание планеты не найдено.';
+  };
+
+  // Detailed interpretations for Soul, Mind, Ruling, Fate numbers
+  const getNumberInterpretation = (type, number) => {
+    const interpretations = {
+      soul: {
+        1: 'Число Души 1 (Surya): Вы прирожденный лидер с сильной индивидуальностью. Стремитесь к независимости и самовыражению. Ваша задача — научиться вести за собой, не подавляя других.',
+        2: 'Число Души 2 (Чандра): Вы чувствительная и эмоциональная натура, склонная к сотрудничеству. Обладаете сильной интуицией и способностью к адаптации. Ваша задача — найти баланс между заботой о других и собственными потребностями.',
+        3: 'Число Души 3 (Гуру): Вы мудрый оптимист с талантом к обучению и творчеству. Стремитесь к росту и расширению горизонтов. Ваша задача — делиться знаниями и вдохновлять других.',
+        4: 'Число Души 4 (Раху): Вы амбициозный трансформатор с нетрадиционным мышлением. Стремитесь к переменам и достижениям. Ваша задача — научиться использовать свою силу для позитивных изменений.',
+        5: 'Число Души 5 (Буддха): Вы любознательный коммуникатор с живым умом. Обладаете гибкостью и адаптивностью. Ваша задача — использовать свой интеллект для связи между людьми и идеями.',
+        6: 'Число Души 6 (Шукра): Вы гармоничная натура, стремящаяся к красоте и любви. Обладаете творческими способностями и чувством прекрасного. Ваша задача — создавать красоту и гармонию в мире.',
+        7: 'Число Души 7 (Кету): Вы духовно ориентированная личность с глубокой интуицией. Стремитесь к познанию скрытых истин. Ваша задача — развивать мудрость и помогать другим в духовном поиске.',
+        8: 'Число Души 8 (Шани): Вы дисциплинированный практик с сильным чувством ответственности. Стремитесь к стабильности и долгосрочным достижениям. Ваша задача — создавать прочные основы для будущего.',
+        9: 'Число Души 9 (Мангал): Вы энергичный деятель с сильным характером. Обладаете лидерскими качествами и защитными инстинктами. Ваша задача — направлять свою энергию на служение и защиту других.'
+      },
+      mind: {
+        1: 'Число Ума 1 (Сурья): Ваш ум сфокусирован на лидерстве и индивидуальности. Вы думаете независимо и стремитесь к оригинальным решениям. Развивайте уверенность в своих идеях.',
+        2: 'Число Ума 2 (Чандра): Ваш ум эмоционально окрашен и интуитивен. Вы хорошо понимаете чувства и настроения. Учитесь доверять своей интуиции в принятии решений.',
+        3: 'Число Ума 3 (Гуру): Ваш ум настроен на обучение и расширение знаний. Вы мыслите оптимистично и философски. Развивайте мудрость через изучение и преподавание.',
+        4: 'Число Ума 4 (Раху): Ваш ум стремится к переменам и нестандартным решениям. Вы мыслите инновационно и амбициозно. Направляйте ментальную энергию на позитивные трансформации.',
+        5: 'Число Ума 5 (Буддха): Ваш ум быстр, гибок и аналитичен. Вы легко усваиваете информацию и хорошо коммуницируете. Развивайте навыки ясного мышления и общения.',
+        6: 'Число Ума 6 (Шукра): Ваш ум настроен на гармонию и красоту. Вы мыслите творчески и эстетично. Используйте свое чувство прекрасного в принятии решений.',
+        7: 'Число Ума 7 (Кету): Ваш ум склонен к глубоким размышлениям и духовному поиску. Вы интуитивно понимаете скрытые аспекты жизни. Развивайте медитативное мышление.',
+        8: 'Число Ума 8 (Шани): Ваш ум практичен, дисциплинирован и структурирован. Вы мыслите долгосрочными категориями. Развивайте терпение и последовательность в мышлении.',
+        9: 'Число Ума 9 (Мангал): Ваш ум активен, решителен и направлен на действие. Вы быстро принимаете решения и стремитесь к справедливости. Учитесь контролировать импульсивность.'
+      },
+      ruling: {
+        1: 'Правящее Число 1 (Сурья): Вы управляете своей жизнью через лидерство и самоутверждение. Ваша сила — в способности вдохновлять и направлять других.',
+        2: 'Правящее Число 2 (Чандра): Вы управляете жизнью через сотрудничество и эмоциональную связь. Ваша сила — в способности объединять и гармонизировать.',
+        3: 'Правящее Число 3 (Гуру): Вы управляете жизнью через знания и мудрость. Ваша сила — в способности учить, расти и расширять горизонты.',
+        4: 'Правящее Число 4 (Раху): Вы управляете жизнью через трансформации и достижения. Ваша сила — в способности изменять себя и окружающий мир.',
+        5: 'Правящее Число 5 (Буддха): Вы управляете жизнью через коммуникацию и адаптацию. Ваша сила — в интеллектуальной гибкости и способности к связям.',
+        6: 'Правящее Число 6 (Шукра): Вы управляете жизнью через любовь и творчество. Ваша сила — в способности создавать красоту и гармоничные отношения.',
+        7: 'Правящее Число 7 (Кету): Вы управляете жизнью через духовное понимание и интуицию. Ваша сила — в способности видеть глубинные истины.',
+        8: 'Правящее Число 8 (Шани): Вы управляете жизнью через дисциплину и долгосрочное планирование. Ваша сила — в способности создавать стабильность.',
+        9: 'Правящее Число 9 (Мангал): Вы управляете жизнью через активное действие и справедливость. Ваша сила — в способности защищать и воплощать идеалы.'
+      },
+      fate: {
+        1: 'Число Судьбы 1 (Сурья): Ваша судьба связана с лидерством и индивидуальным самовыражением. Вам суждено быть пионером и вдохновителем для других.',
+        2: 'Число Судьбы 2 (Чандра): Ваша судьба связана с сотрудничеством и эмоциональным служением. Вам суждено объединять людей и создавать гармонию.',
+        3: 'Число Судьбы 3 (Гуру): Ваша судьба связана с обучением и духовным ростом. Вам суждено быть учителем и источником мудрости для других.',
+        4: 'Число Судьбы 4 (Раху): Ваша судьба связана с трансформацией и кармическими уроками. Вам суждено преодолевать препятствия и достигать значительных целей.',
+        5: 'Число Судьбы 5 (Буддха): Ваша судьба связана с коммуникацией и интеллектуальным развитием. Вам суждено быть посредником между людьми и идеями.',
+        6: 'Число Судьбы 6 (Шукра): Ваша судьба связана с любовью, творчеством и служением красоте. Вам суждено приносить в мир гармонию и эстетику.',
+        7: 'Число Судьбы 7 (Кetu): Ваша судьба связана с духовным поиском и мистическим познанием. Вам суждено быть мудрецом и духовным наставником.',
+        8: 'Число Судьбы 8 (Шани): Ваша судьба связана с материальными достижениями и кармическими испытаниями. Вам суждено создавать долговременные структуры.',
+        9: 'Число Судьбы 9 (Мангал): Ваша судьба связана с служением человечеству и борьбой за справедливость. Вам суждено быть защитником и реформатором.'
+      }
+    };
+    return interpretations[type]?.[number] || 'Интерпретация не найдена.';
+  };
+
+  const openDetail = (title, text) => { setDetailTitle(title); setDetailText(text); setDetailOpen(true); };
+
+  if (loading) return (<Card><CardContent className="flex items-center justify-center py-12"><Loader className="w-6 h-6 animate-spin mr-2" /><span>Строим ваш квадрат Пифагора...</span></CardContent></Card>);
+  if (error) return (<Card><CardContent className="py-12"><Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert><Button onClick={calculateSquare} className="mt-4 w-full">Попробовать снова</Button></CardContent></Card>);
+  if (!results) return (<Card><CardContent className="py-12 text-center"><Grid3X3 className="w-12 h-12 text-muted-foreground mx-auto mb-4" /><p className="text-muted-foreground">Нажмите кнопку для построения квадрата Пифагора</p><Button onClick={calculateSquare} className="mt-4 numerology-gradient">Построить квадрат</Button></CardContent></Card>);
+
+  const LeftStats = () => (
+    <div className="w-full md:w-52 flex md:flex-col gap-2 md:mr-3">
+      <div className="p-3 rounded-xl bg-white shadow border text-center cursor-pointer hover:bg-slate-50" 
+           onClick={() => openDetail('Число Души', getNumberInterpretation('soul', soulMindRulingFate?.soul))}>
+        <div className="text-xs text-gray-500 mb-1">Число Души</div>
+        <div className="text-2xl font-bold">{soulMindRulingFate?.soul ?? '-'}</div>
+      </div>
+      <div className="p-3 rounded-xl bg-white shadow border text-center cursor-pointer hover:bg-slate-50"
+           onClick={() => openDetail('Число Ума', getNumberInterpretation('mind', soulMindRulingFate?.mind))}>
+        <div className="text-xs text-gray-500 mb-1">Число Ума</div>
+        <div className="text-2xl font-bold">{soulMindRulingFate?.mind ?? '-'}</div>
+      </div>
+      <div className="p-3 rounded-xl bg-white shadow border text-center cursor-pointer hover:bg-slate-50"
+           onClick={() => openDetail('Правящее Число', getNumberInterpretation('ruling', soulMindRulingFate?.ruling))}>
+        <div className="text-xs text-gray-500 mb-1">Правящее Число</div>
+        <div className="text-2xl font-bold">{soulMindRulingFate?.ruling ?? '-'}</div>
+      </div>
+      <div className="p-3 rounded-xl bg-white shadow border text-center cursor-pointer hover:bg-slate-50"
+           onClick={() => openDetail('Число Судьбы', getNumberInterpretation('fate', soulMindRulingFate?.fate))}>
+        <div className="text-xs text-gray-500 mb-1">Число Судьбы</div>
+        <div className="text-2xl font-bold">{soulMindRulingFate?.fate ?? '-'}</div>
+      </div>
+    </div>
+  );
+
+  const GridCore = () => (
+    <div className="grid grid-cols-3 gap-3">
+      {results.square.map((row, rowIndex) =>
+        row.map((cell, colIndex) => {
+          const planetKey = planetAt(rowIndex, colIndex);
+          const num = numberAt(rowIndex, colIndex);
+          const nColor = numberTextColor(num);
+          const bg = numberBg(num);
+          const label = customLabel[num];
+          const symbol = planetSymbol[num];
+          const energy = getPlanetEnergy(planetKey);
+          const energyBg = getEnergyColor(energy);
+          const energyTextColor = getEnergyTextColor(energy);
+          
+          // Подсчитываем количество цифр в ячейке
+          const digitCount = (cell || '').length || 0;
+          
+          // Русские названия планет
+          const russianName = planetNames[planetKey];
+          
+          return (
+            <div
+              key={`${rowIndex}-${colIndex}`}
+              className={`aspect-square rounded-xl p-2 shadow-sm flex flex-col items-center justify-center text-center relative overflow-hidden cursor-pointer transition-all hover:shadow-md`}
+              style={{ 
+                background: `linear-gradient(135deg, ${energyBg}, ${bg}, #ffffff)`, 
+                border: `2px solid ${withAlpha(nColor, 0.3)}` 
+              }}
+              onClick={() => openDetail(planetNames[planetKey] + ' (' + num + ')', getPlanetInterpretation(planetKey))}
+            >
+              {/* Top label: custom planet name + bigger symbol */}
+              <div className="mb-0.5 font-semibold flex items-center gap-1"
+                   style={{ color: PLANET_COLORS[planetKey] || '#475569', fontSize: '12px', textShadow: numberTextShadow(num) }}>
+                <span>{label}</span>
+                <span style={{ fontSize: '20px' }} className="opacity-90">{symbol}</span>
+              </div>
+              
+              {/* Количество цифр планеты */}
+              <div className="font-bold text-3xl" style={{ color: nColor }}>
+                {digitCount}
+              </div>
+              
+              {/* Название планеты на русском */}
+              <div className="mt-1 text-center">
+                <div className="text-xs font-medium" style={{ color: PLANET_COLORS[planetKey] || '#475569' }}>
+                  {russianName}
+                </div>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+
+  const VerticalSums = () => (
+    <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2">
+      {results.vertical_sums.map((v, i) => (
+        <div key={i} className="text-center bg-white rounded-lg shadow p-2 border cursor-pointer hover:bg-slate-50" onClick={() => openDetail(V_LABELS[i], V_DESC[i])}>
+          <div className="text-xs text-gray-500">{V_LABELS[i]}</div>
+          <div className="text-sm font-semibold">{v}</div>
+          <div className="text-[10px] text-gray-500 line-clamp-2">{V_DESC[i]}</div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const HorizontalSums = () => (
+    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+      {results.horizontal_sums.map((v, i) => (
+        <div key={i} className="text-center bg-white rounded-lg shadow p-2 border cursor-pointer hover:bg-slate-50" onClick={() => openDetail(H_LABELS[i], H_DESC[i])}>
+          <div className="text-xs text-gray-500">{H_LABELS[i]}</div>
+          <div className="text-sm font-semibold">{v}</div>
+          <div className="text-[10px] text-gray-500 line-clamp-2">{H_DESC[i]}</div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const DiagonalSums = () => (
+    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+      {[0,1].map((i) => (
+        <div key={i} className="text-center p-3 rounded-xl bg-white shadow border cursor-pointer hover:bg-slate-50" onClick={() => openDetail(D_LABELS[i], D_DESC[i])}>
+          <div className="text-sm text-gray-600 mb-1">{D_LABELS[i]}</div>
+          <div className="text-xl font-bold text-primary mb-1">{results.diagonal_sums?.[i]}</div>
+          <div className="text-[12px] text-gray-600">{D_DESC[i]}</div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const Legend = () => {
+    const items = [
+      { num:1, ru:'Солнце', key:'Surya', sym:'☉' },
+      { num:2, ru:'Луна', key:'Chandra', sym:'☽' },
+      { num:3, ru:'Юпитер', key:'Guru', sym:'♃' },
+      { num:4, ru:'Раху', key:'Rahu', sym:'☊' },
+      { num:5, ru:'Меркурий', key:'Buddhi', sym:'☿' },
+      { num:6, ru:'Венера', key:'Shukra', sym:'♀' },
+      { num:7, ru:'Кету', key:'Ketu', sym:'☋' },
+      { num:8, ru:'Сатурн', key:'Shani', sym:'♄' },
+      { num:9, ru:'Марс', key:'Mangal', sym:'♂' }
+    ];
+    
+    return (
+      <div className="mt-5">
+        {/* Энергия планет в ячейках под основным квадратом */}
+        <div className="mb-4">
+          <h4 className="text-sm font-semibold text-gray-700 mb-2 text-center">
+            {planetaryEnergies ? 'Сила планет (количество цифр) и энергия сегодня:' : 'Сила планет в ячейках квадрата:'}
+          </h4>
+          <div className="grid grid-cols-3 gap-3 max-w-sm mx-auto">
+            {results.square.map((row, rowIndex) =>
+              row.map((cell, colIndex) => {
+                const planetKey = planetAt(rowIndex, colIndex);
+                const num = numberAt(rowIndex, colIndex);
+                const energy = getPlanetEnergy(planetKey);
+                const digitCount = (cell || '').length || 0; // Количество цифр
+                const planetName = {1:'Солнце',2:'Луна',3:'Юпитер',4:'Раху',5:'Меркурий',6:'Венера',7:'Кету',8:'Сатурн',9:'Марс'}[num];
+                
+                return (
+                  <div key={`${rowIndex}-${colIndex}`} className="text-center p-2 rounded-lg bg-gray-50 border">
+                    <div className="text-xs text-gray-500">{planetName}</div>
+                    <div className="text-lg font-bold" style={{ color: PLANET_COLORS[planetKey] }}>
+                      {digitCount}
+                    </div>
+                    <div className="text-xs text-gray-400">сила</div>
+                    {planetaryEnergies && energy !== null && (
+                      <div className="text-xs font-semibold mt-1" style={{ color: getEnergyTextColor(energy) }}>
+                        {energy}% энергии
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+        
+        {/* Легенда планет */}
+        <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+          {items.map(({num, ru, key, sym}) => {
+            const energy = getPlanetEnergy(key);
+            return (
+              <div key={num}
+                   className="px-2.5 py-1 rounded-full border text-xs sm:text-sm flex items-center gap-1.5 bg-white shadow"
+                   style={{ 
+                     borderColor: withAlpha(PLANET_COLORS[key], 0.35), 
+                     color: PLANET_COLORS[key],
+                     backgroundColor: planetaryEnergies && energy !== null ? getEnergyColor(energy) : 'white'
+                   }}>
+                <span style={{ fontSize: '20px' }}>{sym}</span>
+                <span>{ru}</span>
+                {planetaryEnergies && energy !== null && (
+                  <span className="font-semibold">({energy}%)</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        
+        {/* Описание энергетических уровней */}
+        {planetaryEnergies && (
+          <div className="mt-4 text-xs text-center text-gray-600">
+            <p>🟢 80-100% — Высокая энергия • 🟡 60-79% — Хорошая • 🟠 40-59% — Средняя • 🔴 20-39% — Низкая • ⚪ 0-19% — Минимальная</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Компонент графика силы планет по дням недели
+  const PlanetaryStrengthChart = () => {
+    if (!results?.planetary_strength) return null;
+
+    const planetNames = ['Солнце', 'Луна', 'Марс', 'Меркурий', 'Юпитер', 'Венера', 'Сатурн'];
+    const weekdays = ['ВС', 'ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ'];
+    const planetColors = [
+      PLANET_COLORS.Surya,    // Солнце
+      PLANET_COLORS.Chandra,  // Луна
+      PLANET_COLORS.Mangal,   // Марс
+      PLANET_COLORS.Buddhi,   // Меркурий
+      PLANET_COLORS.Guru,     // Юпитер
+      PLANET_COLORS.Shukra,   // Венера
+      PLANET_COLORS.Shani     // Сатурн
+    ];
+
+    // Создаем данные для графика: день недели -> сила планеты
+    const chartData = weekdays.map((day, index) => {
+      const planet = planetNames[index];
+      const strength = results.planetary_strength[planet] || 0;
+      const color = planetColors[index];
+      
+      return {
+        day,
+        planet,
+        strength,
+        color
+      };
+    });
+
+    return (
+      <div className="mt-8">
+        <h4 className="text-lg font-semibold mb-4 text-center">Сила Планет по Дням Недели</h4>
+        <div className="text-xs text-gray-600 mb-4 text-center">
+          День недели рождения: {results.birth_weekday}
+        </div>
+        
+        {/* График с сеткой */}
+        <div className="bg-gray-900 rounded-lg p-4 relative overflow-hidden">
+          <svg 
+            viewBox="0 0 700 400" 
+            className="w-full h-64"
+            style={{ background: 'linear-gradient(180deg, #1f2937 0%, #111827 100%)' }}
+          >
+            {/* Сетка */}
+            {/* Вертикальные линии */}
+            {Array.from({length: 8}, (_, i) => (
+              <line 
+                key={`v-${i}`}
+                x1={100 + i * 80} 
+                y1={50} 
+                x2={100 + i * 80} 
+                y2={350} 
+                stroke="rgba(255,255,255,0.2)" 
+                strokeWidth="1"
+              />
+            ))}
+            
+            {/* Горизонтальные линии */}
+            {Array.from({length: 11}, (_, i) => (
+              <line 
+                key={`h-${i}`}
+                x1={100} 
+                y1={50 + i * 30} 
+                x2={660} 
+                y2={50 + i * 30} 
+                stroke="rgba(255,255,255,0.2)" 
+                strokeWidth="1"
+              />
+            ))}
+            
+            {/* Цифры по вертикали (0-9) */}
+            {Array.from({length: 10}, (_, i) => (
+              <text 
+                key={`y-label-${i}`}
+                x="85" 
+                y={350 - i * 30} 
+                fill="rgba(255,255,255,0.7)" 
+                fontSize="14" 
+                textAnchor="end"
+                dominantBaseline="middle"
+              >
+                {i}
+              </text>
+            ))}
+            
+            {/* Дни недели по горизонтали */}
+            {weekdays.map((day, i) => (
+              <text 
+                key={`x-label-${i}`}
+                x={140 + i * 80} 
+                y="370" 
+                fill="rgba(255,255,255,0.8)" 
+                fontSize="16" 
+                textAnchor="middle"
+                fontWeight="bold"
+              >
+                {day}
+              </text>
+            ))}
+            
+            {/* Линия графика */}
+            <polyline
+              points={chartData.map((point, i) => 
+                `${140 + i * 80},${350 - point.strength * 30}`
+              ).join(' ')}
+              fill="none"
+              stroke="#10b981"
+              strokeWidth="3"
+              strokeLinejoin="round"
+            />
+            
+            {/* Точки на графике */}
+            {chartData.map((point, i) => (
+              <g key={`point-${i}`}>
+                <circle
+                  cx={140 + i * 80}
+                  cy={350 - point.strength * 30}
+                  r="8"
+                  fill={point.color}
+                  stroke="white"
+                  strokeWidth="2"
+                />
+                <text
+                  x={140 + i * 80}
+                  y={350 - point.strength * 30}
+                  fill="white"
+                  fontSize="12"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontWeight="bold"
+                >
+                  {point.strength}
+                </text>
+              </g>
+            ))}
+          </svg>
+        </div>
+
+        {/* Легенда планет */}
+        <div className="mt-4 grid grid-cols-4 md:grid-cols-7 gap-2">
+          {chartData.map((point, index) => (
+            <div key={point.planet} className="text-center p-2 rounded-lg bg-gray-50 border">
+              <div 
+                className="text-sm font-semibold mb-1"
+                style={{ color: point.color }}
+              >
+                {point.planet}
+              </div>
+              <div className="text-xs text-gray-500">{point.day}</div>
+              <div className="text-lg font-bold text-gray-800">
+                {point.strength}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className={`${fullScreen ? 'min-h-[calc(100vh-4rem)] py-3' : ''}`}>
+      {!fullScreen && (
+        <Card className="numerology-gradient">
+          <CardHeader className="text-white">
+            <CardTitle className="text-2xl">
+              Квадрат Пифагора с Планетарными Энергиями
+            </CardTitle>
+            <CardDescription className="text-white/90">
+              Матрица на основе даты: {user?.birth_date}
+              {planetaryEnergies && (
+                <span className="block mt-1">+ текущие планетарные энергии</span>
+              )}
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      )}
+
+      <Card>
+        {!fullScreen && (
+          <CardHeader>
+            <CardTitle>Ваш Нумерологический Квадрат</CardTitle>
+            <CardDescription>
+              {planetaryEnergies ? (
+                <>Квадрат Пифагора интегрирован с планетарными энергиями. Цвета ячеек показывают уровень энергии планет сегодня.</>
+              ) : (
+                <>Цвета соответствуют планетарным энергиям; цифры — в цвет своей энергии</>
+              )}
+            </CardDescription>
+          </CardHeader>
+        )}
+        <CardContent>
+          <div className="flex flex-col md:flex-row items-start gap-4 justify-center">
+            <LeftStats />
+            <div className="w-full max-w-3xl">
+              <GridCore />
+              <VerticalSums />
+              <HorizontalSums />
+              <DiagonalSums />
+              <Legend />
+              {/* График силы планет по дням недели */}
+              <PlanetaryStrengthChart />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{detailTitle}</DialogTitle></DialogHeader>
+          <div className="text-sm whitespace-pre-line leading-relaxed">{detailText}</div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default PythagoreanSquare;
