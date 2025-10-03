@@ -5,13 +5,20 @@ import { Menu, Calculator, Hash } from 'lucide-react';
 import PersonalNumbers from './PersonalNumbers';
 import PythagoreanSquare from './PythagoreanSquare';
 
-const NumerologyDashboard = ({ fullScreen = false }) => {
+const NumerologyDashboard = ({ fullScreen = false, onBack }) => {
   const [activeTab, setActiveTab] = useState('square');
 
   const FloatingMenu = () => (
     <div className="fixed top-4 left-4 z-50">
       <Button 
-        onClick={() => window.history.back()}
+        onClick={() => {
+          if (onBack) {
+            onBack();
+          } else {
+            // Fallback для совместимости
+            window.location.reload();
+          }
+        }}
         className="bg-white/90 backdrop-blur-sm text-gray-700 hover:bg-white shadow-lg border"
       >
         <Menu className="w-4 h-4 mr-2" />
@@ -45,7 +52,7 @@ const NumerologyDashboard = ({ fullScreen = false }) => {
     <div className={`${fullScreen ? 'min-h-[calc(100vh-4rem)] py-3' : ''}`}>
       {fullScreen && <FloatingMenu />}
       
-      <div className="max-w-6xl mx-auto px-4">
+      <div className="max-w-6xl mx-auto">
         {fullScreen && (
           <Card className="numerology-gradient mb-6">
             <CardHeader className="text-white">
@@ -60,7 +67,7 @@ const NumerologyDashboard = ({ fullScreen = false }) => {
         {fullScreen && <TabNavigation />}
 
         {activeTab === 'square' && <PythagoreanSquare fullScreen={false} />}
-        {activeTab === 'personal' && <PersonalNumbers fullScreen={false} />}
+        {activeTab === 'personal' && <PersonalNumbers fullScreen={false} onBack={onBack} />}
       </div>
     </div>
   );

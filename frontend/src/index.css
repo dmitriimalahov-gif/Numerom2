@@ -42,9 +42,9 @@ code {
         --numerology-2: 45 70% 85%; /* Soft peach */
         --numerology-3: 60 65% 85%; /* Soft yellow */
         --numerology-4: 120 40% 80%; /* Soft green */
-        --numerology-5: 160 50% 80%; /* Sage green */
-        --numerology-6: 200 60% 85%; /* Soft blue */
-        --numerology-7: 250 45% 85%; /* Soft purple */
+        --numerology-5: 160 60% 65%; /* Sage green - брighter */
+        --numerology-6: 200 70% 70%; /* Soft blue - брighter */
+        --numerology-7: 250 60% 70%; /* Soft purple - брighter */
         --numerology-8: 280 50% 85%; /* Soft magenta */
         --numerology-9: 320 55% 85%; /* Soft pink */
         --chart-1: 15 75% 75%;
@@ -97,6 +97,9 @@ code {
   * {
     @apply border-border;
     }
+  html {
+    overflow-y: scroll;
+  }
   body {
     @apply bg-background text-foreground;
     background: linear-gradient(135deg, hsl(var(--background)) 0%, hsl(40 30% 95%) 100%);
@@ -106,10 +109,20 @@ code {
 
 /* Custom gradient backgrounds for sections */
 .numerology-gradient {
-  background: linear-gradient(135deg, 
-    hsl(var(--numerology-5)) 0%, 
-    hsl(var(--numerology-6)) 50%, 
+  background: linear-gradient(135deg,
+    hsl(var(--numerology-5)) 0%,
+    hsl(var(--numerology-6)) 50%,
     hsl(var(--numerology-7)) 100%);
+}
+
+/* Animated placeholder */
+@keyframes shimmer {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+input::placeholder {
+  animation: shimmer 2s ease-in-out infinite;
 }
 
 .payment-gradient {

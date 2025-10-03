@@ -343,7 +343,7 @@ class StatusCheck(BaseModel):
 
 # Vedic Time Calculations
 class VedicTimeRequest(BaseModel):
-    city: str
+    city: Optional[str] = None
     date: Optional[str] = None  # YYYY-MM-DD format, если не указана - сегодня
 
 class CityChangeRequest(BaseModel):

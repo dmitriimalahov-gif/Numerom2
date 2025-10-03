@@ -103,8 +103,8 @@ const NameNumerology = () => {
     );
 
     // Число зрелости (имя + фамилия + дата рождения)
-    const birthSum = user?.birth_date ? 
-      user.birth_date.split('-').join('').split('').reduce((sum, digit) => sum + parseInt(digit), 0) : 0;
+    const birthSum = user?.birth_date ?
+      user.birth_date.replace(/[.-]/g, '').split('').reduce((sum, digit) => sum + parseInt(digit), 0) : 0;
     const maturityNumber = reduceToSingleDigit(fullNameNumber + reduceToSingleDigit(birthSum));
 
     // Число жизненного пути (только дата рождения)
@@ -262,9 +262,9 @@ const NameNumerology = () => {
             </div>
           </div>
 
-          <Button 
-            onClick={calculateNameNumerology} 
-            className="w-full numerology-gradient"
+          <Button
+            onClick={calculateNameNumerology}
+            className="w-full numerology-gradient hover:shadow-xl hover:brightness-90 transition-all duration-200"
             disabled={loading || (!firstName && !lastName)}
           >
             <Calculator className="w-4 h-4 mr-2" />
@@ -563,16 +563,16 @@ const NameNumerology = () => {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="calculator" className="flex items-center gap-2">
+        <TabsList className="grid w-full grid-cols-3 p-1">
+          <TabsTrigger value="calculator" className="flex items-center gap-2 px-2 text-xs sm:text-sm">
             <Calculator className="w-4 h-4" />
             Калькулятор
           </TabsTrigger>
-          <TabsTrigger value="analysis" className="flex items-center gap-2">
+          <TabsTrigger value="analysis" className="flex items-center gap-2 px-2 text-xs sm:text-sm">
             <Eye className="w-4 h-4" />
             Анализ
           </TabsTrigger>
-          <TabsTrigger value="compatibility" className="flex items-center gap-2">
+          <TabsTrigger value="compatibility" className="flex items-center gap-2 px-2 text-xs sm:text-sm">
             <Heart className="w-4 h-4" />
             Совместимость
           </TabsTrigger>

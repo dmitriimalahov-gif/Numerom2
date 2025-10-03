@@ -44,9 +44,7 @@ from vedic_numerology import (
 from vedic_time_calculations import get_vedic_day_schedule, get_monthly_planetary_route, get_quarterly_planetary_route
 from html_generator import create_numerology_report_html
 from pdf_generator import create_numerology_report_pdf, create_compatibility_pdf
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout, CheckoutSessionRequest
-)
+import stripe
 
 # Load env
 ROOT_DIR = Path(__file__).parent
@@ -62,7 +60,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Payments
-STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
+STRIPE_API_KEY = os.environ.get('STRIPE_SECRET_KEY')
+stripe.api_key = STRIPE_API_KEY
 PAYMENT_DEMO_MODE = not STRIPE_API_KEY or STRIPE_API_KEY == 'sk_test_dummy_key_for_testing'
 
 PAYMENT_PACKAGES = {
@@ -84,7 +83,7 @@ app = FastAPI()
 api_router = APIRouter(prefix='/api')
 
 # Upload paths
-UPLOAD_ROOT = Path('/app/uploads')
+UPLOAD_ROOT = Path('uploads')
 MATERIALS_DIR = UPLOAD_ROOT / 'materials'
 CONSULTATIONS_DIR = UPLOAD_ROOT / 'consultations'
 CONSULTATIONS_VIDEO_DIR = CONSULTATIONS_DIR / 'videos'
@@ -247,25 +246,38 @@ async def create_checkout_session(payment_request: PaymentRequest, request: Requ
         return {'url': url, 'session_id': session_id}
 
     try:
-        stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{payment_request.origin_url}/api/webhook/stripe")
         success_url = f"{payment_request.origin_url}/payment-success?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{payment_request.origin_url}/payment-cancelled"
-        checkout_request = CheckoutSessionRequest(
-            amount=amount, currency='eur', success_url=success_url, cancel_url=cancel_url,
+        
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'eur',
+                    'product_data': {
+                        'name': f'Numerom Package: {payment_request.package_type}',
+                    },
+                    'unit_amount': int(amount * 100),  # Stripe expects amounts in cents
+                },
+                'quantity': 1,
+            }],
+            mode='payment',
+            success_url=success_url,
+            cancel_url=cancel_url,
             metadata={'package_type': payment_request.package_type, 'origin_url': payment_request.origin_url, 'user_id': current_user['user_id']}
         )
-        session = await stripe_checkout.create_checkout_session(checkout_request)
+        
         transaction = PaymentTransaction(
             package_type=payment_request.package_type,
             amount=amount,
             currency='eur',
-            session_id=session.session_id,
+            session_id=session.id,
             payment_status='pending',
             metadata={'origin_url': payment_request.origin_url},
             user_id=current_user['user_id']
         )
         await db.payment_transactions.insert_one(transaction.dict())
-        return {'url': session.url, 'session_id': session.session_id}
+        return {'url': session.url, 'session_id': session.id}
     except Exception as e:
         logger.error(f'Stripe error: {e}')
         raise HTTPException(status_code=500, detail=f'Failed to create checkout session: {e}')
@@ -317,9 +329,8 @@ async def get_payment_status(session_id: str):
 
     # Real stripe mode
     try:
-        stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url='')
-        checkout_status = await stripe_checkout.get_checkout_status(session_id)
-        if checkout_status.payment_status == 'paid' and tx['payment_status'] != 'paid':
+        session = stripe.checkout.Session.retrieve(session_id)
+        if session.payment_status == 'paid' and tx['payment_status'] != 'paid':
             package = tx['package_type']
             user_id = tx.get('user_id')
             if user_id:
@@ -367,11 +378,17 @@ async def get_payment_status(session_id: str):
 async def stripe_webhook(request: Request):
     body = await request.body()
     signature = request.headers.get('Stripe-Signature')
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url='')
+    webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
+    
     try:
-        _ = await stripe_checkout.handle_webhook(body, signature)
+        event = stripe.Webhook.construct_event(body, signature, webhook_secret)
+        logger.info(f'Received Stripe webhook event: {event["type"]}')
         return {'received': True}
+    except stripe.error.SignatureVerificationError as e:
+        logger.error(f'Webhook signature verification failed: {e}')
+        raise HTTPException(status_code=400, detail=f'Webhook signature verification failed: {e}')
     except Exception as e:
+        logger.error(f'Webhook error: {e}')
         raise HTTPException(status_code=400, detail=f'Webhook error: {e}')
 
 # ----------------- NUMEROLOGY -----------------

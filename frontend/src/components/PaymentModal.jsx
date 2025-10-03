@@ -6,7 +6,7 @@ import { useAuth } from './AuthContext';
 const PaymentModal = ({ isOpen, onClose }) => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 
   const startCheckout = async (packageType) => {
     setLoading(true);

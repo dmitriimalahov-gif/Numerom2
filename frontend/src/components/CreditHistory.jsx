@@ -3,14 +3,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Alert, AlertDescription } from './ui/alert';
-import { 
-  History, 
-  TrendingDown, 
-  TrendingUp, 
-  Calculator, 
-  Clock, 
-  MapPin, 
-  Heart, 
+import {
+  History,
+  TrendingDown,
+  TrendingUp,
+  Calculator,
+  Clock,
+  MapPin,
+  Heart,
   HelpCircle,
   BookOpen,
   Video,
@@ -18,12 +18,14 @@ import {
   Users,
   RefreshCw,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ChevronDown,
+  ExternalLink
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 
-const CreditHistory = () => {
+const CreditHistory = ({ onNavigate }) => {
   const { user } = useAuth();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -123,6 +125,27 @@ const CreditHistory = () => {
     loadTransactions();
   };
 
+  // Маппинг типов расчетов на секции навигации
+  const calculationTypeToSection = {
+    'personal_numbers': 'numerology',
+    'pythagorean_square': 'square',
+    'numerology': 'numerology', // общая категория нумерологии
+    'vedic': 'vedic-time',
+    'compatibility': 'compatibility',
+    'quiz': 'quiz',
+    'learning': 'learning'
+  };
+
+  const handleTransactionClick = (transaction) => {
+    // Проверяем, есть ли тип расчета в деталях транзакции
+    const calculationType = transaction.details?.calculation_type || transaction.category;
+    const section = calculationTypeToSection[calculationType];
+
+    if (section && onNavigate) {
+      onNavigate(section);
+    }
+  };
+
   if (loading && transactions.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -185,11 +208,16 @@ const CreditHistory = () => {
                 const amountInfo = getAmountDisplay(transaction);
                 const categoryIcon = categoryIcons[transaction.category] || <Calculator className="w-4 h-4" />;
                 const categoryColor = categoryColors[transaction.category] || 'bg-gray-100 text-gray-800';
+                const calculationType = transaction.details?.calculation_type || transaction.category;
+                const isClickable = calculationTypeToSection[calculationType];
 
                 return (
                   <div
                     key={transaction.id}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors"
+                    className={`flex items-center justify-between p-4 border rounded-lg transition-colors ${
+                      isClickable ? 'hover:bg-blue-50 hover:border-blue-300 cursor-pointer' : 'hover:bg-gray-50'
+                    }`}
+                    onClick={() => isClickable && handleTransactionClick(transaction)}
                   >
                     <div className="flex items-center space-x-4">
                       <div className={`p-2 rounded-full ${categoryColor}`}>
@@ -220,8 +248,13 @@ const CreditHistory = () => {
                         )}
                       </div>
                     </div>
-                    <div className={`font-bold text-lg ${amountInfo.color}`}>
-                      {amountInfo.sign}{amountInfo.amount}
+                    <div className="flex items-center space-x-3">
+                      <div className={`font-bold text-lg ${amountInfo.color}`}>
+                        {amountInfo.sign}{amountInfo.amount}
+                      </div>
+                      {isClickable && (
+                        <ExternalLink className="w-4 h-4 text-blue-500" />
+                      )}
                     </div>
                   </div>
                 );

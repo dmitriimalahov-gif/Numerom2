@@ -59,7 +59,7 @@ const VedicTimeCalculations = () => {
           <div className="flex flex-col md:flex-row gap-4 items-center justify-center">
             <div className="flex items-center gap-2"><label className="text-sm font-medium">Дата:</label><Input type="date" value={selectedDate} onChange={handleDateChange} className="w-auto" /></div>
             <div className="flex items-center gap-2"><label className="text-sm font-medium">Город:</label><Input type="text" value={selectedCity} onChange={handleCityChange} placeholder="Введите название города" className="w-48" /></div>
-            <Button onClick={() => fetchVedicSchedule()} disabled={loading}>Обновить</Button>
+            <Button onClick={() => fetchVedicSchedule()} disabled={loading} className="hover:brightness-90">Обновить</Button>
           </div>
         </CardContent>
       </Card>
@@ -94,7 +94,7 @@ const VedicTimeCalculations = () => {
           <Card>
             <CardHeader><CardTitle>☀️ Солнечные времена</CardTitle></CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="text-center p-3 bg-yellow-50 rounded-lg">
                   <div className="text-lg font-semibold text-yellow-700">{schedule.sun_times?.sunrise}</div>
                   <div className="text-sm text-gray-600">Восход</div>
@@ -104,7 +104,7 @@ const VedicTimeCalculations = () => {
                   <div className="text-sm text-gray-600">Закат</div>
                 </div>
                 <div className="text-center p-3 bg-blue-50 rounded-lg">
-                  <div className="text-sm font-semibold text-blue-700">{schedule.sun_times?.day_duration_hours}</div>
+                  <div className="text-lg font-semibold text-blue-700">{schedule.sun_times?.day_duration_hours}</div>
                   <div className="text-sm text-gray-600">Длительность дня</div>
                 </div>
               </div>

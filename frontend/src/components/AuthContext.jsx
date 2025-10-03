@@ -17,18 +17,22 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [isInitialized, setIsInitialized] = useState(false);
   
-  // Используем ref для отслеживания монтирования компонента
-  const isMounted = useRef(true);
+  // Используем ref для отслеживания попыток загрузки профиля
   const profileFetchAttempts = useRef(0);
   const maxProfileFetchAttempts = 3;
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
-
+  // Дополнительное логирование для отслеживания изменений состояния пользователя
   useEffect(() => {
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
+    console.log('🔄 AuthContext: состояние изменилось:', {
+      user: user ? `${user.email} (ID: ${user.id})` : 'null',
+      hasToken: !!token,
+      loading,
+      isInitialized,
+      timestamp: new Date().toISOString()
+    });
+  }, [user, token, loading, isInitialized]);
+
+  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 
   useEffect(() => {
     let mounted = true;
@@ -109,35 +113,27 @@ export const AuthProvider = ({ children }) => {
         validateStatus: (status) => status === 200
       });
       
-      if (isMounted.current) {
-        console.log('Профиль успешно загружен:', response.data.email);
-        setUser(response.data);
-        profileFetchAttempts.current = 0;
-        setLoading(false);
-      }
+      console.log('Профиль успешно загружен:', response.data.email);
+      setUser(response.data);
+      profileFetchAttempts.current = 0;
+      setLoading(false);
     } catch (error) {
       console.error(`Ошибка загрузки профиля (попытка ${profileFetchAttempts.current}):`, error.message);
       
       // Логаут только при критических ошибках, НЕ при сетевых проблемах
       if (error.response?.status === 401 || error.response?.status === 403) {
         console.warn('Токен недействителен (401/403), выполняем logout');
-        if (isMounted.current) {
-          logout();
-        }
+        logout();
       } else if (profileFetchAttempts.current < maxProfileFetchAttempts) {
         console.log(`Повторная попытка через 2 секунды (сетевая ошибка)`);
         // Повторная попытка через 2 секунды только при сетевых ошибках
         setTimeout(() => {
-          if (isMounted.current) {
-            fetchUserProfileWithRetry();
-          }
+          fetchUserProfileWithRetry();
         }, 2000);
       } else {
         console.error('Не удалось загрузить профиль после всех попыток');
         // НЕ делаем logout при сетевых ошибках
-        if (isMounted.current) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     }
   };
@@ -192,28 +188,27 @@ export const AuthProvider = ({ children }) => {
         throw storageError;
       }
       
-        // Обновляем state только если localStorage сохранился успешно
-        if (isMounted.current) {
-          console.log('Обновляем React state...');
-          
-          // Принудительно обновляем state
-          setToken(access_token);
-          setUser(userData);
-          setLoading(false);
-          setIsInitialized(true);
-          
-          // Устанавливаем заголовок авторизации
-          axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-          
-          console.log('=== ВХОД ЗАВЕРШЕН УСПЕШНО ===');
-          console.log('React state обновлен, пользователь должен видеть UserDashboard');
-          
-          // Принудительно обновляем компонент через небольшую задержку
-          setTimeout(() => {
-            console.log('Принудительное обновление состояния...');
-            setUser(prevUser => ({...userData}));
-          }, 100);
-        }
+        // Обновляем state после успешного сохранения в localStorage
+        console.log('✅ Обновляем React state...');
+        
+        // Устанавливаем заголовок авторизации сразу
+        axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+        
+        // Обновляем state в правильном порядке
+        console.log('Обновляем состояние: setLoading(false)...');
+        setLoading(false);
+        
+        console.log('Обновляем состояние: setToken(access_token)...');
+        setToken(access_token);
+        
+        console.log('Обновляем состояние: setUser(userData)...');
+        setUser(userData);
+        
+        console.log('Обновляем состояние: setIsInitialized(true)...');
+        setIsInitialized(true);
+        
+        console.log('=== ВХОД ЗАВЕРШЕН УСПЕШНО ===');
+        console.log('React state обновлен, пользователь должен видеть UserDashboard');
 
       return { success: true };
     } catch (error) {
@@ -233,20 +228,18 @@ export const AuthProvider = ({ children }) => {
       
       const { access_token, user: newUser } = response.data;
       
-      if (isMounted.current) {
-        setToken(access_token);
-        setUser(newUser);
+      setToken(access_token);
+      setUser(newUser);
         
-        // Сохраняем токен с дополнительными данными
-        localStorage.setItem('token', access_token);
-        localStorage.setItem('user_id', newUser.id);
-        localStorage.setItem('user_email', newUser.email);
-        localStorage.setItem('login_timestamp', Date.now().toString());
-        
-        axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-        
-        console.log('Успешная регистрация, пользователь:', newUser.email);
-      }
+      // Сохраняем токен с дополнительными данными
+      localStorage.setItem('token', access_token);
+      localStorage.setItem('user_id', newUser.id);
+      localStorage.setItem('user_email', newUser.email);
+      localStorage.setItem('login_timestamp', Date.now().toString());
+      
+      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+      
+      console.log('Успешная регистрация, пользователь:', newUser.email);
 
       return { success: true };
     } catch (error) {
@@ -259,27 +252,23 @@ export const AuthProvider = ({ children }) => {
   };
 
   const updateUser = (updatedUserData) => {
-    if (isMounted.current) {
-      setUser(prevUser => ({
-        ...prevUser,
-        ...updatedUserData
-      }));
-      
-      // Обновляем localStorage если изменился email
-      if (updatedUserData.email) {
-        localStorage.setItem('user_email', updatedUserData.email);
-      }
+    setUser(prevUser => ({
+      ...prevUser,
+      ...updatedUserData
+    }));
+    
+    // Обновляем localStorage если изменился email
+    if (updatedUserData.email) {
+      localStorage.setItem('user_email', updatedUserData.email);
     }
   };
 
   const logout = () => {
     console.log('Выполняется logout...');
     
-    if (isMounted.current) {
-      setUser(null);
-      setToken(null);
-      setIsInitialized(false);
-    }
+    setUser(null);
+    setToken(null);
+    setIsInitialized(false);
     
     // Очищаем все данные сессии
     localStorage.removeItem('token');

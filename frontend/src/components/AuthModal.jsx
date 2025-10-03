@@ -11,7 +11,7 @@ const AuthModal = ({ isOpen, onClose }) => {
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-md p-6 max-h-[95vh] overflow-y-auto">
+      <DialogContent className="p-6 max-h-[95vh] overflow-y-auto">
         {isLoginMode ? (
           <LoginForm 
             onSwitchToRegister={switchToRegister}

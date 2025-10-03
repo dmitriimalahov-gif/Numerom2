@@ -10,8 +10,9 @@ import UserDashboard from './UserDashboard';
 const MainDashboard = () => {
   const { user, loading, isInitialized } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [, forceUpdate] = useState({});
 
-  // Отладочное логирование
+  // Отладочное логирование и принудительное обновление
   useEffect(() => {
     console.log('MainDashboard render:', {
       user: user ? `${user.email} (ID: ${user.id})` : 'null',
@@ -19,10 +20,22 @@ const MainDashboard = () => {
       isInitialized,
       hasToken: !!localStorage.getItem('token')
     });
-  }, [user, loading, isInitialized]);
+    
+    // Принудительное обновление при изменении пользователя
+    if (user) {
+      console.log('MainDashboard: форсируем обновление после логина');
+      forceUpdate({});
+      
+      // Автоматически закрываем модал авторизации если пользователь авторизован
+      if (showAuthModal) {
+        console.log('MainDashboard: закрываем модал авторизации');
+        setShowAuthModal(false);
+      }
+    }
+  }, [user, loading, isInitialized, showAuthModal]);
 
-  // Показываем загрузку пока инициализируется аутентификация
-  if (loading || !isInitialized) {
+  // Показываем загрузку только при первой инициализации
+  if (loading && !isInitialized && !user) {
     console.log('MainDashboard: показываем загрузку, loading:', loading, 'isInitialized:', isInitialized);
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-sage-50 via-lavender-50 to-numerology-50">
@@ -39,22 +52,22 @@ const MainDashboard = () => {
   // If user is logged in, show user dashboard
   if (user) {
     console.log('MainDashboard: пользователь найден, показываем UserDashboard для:', user.email);
-    return <UserDashboard />;
+    return <UserDashboard key={user.id || user.email} />;
   }
 
   console.log('MainDashboard: пользователь не найден, показываем лендинг');
   console.log('Токен в localStorage:', localStorage.getItem('token') ? 'есть' : 'нет');
 
   const features = [
-    { icon: <Calculator className="w-6 h-6 text-white" />, title: 'Персональные числа', description: 'Число судьбы, души, управляющее число и их влияние на вашу жизнь', gradient: 'bg-gradient-to-br from-numerology-1 to-numerology-2' },
-    { icon: <Compass className="w-6 h-6 text-white" />, title: 'Нумерология', description: 'Квадрат Пифагора + Персональные числа (Объединенный раздел)', gradient: 'bg-gradient-to-br from-numerology-3 to-numerology-4' },
+    { icon: <Calculator className="w-6 h-6 text-white" />, title: 'Персональные числа', description: 'Число судьбы, души, управляющее число и их влияние на вашу жизнь', gradient: 'bg-gradient-to-br from-blue-500 to-cyan-500' },
+    { icon: <Compass className="w-6 h-6 text-white" />, title: 'Нумерология', description: 'Квадрат Пифагора + Персональные числа (Объединенный раздел)', gradient: 'bg-gradient-to-br from-teal-500 to-emerald-500' },
     { icon: <Clock className="w-6 h-6 text-white" />, title: 'Раху кала и мухурты', description: 'Ведическое расписание дня по городу и дате', gradient: 'bg-gradient-to-br from-orange-500 to-red-500' },
     { icon: <BarChart3 className="w-6 h-6 text-white" />, title: 'Графики энергий', description: 'Планетарные энергии и рекомендации на период', gradient: 'bg-gradient-to-br from-purple-500 to-indigo-600' },
     { icon: <FileText className="w-6 h-6 text-white" />, title: 'HTML отчёты', description: 'Скачивание брендированных HTML‑отчётов', gradient: 'bg-gradient-to-br from-emerald-500 to-teal-600' },
     { icon: <Users className="w-6 h-6 text-white" />, title: 'Пополнить баланс', description: 'Выберите пакет кредитов по удобной цене в евро', gradient: 'bg-gradient-to-br from-green-500 to-emerald-600' },
     { icon: <FileText className="w-6 h-6 text-white" />, title: 'Методические материалы', description: 'PDF‑материалы для обучения (для студентов)', gradient: 'bg-gradient-to-br from-rose-500 to-pink-600' },
     { icon: <Heart className="w-6 h-6 text-white" />, title: 'Совместимость', description: 'Анализ совместимости на основе дат рождения', gradient: 'bg-gradient-to-br from-yellow-500 to-orange-500' },
-    { icon: <Star className="w-6 h-6 text-white" />, title: 'Тест самопознания', description: '10 вопросов для глубокого понимания вашей личности', gradient: 'bg-gradient-to-br from-numerology-7 to-numerology-8' }
+    { icon: <Star className="w-6 h-6 text-white" />, title: 'Тест самопознания', description: '10 вопросов для глубокого понимания вашей личности', gradient: 'bg-gradient-to-br from-violet-500 to-purple-500' }
   ];
 
   const pricingPlans = [
@@ -98,9 +111,9 @@ const MainDashboard = () => {
               <p className="text-sm text-gray-600">Инструмент самопознания</p>
             </div>
           </div>
-          <Button 
+          <Button
             onClick={() => setShowAuthModal(true)}
-            className="numerology-gradient hover:opacity-90 transition-opacity"
+            className="numerology-gradient hover:shadow-xl hover:brightness-90 transition-all duration-200"
           >
             Войти
           </Button>
@@ -124,17 +137,17 @@ const MainDashboard = () => {
           </div>
           
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-            <Button 
-              size="lg" 
+            <Button
+              size="lg"
               onClick={() => setShowAuthModal(true)}
-              className="numerology-gradient hover:opacity-90 transition-opacity text-lg px-8 py-3"
+              className="numerology-gradient hover:shadow-xl hover:brightness-90 transition-all duration-200 text-lg px-8 py-3"
             >
               Начать путешествие
             </Button>
-            <Button 
-              size="lg" 
-              variant="outline" 
-              className="border-sage-300 text-sage-700 hover:bg-sage-50 text-lg px-8 py-3"
+            <Button
+              size="lg"
+              variant="outline"
+              className="relative border-2 border-[hsl(180,55%,45%)] text-[hsl(180,55%,45%)] hover:bg-[hsl(180,55%,45%)]/10 hover:shadow-lg transition-all text-lg px-8 py-3 font-semibold"
             >
               Узнать больше
             </Button>
@@ -191,8 +204,8 @@ const MainDashboard = () => {
       </section>
 
       {/* Pricing Section */}
-      <section className="py-20 px-4">
-        <div className="container mx-auto max-w-5xl">
+      <section className="py-20 px-4 sm:px-6 md:px-8">
+        <div className="container mx-auto max-w-5xl px-0">
           <div className="text-center mb-16">
             <h3 className="text-4xl font-bold text-gray-900 mb-4">
               Выберите свой план
@@ -202,33 +215,33 @@ const MainDashboard = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 md:gap-8">
             {pricingPlans.map((plan, index) => (
-              <Card key={index} className={`relative ${plan.popular ? 'ring-2 ring-lavender-400 scale-105' : ''} hover:shadow-lg transition-all duration-300 border-0 bg-white/80 backdrop-blur-sm`}>
+              <Card key={index} className={`relative w-full mt-6 flex flex-col ${plan.popular ? 'shadow-xl border-2 border-lavender-400' : ''} hover:shadow-lg transition-all duration-300 border-0 bg-white/80 backdrop-blur-sm`}>
                 {plan.popular && (
-                  <Badge className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-lavender-500 text-white">
+                  <Badge className="absolute -top-4 left-1/2 transform -translate-x-1/2 text-white font-bold px-4 py-1.5 shadow-xl text-sm z-10" style={{ backgroundColor: 'hsl(180, 55%, 45%)' }}>
                     Популярный
                   </Badge>
                 )}
-                <CardHeader className="text-center">
-                  <div className={`w-16 h-16 rounded-full ${plan.gradient} flex items-center justify-center mx-auto mb-4`}>
-                    <Shield className="w-8 h-8 text-white" />
+                <CardHeader className="text-center p-4 sm:p-6">
+                  <div className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full ${plan.gradient} flex items-center justify-center mx-auto mb-3 sm:mb-4`}>
+                    <Shield className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
                   </div>
-                  <CardTitle className="text-2xl text-gray-900">{plan.name}</CardTitle>
-                  <div className="text-3xl font-bold text-gray-900 mt-2">{plan.price}</div>
-                  <CardDescription className="text-lg text-gray-600">{plan.credits}</CardDescription>
+                  <CardTitle className="text-lg sm:text-xl md:text-2xl text-gray-900">{plan.name}</CardTitle>
+                  <div className="text-2xl sm:text-3xl font-bold text-gray-900 mt-2">{plan.price}</div>
+                  <CardDescription className="text-base sm:text-lg text-gray-600">{plan.credits}</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <ul className="space-y-3 mb-6">
+                <CardContent className="p-4 sm:p-6 flex flex-col flex-1">
+                  <ul className="space-y-2 sm:space-y-3 mb-4 sm:mb-6 flex-1">
                     {plan.features.map((feature, featureIndex) => (
-                      <li key={featureIndex} className="flex items-center text-gray-600">
-                        <div className="w-2 h-2 rounded-full bg-sage-400 mr-3"></div>
-                        {feature}
+                      <li key={featureIndex} className="flex items-start text-gray-600 text-sm sm:text-base">
+                        <div className="w-2 h-2 rounded-full bg-sage-400 mr-3 mt-2 flex-shrink-0"></div>
+                        <span className="leading-relaxed">{feature}</span>
                       </li>
                     ))}
                   </ul>
-                  <Button 
-                    className="w-full numerology-gradient hover:opacity-90 transition-opacity"
+                  <Button
+                    className="w-full numerology-gradient hover:shadow-xl hover:brightness-90 transition-all duration-200 text-sm sm:text-base py-2 sm:py-3 mt-auto"
                     onClick={() => setShowAuthModal(true)}
                   >
                     Выбрать план
@@ -249,10 +262,10 @@ const MainDashboard = () => {
           <p className="text-xl text-gray-600 mb-8">
             Присоединяйтесь к тысячам людей, которые уже открыли свой потенциал с помощью NUMEROM
           </p>
-          <Button 
-            size="lg" 
+          <Button
+            size="lg"
             onClick={() => setShowAuthModal(true)}
-            className="numerology-gradient hover:opacity-90 transition-opacity text-lg px-12 py-4"
+            className="numerology-gradient hover:shadow-xl hover:brightness-90 transition-all duration-200 text-lg px-12 py-4"
           >
             Начать сейчас
           </Button>

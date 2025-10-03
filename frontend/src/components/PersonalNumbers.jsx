@@ -8,7 +8,7 @@ import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { PLANET_COLORS } from './constants/colors';
 
-const PersonalNumbers = ({ fullScreen = false }) => {
+const PersonalNumbers = ({ fullScreen = false, onBack }) => {
   const { user } = useAuth();
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -309,7 +309,14 @@ ${typeInfo.details[number] || 'Интерпретация не найдена'}`
   const FloatingMenu = () => (
     <div className="fixed top-4 left-4 z-50">
       <Button 
-        onClick={() => window.history.back()}
+        onClick={() => {
+          if (onBack) {
+            onBack();
+          } else {
+            // Fallback для совместимости
+            window.location.reload();
+          }
+        }}
         className="bg-white/90 backdrop-blur-sm text-gray-700 hover:bg-white shadow-lg border"
       >
         <Menu className="w-4 h-4 mr-2" />

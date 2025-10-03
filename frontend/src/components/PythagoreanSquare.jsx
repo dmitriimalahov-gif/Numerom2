@@ -576,7 +576,7 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
                 
                 return (
                   <div key={`${rowIndex}-${colIndex}`} className="text-center p-2 rounded-lg bg-gray-50 border">
-                    <div className="text-xs text-gray-500">{planetName}</div>
+                    <div className="text-[10px] text-gray-500 truncate">{planetName}</div>
                     <div className="text-lg font-bold" style={{ color: PLANET_COLORS[planetKey] }}>
                       {digitCount}
                     </div>
@@ -786,7 +786,7 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
   };
 
   return (
-    <div className={`${fullScreen ? 'min-h-[calc(100vh-4rem)] py-3' : ''}`}>
+    <div className={`space-y-6 ${fullScreen ? 'min-h-[calc(100vh-4rem)] py-3' : ''}`}>
       {!fullScreen && (
         <Card className="numerology-gradient">
           <CardHeader className="text-white">
@@ -833,9 +833,11 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
       </Card>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{detailTitle}</DialogTitle></DialogHeader>
-          <div className="text-sm whitespace-pre-line leading-relaxed">{detailText}</div>
+        <DialogContent className="max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-xl">{detailTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="text-base whitespace-pre-line leading-relaxed mt-2 font-medium text-gray-900 overflow-y-auto flex-1">{detailText}</div>
         </DialogContent>
       </Dialog>
     </div>

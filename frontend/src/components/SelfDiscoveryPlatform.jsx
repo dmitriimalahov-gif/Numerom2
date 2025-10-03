@@ -283,19 +283,18 @@ const SelfDiscoveryPlatform = () => {
 
       <div className="grid md:grid-cols-3 gap-6">
         {subscriptionPlans.map((plan) => (
-          <Card 
+          <Card
             key={plan.id}
-            className={`border-2 relative transition-all duration-300 hover:shadow-lg ${
-              plan.popular ? 'ring-2 ring-offset-2' : ''
+            className={`border-2 relative transition-all duration-300 hover:shadow-lg mt-6 ${
+              plan.popular ? 'shadow-md' : ''
             }`}
-            style={{ 
-              borderColor: plan.color + '60',
-              ringColor: plan.popular ? plan.color : 'transparent'
+            style={{
+              borderColor: plan.popular ? plan.color : plan.color + '60'
             }}
           >
             {plan.popular && (
-              <Badge 
-                className="absolute -top-2 left-1/2 transform -translate-x-1/2 text-white"
+              <Badge
+                className="absolute -top-4 left-1/2 transform -translate-x-1/2 text-white font-bold px-4 py-1.5 shadow-xl text-sm z-10"
                 style={{ backgroundColor: plan.color }}
               >
                 Популярный

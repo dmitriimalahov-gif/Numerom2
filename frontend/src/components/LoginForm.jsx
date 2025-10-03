@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from './ui/alert';
 import { useAuth } from './AuthContext';
 
 const LoginForm = ({ onSwitchToRegister, onClose }) => {
-  const { login } = useAuth();
+  const { login, user } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -15,6 +15,14 @@ const LoginForm = ({ onSwitchToRegister, onClose }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [isSuccess, setIsSuccess] = useState(false);
+
+  // Автоматически закрываем модал когда пользователь появляется в контексте
+  useEffect(() => {
+    if (user && isSuccess) {
+      console.log('LoginForm: пользователь авторизован, закрываем модал');
+      onClose();
+    }
+  }, [user, isSuccess, onClose]);
 
   const handleChange = (e) => {
     setFormData({
@@ -31,15 +39,13 @@ const LoginForm = ({ onSwitchToRegister, onClose }) => {
     const result = await login(formData.email, formData.password);
     
     if (result.success) {
-      // Show success message briefly before closing
+      // Show success message and wait for user state to update
       setError('');
       setIsSuccess(true);
       setIsLoading(false);
       
-      // Add brief delay to show success state
-      setTimeout(() => {
-        onClose();
-      }, 1000);
+      console.log('LoginForm: логин успешен, ждем обновления состояния пользователя');
+      // Модал закроется автоматически через useEffect когда user появится в контексте
     } else {
       setError(result.error);
       setIsLoading(false);
@@ -49,7 +55,7 @@ const LoginForm = ({ onSwitchToRegister, onClose }) => {
   return (
     <Card className="w-full max-w-md mx-auto">
       <CardHeader className="text-center">
-        <CardTitle className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+        <CardTitle className="text-2xl font-bold bg-gradient-to-r from-[hsl(160,60%,50%)] via-[hsl(200,70%,55%)] to-[hsl(250,60%,55%)] bg-clip-text text-transparent">
           Добро пожаловать в NUMEROM
         </CardTitle>
         <CardDescription>
@@ -86,7 +92,7 @@ const LoginForm = ({ onSwitchToRegister, onClose }) => {
               value={formData.password}
               onChange={handleChange}
               required
-              placeholder="••••••••"
+              placeholder="Введите пароль..."
             />
           </div>
 

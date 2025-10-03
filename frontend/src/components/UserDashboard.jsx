@@ -3,9 +3,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback } from './ui/avatar';
-import { 
-  Sparkles, Calculator, Compass, Heart, HelpCircle, BarChart3, 
-  BookOpen, FileText, History, Settings, Grid3X3, Clock, MapPin,
+import {
+  Sparkles, Calculator, Compass, Heart, HelpCircle, BarChart3,
+  BookOpen, FileText, Settings, Grid3X3, Clock, MapPin,
   LogOut, CreditCard, Crown, Menu, User, Calendar, TrendingUp, Video
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
@@ -86,8 +86,7 @@ const UserDashboard = () => {
     { id: 'quiz', label: 'Тест личности', icon: <HelpCircle className="w-4 h-4" /> },
     { id: 'learning', label: 'Обучение', icon: <BookOpen className="w-4 h-4" /> },
     { id: 'consultations', label: 'Личные консультации', icon: <Video className="w-4 h-4" /> },
-    { id: 'report-export', label: 'Загрузка отчётов', icon: <FileText className="w-4 h-4" /> },
-    { id: 'history', label: 'История', icon: <History className="w-4 h-4" /> }
+    { id: 'report-export', label: 'Загрузка отчётов', icon: <FileText className="w-4 h-4" /> }
   ];
 
   // Добавить админские пункты меню для администраторов
@@ -137,15 +136,15 @@ const UserDashboard = () => {
     </div>
   );
 
-  const fullscreenSections = ['square', 'numerology', 'vedic-time', 'compatibility', 'learning', 'consultations', 'report-export'];
+  const fullscreenSections = [];
 
   const renderContent = () => {
     switch (activeSection) {
       case 'personal-data': return <PersonalDataForm />;
-      case 'credit-history': return <CreditHistory />;
-      case 'numerology': return <NumerologyDashboard fullScreen />;
+      case 'credit-history': return <CreditHistory onNavigate={handleSectionChange} />;
+      case 'numerology': return <NumerologyDashboard onBack={() => setActiveSection('home')} />;
       case 'name-numerology': return <NameNumerology />;
-      case 'square': return <PythagoreanSquare fullScreen />;
+      case 'square': return <PythagoreanSquare />;
       case 'vedic-time': return <VedicTimeCalculations />;
       case 'planetary-route': return <PlanetaryDailyRoute />;
       case 'compatibility': return <Compatibility />;
@@ -248,20 +247,21 @@ const UserDashboard = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                   {/* Стартовый пакет */}
-                  <div className="relative p-6 border-2 rounded-lg hover:shadow-md transition-shadow">
-                    <div className="text-center">
-                      <h3 className="text-lg font-bold mb-2">Стартовый</h3>
-                      <div className="text-3xl font-bold text-blue-600 mb-2">10 кредитов</div>
-                      <div className="text-2xl font-bold mb-4">0.99€</div>
-                      <div className="text-sm text-gray-600 mb-4">
+                  <div className="relative p-4 sm:p-6 border-2 rounded-lg hover:shadow-md transition-shadow w-full flex flex-col">
+                    <div className="text-center flex-1 flex flex-col">
+                      <h3 className="text-base sm:text-lg font-bold mb-2">Стартовый</h3>
+                      <div className="text-2xl sm:text-3xl font-bold text-blue-600 mb-2">10 кредитов</div>
+                      <div className="text-xl sm:text-2xl font-bold mb-2">0.99€</div>
+                      <div className="line-through text-gray-500 text-sm invisible">-</div>
+                      <div className="text-sm text-gray-600 mb-3 sm:mb-4 flex-1">
                         <div>0.099€ за кредит</div>
                         <div className="text-xs">+ месяц доступа</div>
                       </div>
-                      <Button 
-                        onClick={() => setPaymentOpen(true)} 
-                        className="w-full"
+                      <Button
+                        onClick={() => setPaymentOpen(true)}
+                        className="w-full text-sm sm:text-base py-2 sm:py-3 mt-auto"
                         variant="outline"
                       >
                         Купить
@@ -270,24 +270,24 @@ const UserDashboard = () => {
                   </div>
 
                   {/* Популярный пакет */}
-                  <div className="relative p-6 border-2 border-green-500 rounded-lg hover:shadow-md transition-shadow bg-green-50">
+                  <div className="relative p-4 sm:p-6 border-2 border-green-500 rounded-lg hover:shadow-md transition-shadow bg-green-50 w-full flex flex-col">
                     <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-                      <span className="bg-green-500 text-white px-4 py-1 rounded-full text-sm font-medium">
+                      <span className="bg-green-500 text-white px-3 sm:px-4 py-1 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap">
                         Популярный
                       </span>
                     </div>
-                    <div className="text-center">
-                      <h3 className="text-lg font-bold mb-2">Базовый</h3>
-                      <div className="text-3xl font-bold text-green-600 mb-2">150 кредитов</div>
-                      <div className="text-2xl font-bold mb-2">9.99€</div>
+                    <div className="text-center flex-1 flex flex-col">
+                      <h3 className="text-base sm:text-lg font-bold mb-2">Базовый</h3>
+                      <div className="text-2xl sm:text-3xl font-bold text-green-600 mb-2">150 кредитов</div>
+                      <div className="text-xl sm:text-2xl font-bold mb-2">9.99€</div>
                       <div className="line-through text-gray-500 text-sm">14.85€</div>
-                      <div className="text-sm text-green-600 mb-4">
+                      <div className="text-sm text-green-600 mb-3 sm:mb-4 flex-1">
                         <div>0.067€ за кредит</div>
                         <div className="text-xs font-medium">+ месяц доступа</div>
                       </div>
-                      <Button 
-                        onClick={() => setPaymentOpen(true)} 
-                        className="w-full bg-green-600 hover:bg-green-700"
+                      <Button
+                        onClick={() => setPaymentOpen(true)}
+                        className="w-full bg-green-600 hover:bg-green-700 text-sm sm:text-base py-2 sm:py-3 mt-auto"
                       >
                         Купить со скидкой
                       </Button>
@@ -295,24 +295,24 @@ const UserDashboard = () => {
                   </div>
 
                   {/* Выгодный пакет */}
-                  <div className="relative p-6 border-2 border-purple-500 rounded-lg hover:shadow-md transition-shadow bg-purple-50">
+                  <div className="relative p-4 sm:p-6 border-2 border-purple-500 rounded-lg hover:shadow-md transition-shadow bg-purple-50 w-full flex flex-col">
                     <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-                      <span className="bg-purple-500 text-white px-4 py-1 rounded-full text-sm font-medium">
+                      <span className="bg-purple-500 text-white px-2 sm:px-4 py-1 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap">
                         Максимум выгоды
                       </span>
                     </div>
-                    <div className="text-center">
-                      <h3 className="text-lg font-bold mb-2">Профессиональный</h3>
-                      <div className="text-3xl font-bold text-purple-600 mb-2">1000 кредитов</div>
-                      <div className="text-2xl font-bold mb-2">66.6€</div>
+                    <div className="text-center flex-1 flex flex-col">
+                      <h3 className="text-base sm:text-lg font-bold mb-2">Профессиональный</h3>
+                      <div className="text-2xl sm:text-3xl font-bold text-purple-600 mb-2">1000 кредитов</div>
+                      <div className="text-xl sm:text-2xl font-bold mb-2">66.6€</div>
                       <div className="line-through text-gray-500 text-sm">199.8€</div>
-                      <div className="text-sm text-purple-600 mb-4">
+                      <div className="text-sm text-purple-600 mb-3 sm:mb-4 flex-1">
                         <div>0.067€ за кредит</div>
                         <div className="text-xs font-medium">+ год доступа</div>
                       </div>
-                      <Button 
-                        onClick={() => setPaymentOpen(true)} 
-                        className="w-full bg-purple-600 hover:bg-purple-700"
+                      <Button
+                        onClick={() => setPaymentOpen(true)}
+                        className="w-full bg-purple-600 hover:bg-purple-700 text-sm sm:text-base py-2 sm:py-3 mt-auto"
                       >
                         Максимальная выгода
                       </Button>
@@ -439,7 +439,7 @@ const UserDashboard = () => {
                       <Button 
                         size="sm" 
                         className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-xs px-2 py-1 h-6 hover:from-purple-700 hover:to-indigo-700" 
-                        onClick={() => {setPaymentOpen(true); setMenuOpen(false);}}
+                        onClick={() => {setPaymentOpen(true); () => setMenuOpen(false)();}}
                       >
                         Premium
                       </Button>
@@ -457,7 +457,7 @@ const UserDashboard = () => {
                   <Button
                     variant="ghost"
                     className="w-full justify-start p-3 h-auto text-left text-red-600 hover:bg-red-50"
-                    onClick={() => {logout(); setMenuOpen(false);}}
+                    onClick={() => {logout(); () => setMenuOpen(false)();}}
                   >
                     <LogOut className="w-4 h-4 mr-3" />
                     Выйти
@@ -497,21 +497,10 @@ const UserDashboard = () => {
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-6 flex gap-4">
-        {/* Desktop menu - всегда белый фон, фиксированная ширина */}
-        <aside className="hidden md:block w-64 flex-shrink-0">
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm sticky top-20">
-            <div className="p-4 overflow-y-auto max-h-[calc(100vh-6rem)]">
-              {renderLeftMenu()}
-            </div>
-          </div>
-        </aside>
-        
-        {/* Enhanced Mobile menu */}
-        {menuOpen && (
-          <div className="fixed inset-0 top-0 z-50 md:hidden">
-            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setMenuOpen(false)}></div>
-            <div className="fixed left-0 top-0 h-full w-80 max-w-[85vw] bg-white shadow-xl overflow-y-auto">
+      {/* Enhanced Mobile menu */}
+      <div className={`fixed inset-0 top-0 z-50 md:hidden transition-opacity duration-300 ${menuOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setMenuOpen(false)}></div>
+          <div className={`fixed left-0 top-0 h-full w-80 max-w-[85vw] bg-white shadow-xl overflow-y-auto transition-transform duration-300 ease-out ${menuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
               {/* Mobile Menu Header */}
               <div className="p-4 border-b bg-white">
                 <div className="flex items-center justify-between">
@@ -554,7 +543,7 @@ const UserDashboard = () => {
                       <Button 
                         size="sm" 
                         className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-xs px-2 py-1 h-6 hover:from-purple-700 hover:to-indigo-700" 
-                        onClick={() => {setPaymentOpen(true); setMenuOpen(false);}}
+                        onClick={() => {setPaymentOpen(true); () => setMenuOpen(false)();}}
                       >
                         Premium
                       </Button>
@@ -572,7 +561,7 @@ const UserDashboard = () => {
                   <Button
                     variant="ghost"
                     className="w-full justify-start p-3 h-auto text-left text-red-600 hover:bg-red-50"
-                    onClick={() => {logout(); setMenuOpen(false);}}
+                    onClick={() => {logout(); () => setMenuOpen(false)();}}
                   >
                     <LogOut className="w-4 h-4 mr-3" />
                     <span className="text-sm font-medium">Выйти</span>
@@ -580,10 +569,19 @@ const UserDashboard = () => {
                 </div>
               </div>
             </div>
+      </div>
+
+      <div className="mx-auto py-6 flex gap-4">
+        {/* Desktop menu - всегда белый фон, фиксированная ширина */}
+        <aside className="hidden md:block w-64 flex-shrink-0">
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm sticky top-20">
+            <div className="p-4 overflow-y-auto max-h-[calc(100vh-6rem)]">
+              {renderLeftMenu()}
+            </div>
           </div>
-        )}
-        
-        <div className="flex-1">{renderContent()}</div>
+        </aside>
+
+        <div className="flex-1 p-4 md:p-6">{renderContent()}</div>
       </div>
 
       <PaymentModal isOpen={paymentOpen} onClose={() => setPaymentOpen(false)} />

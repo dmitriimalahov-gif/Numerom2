@@ -13,6 +13,7 @@ const PlanetaryDailyRoute = () => {
   const [error, setError] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [activeTab, setActiveTab] = useState('daily');
+  const [currentTime, setCurrentTime] = useState(new Date());
   const { user } = useAuth();
 
   const fetchRouteData = async (period = 'daily', date = selectedDate) => {
@@ -79,11 +80,21 @@ const PlanetaryDailyRoute = () => {
   };
 
   const getCurrentTime = () => {
-    return new Date().toLocaleTimeString('ru-RU', { 
-      hour: '2-digit', 
-      minute: '2-digit' 
+    return currentTime.toLocaleTimeString('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
     });
   };
+
+  // Обновление времени каждую секунду
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
 
   const isCurrentHour = (startTime, endTime) => {
     const now = new Date();
@@ -427,19 +438,21 @@ const PlanetaryDailyRoute = () => {
             </div>
             <div className="grid grid-cols-7 gap-2">
               {monthlyData.daily_schedule?.map((day, index) => (
-                <div key={index} className="p-2 text-center border rounded-lg hover:bg-gray-50">
+                <div key={index} className="p-2 text-center border rounded-lg hover:bg-gray-50 min-h-[80px] flex flex-col justify-between">
                   <div className="text-sm font-semibold">
                     {new Date(day.date).getDate()}
                   </div>
-                  <div className="text-xs text-gray-600 truncate">
+                  <div className="text-[10px] text-gray-600 leading-tight break-words">
                     {day.ruling_planet?.split('(')[0]?.trim() || ''}
                   </div>
-                  {day.favorable_activities?.length >= 3 && (
-                    <div className="w-2 h-2 bg-green-500 rounded-full mx-auto mt-1"></div>
-                  )}
-                  {day.avoid_activities?.length >= 3 && (
-                    <div className="w-2 h-2 bg-red-500 rounded-full mx-auto mt-1"></div>
-                  )}
+                  <div className="flex justify-center gap-1 mt-1">
+                    {day.favorable_activities?.length >= 3 && (
+                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    )}
+                    {day.avoid_activities?.length >= 3 && (
+                      <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
