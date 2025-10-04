@@ -77,20 +77,19 @@ agenthub/agents/youtube/db
 .cache/
 
 # Mobile development
-android-sdk/ frontend/node_modules/.cache/default-development/0.pack
-frontend/node_modules/.cache/default-development/0.pack
-uploads/lessons/videos/6ebd19dc-b702-4834-9f93-7a3a33985fc2.mp4
-uploads/consultations/videos/85984d36-3a1e-49b6-8cd2-0aff93baa5d7.mp4
-uploads/consultations/videos/879d6ff4-31b7-4b7f-ab00-2afe4e1cefd6.mp4
-uploads/lessons/videos/736bdc6a-d106-4cf5-8761-14f71adfdafc.mp4
--e 
+android-sdk/
+
 # Environment files
 *.env
 *.env.*
-uploads/consultations/videos/5e4f2161-55e1-45cc-9208-daf9d59279c4.mp4
-uploads/consultations/videos/e4691f43-c98f-49c7-bf9a-b3f75dcdd7a0.mp4
-uploads/consultations/videos/c60ee4fb-be5d-4a42-a852-3e7ba70b0f2f.mp4
--e 
-# Environment files
-*.env
-*.env.*
+
+# Uploaded media files - videos, pdfs, images
+backend/uploads/
+uploads/
+backend/lessons_videos/
+backend/lessons_pdf/
+backend/consultations_videos/
+backend/consultations_pdf/
+
+# Cache
+frontend/node_modules/.cache/

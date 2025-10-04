@@ -15,7 +15,7 @@ import ConsultationPDFViewer from './ConsultationPDFViewer';
 
 const MultipleLessonAdmin = () => {
   const { user } = useAuth();
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
   
   // Основные состояния
   const [lessons, setLessons] = useState([]);
@@ -41,6 +41,7 @@ const MultipleLessonAdmin = () => {
   
   // Состояния для загрузки файлов (ТОЧНО КАК В КОНСУЛЬТАЦИЯХ)
   const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [videoUploadProgress, setVideoUploadProgress] = useState(0);
   
   // Состояния для модальных окон предпросмотра
   const [selectedVideo, setSelectedVideo] = useState(null);
@@ -363,42 +364,59 @@ const MultipleLessonAdmin = () => {
     }
   };
 
-  // ЗАГРУЗКА ВИДЕО ДЛЯ УРОКА - ТОЧНАЯ КОПИЯ ИЗ КОНСУЛЬТАЦИЙ
+  // ЗАГРУЗКА ВИДЕО ДЛЯ УРОКА
   const handleLessonVideoUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
     setUploadingVideo(true);
+    setVideoUploadProgress(0);
 
     try {
       const formData = new FormData();
       formData.append('file', file);
 
-      // ИСПОЛЬЗУЕМ ТОТ ЖЕ ENDPOINT ЧТО И ДЛЯ КОНСУЛЬТАЦИЙ - РАБОТАЮЩИЙ!
-      const response = await fetch(`${backendUrl}/api/admin/consultations/upload-video`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: formData
-      });
+      // Используем XMLHttpRequest для отслеживания прогресса
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
 
-      if (response.ok) {
-        const result = await response.json();
-        setEditingLesson(prev => ({
-          ...prev,
-          video_file_id: result.file_id,
-          video_filename: result.filename
-        }));
-        alert('Видео успешно загружено!');
-      } else {
-        alert('Ошибка загрузки видео');
-      }
+        // Отслеживание прогресса загрузки
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const percentComplete = Math.round((e.loaded / e.total) * 100);
+            setVideoUploadProgress(percentComplete);
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status === 200) {
+            const result = JSON.parse(xhr.responseText);
+            setEditingLesson(prev => ({
+              ...prev,
+              video_file_id: result.file_id,
+              video_filename: result.filename
+            }));
+            resolve();
+          } else {
+            alert('Ошибка загрузки видео');
+            reject(new Error('Upload failed'));
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          reject(new Error('Network error'));
+        });
+
+        xhr.open('POST', `${backendUrl}/api/admin/lessons/upload-video`);
+        xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`);
+        xhr.send(formData);
+      });
     } catch (error) {
       console.error('Ошибка загрузки видео урока:', error);
       alert('Ошибка загрузки видео');
     } finally {
       setUploadingVideo(false);
+      setVideoUploadProgress(0);
     }
   };
 
@@ -670,11 +688,12 @@ const MultipleLessonAdmin = () => {
       {/* Заголовок */}
       <Card className="bg-gradient-to-r from-purple-600 to-blue-600">
         <CardHeader className="text-white">
-          <CardTitle className="text-2xl flex items-center">
-            <BookOpen className="w-6 h-6 mr-2" />
-            Админ-панель: Редактор уроков NumerOM
+          <CardTitle className="text-lg sm:text-2xl flex items-center">
+            <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 mr-2" />
+            <span className="hidden sm:inline">Админ-панель: Редактор уроков NumerOM</span>
+            <span className="sm:hidden">Редактор уроков</span>
           </CardTitle>
-          <CardDescription className="text-white/90">
+          <CardDescription className="text-white/90 text-sm">
             Создавайте и редактируйте уроки, управляйте контентом и материалами
           </CardDescription>
         </CardHeader>
@@ -682,17 +701,17 @@ const MultipleLessonAdmin = () => {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="grid w-full grid-cols-2 lg:grid-cols-3">
-          <TabsTrigger value="lessons-list" className="flex items-center gap-2">
+          <TabsTrigger value="lessons-list" className="flex items-center justify-center gap-1 sm:gap-2">
             <BookOpen className="w-4 h-4" />
-            <span className="hidden sm:inline">Список уроков</span>
+            <span className="text-xs sm:text-sm">Список</span>
           </TabsTrigger>
-          <TabsTrigger value="create-lesson" className="flex items-center gap-2">
+          <TabsTrigger value="create-lesson" className="flex items-center justify-center gap-1 sm:gap-2">
             <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Создать урок</span>
+            <span className="text-xs sm:text-sm">Создать</span>
           </TabsTrigger>
-          <TabsTrigger value="lesson-editor" className="flex items-center gap-2" disabled={!editingLesson}>
+          <TabsTrigger value="lesson-editor" className="flex items-center justify-center gap-1 sm:gap-2" disabled={!editingLesson}>
             <Edit className="w-4 h-4" />
-            <span className="hidden sm:inline">Редактор</span>
+            <span className="text-xs sm:text-sm">Редактор</span>
           </TabsTrigger>
         </TabsList>
 
@@ -700,16 +719,18 @@ const MultipleLessonAdmin = () => {
         <TabsContent value="lessons-list" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center justify-between">
+              <CardTitle className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <span>Все уроки</span>
-                <div className="flex gap-2">
-                  <Button onClick={syncFirstLesson} variant="outline" size="sm">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Button onClick={syncFirstLesson} variant="outline" size="sm" className="w-full sm:w-auto">
                     <BookOpen className="w-4 h-4 mr-2" />
-                    Синх. первого урока
+                    <span className="hidden sm:inline">Синх. первого урока</span>
+                    <span className="sm:hidden">Синхронизация</span>
                   </Button>
-                  <Button onClick={() => setActiveTab('create-lesson')}>
+                  <Button onClick={() => setActiveTab('create-lesson')} className="w-full sm:w-auto">
                     <Plus className="w-4 h-4 mr-2" />
-                    Создать новый урок
+                    <span className="hidden sm:inline">Создать новый урок</span>
+                    <span className="sm:hidden">Создать урок</span>
                   </Button>
                 </div>
               </CardTitle>
@@ -744,11 +765,11 @@ const MultipleLessonAdmin = () => {
                           : 'border-l-4 border-l-gray-300'
                       }`}
                     >
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between">
+                      <CardContent className="p-3 sm:p-4">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                           <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-2">
-                              <h4 className="font-semibold text-lg">{lesson.title}</h4>
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
+                              <h4 className="font-semibold text-base sm:text-lg">{lesson.title}</h4>
                               {lesson.id === 'lesson_numerom_intro' && (
                                 <Badge className="bg-blue-100 text-blue-800 text-xs">
                                   Первый урок
@@ -757,23 +778,23 @@ const MultipleLessonAdmin = () => {
                               {lesson.source && (
                                 <Badge variant="outline" className="text-xs">
                                   {lesson.source === 'lesson_system' ? 'Системный' :
-                                   lesson.source === 'custom_lessons' ? 'Пользовательский' : 
+                                   lesson.source === 'custom_lessons' ? 'Пользовательский' :
                                    'Видео урок'}
                                 </Badge>
                               )}
                             </div>
-                            
-                            <p className="text-sm text-gray-600 mb-3">
+
+                            <p className="text-xs sm:text-sm text-gray-600 mb-3 line-clamp-2">
                               {lesson.description || 'Описание отсутствует'}
                             </p>
-                            
-                            <div className="flex items-center gap-2 mb-3">
-                              <Badge variant="outline">Модуль: {lesson.module || 'Не указан'}</Badge>
-                              <Badge variant="outline">
+
+                            <div className="flex flex-wrap items-center gap-2 mb-3">
+                              <Badge variant="outline" className="text-xs">Модуль: {lesson.module || 'Не указан'}</Badge>
+                              <Badge variant="outline" className="text-xs">
                                 Баллы: {lesson.points_required || 0}
                                 {lesson.points_required === 0 && ' (Бесплатно)'}
                               </Badge>
-                              <Badge variant={lesson.is_active ? "default" : "secondary"}>
+                              <Badge variant={lesson.is_active ? "default" : "secondary"} className="text-xs">
                                 {lesson.is_active ? "Активен" : "Неактивен"}
                               </Badge>
                             </div>
@@ -805,14 +826,15 @@ const MultipleLessonAdmin = () => {
                               )}
                             </div>
                           </div>
-                          
-                          <div className="flex gap-2 ml-4">
+
+                          <div className="flex gap-2 sm:ml-4">
                             <Button
                               size="sm"
                               variant="outline"
                               onClick={() => loadLessonForEditing(lesson.id)}
                               disabled={lesson.source === 'lesson_system'}
                               title={lesson.source === 'lesson_system' ? 'Системный урок нельзя редактировать напрямую' : 'Редактировать урок'}
+                              className="flex-shrink-0"
                             >
                               <Edit className="w-4 h-4" />
                             </Button>
@@ -820,7 +842,7 @@ const MultipleLessonAdmin = () => {
                               size="sm"
                               variant="outline"
                               onClick={() => deleteLesson(lesson.id)}
-                              className="text-red-600 hover:text-red-800"
+                              className="text-red-600 hover:text-red-800 flex-shrink-0"
                               disabled={lesson.id === 'lesson_numerom_intro'}
                               title={lesson.id === 'lesson_numerom_intro' ? 'Нельзя удалить первый урок' : 'Удалить урок'}
                             >
@@ -1244,16 +1266,29 @@ const MultipleLessonAdmin = () => {
                             className="w-full"
                             disabled={uploadingVideo}
                           />
-                          {uploadingVideo && <p className="text-sm text-blue-600 mt-2">Загружается видео...</p>}
+                          {uploadingVideo && (
+                            <div className="mt-2">
+                              <div className="flex justify-between text-sm text-blue-600 mb-1">
+                                <span>Загружается видео...</span>
+                                <span>{videoUploadProgress}%</span>
+                              </div>
+                              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                <div
+                                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                                  style={{ width: `${videoUploadProgress}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                          )}
                           {editingLesson.video_filename && (
                             <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded flex justify-between items-center">
                               <p className="text-sm text-green-600">✓ Видео: {editingLesson.video_filename}</p>
-                              <Button 
-                                size="sm" 
+                              <Button
+                                size="sm"
                                 variant="outline"
                                 onClick={() => {
-                                  const videoUrl = editingLesson.video_file_id 
-                                    ? `${backendUrl}/api/consultations/video/${editingLesson.video_file_id}`
+                                  const videoUrl = editingLesson.video_file_id
+                                    ? `${backendUrl}/api/lessons/video/${editingLesson.video_file_id}`
                                     : editingLesson.video_url;
                                   setSelectedVideo({
                                     url: videoUrl,

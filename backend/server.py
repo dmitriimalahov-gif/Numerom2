@@ -53,7 +53,7 @@ load_dotenv(ROOT_DIR / '.env')
 # Mongo
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ.get('DB_NAME', 'test_database')]
+db = client[os.environ.get('MONGODB_DATABASE')]
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -3930,23 +3930,30 @@ async def upload_lesson_video(
 ):
     """Загрузка видео файла для урока (упрощенный endpoint)"""
     try:
+        logger.info(f"Starting lesson video upload for user: {current_user.get('user_id')}")
+
         # Проверить права администратора
         admin_user = await check_admin_rights(current_user, require_super_admin=True)
-        
+        logger.info(f"Admin rights verified for user: {admin_user}")
+
         # Проверяем тип файла
         if not file.content_type.startswith('video/'):
             raise HTTPException(status_code=400, detail='Файл должен быть видео')
-        
+
         # Генерируем уникальное имя файла
         file_id = str(uuid.uuid4())
         file_extension = Path(file.filename).suffix
         file_path = LESSONS_VIDEO_DIR / f"{file_id}{file_extension}"
-        
+
+        logger.info(f"Saving video file to: {file_path}")
+
         # Сохраняем файл
         with open(file_path, 'wb') as f:
             content = await file.read()
             f.write(content)
-        
+
+        logger.info(f"Video file saved successfully. Size: {len(content)} bytes")
+
         # Сохраняем информацию в базу данных
         video_record = {
             'id': file_id,
@@ -3958,9 +3965,11 @@ async def upload_lesson_video(
             'created_at': datetime.now().isoformat(),
             'file_type': 'lesson_video'
         }
-        
-        await db.uploaded_files.insert_one(video_record)
-        
+
+        logger.info(f"Inserting video record into DB: {video_record}")
+        result = await db.uploaded_files.insert_one(video_record)
+        logger.info(f"Video record inserted with _id: {result.inserted_id}")
+
         return {
             'success': True,
             'file_id': file_id,
@@ -4029,18 +4038,87 @@ async def upload_lesson_pdf(
         raise HTTPException(status_code=500, detail=f'Ошибка при загрузке PDF урока: {str(e)}')
 
 # Endpoints для получения файлов уроков
-@app.get("/api/lessons/video/{file_id}")
-async def get_lesson_video(file_id: str):
-    """Получить видео урока по ID"""
+@app.api_route("/api/lessons/video/{file_id}", methods=["GET", "HEAD"])
+async def get_lesson_video(file_id: str, request: Request):
+    """Получить видео урока по ID с поддержкой Range requests"""
     try:
         file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'lesson_video'})
         if not file_record:
             raise HTTPException(status_code=404, detail="Video not found")
-        
+
         file_path = Path(file_record['file_path'])
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="Video file not found on disk")
-        
+
+        file_size = file_record['file_size']
+
+        # Обработка Range запросов для HEAD и GET
+        range_header = request.headers.get('range')
+
+        # Для HEAD запросов возвращаем только заголовки
+        if request.method == "HEAD":
+            if range_header:
+                # Parse range header для HEAD запроса
+                import re
+                match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+                if match:
+                    start = int(match.group(1))
+                    end = int(match.group(2)) if match.group(2) else file_size - 1
+                    end = min(end, file_size - 1)
+                    content_length = end - start + 1
+
+                    return Response(
+                        status_code=206,
+                        headers={
+                            'Content-Range': f'bytes {start}-{end}/{file_size}',
+                            'Accept-Ranges': 'bytes',
+                            'Content-Length': str(content_length),
+                            'Content-Type': file_record['content_type'],
+                            'Access-Control-Allow-Origin': '*',
+                        }
+                    )
+
+            return Response(
+                headers={
+                    'Accept-Ranges': 'bytes',
+                    'Content-Type': file_record['content_type'],
+                    'Content-Length': str(file_size),
+                    'Access-Control-Allow-Origin': '*',
+                }
+            )
+
+        if range_header:
+            # Parse range header (format: "bytes=start-end")
+            import re
+            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+            if match:
+                start = int(match.group(1))
+                end = int(match.group(2)) if match.group(2) else file_size - 1
+                end = min(end, file_size - 1)
+
+                content_length = end - start + 1
+
+                # Read the requested range
+                with open(file_path, 'rb') as f:
+                    f.seek(start)
+                    data = f.read(content_length)
+
+                return Response(
+                    content=data,
+                    status_code=206,
+                    headers={
+                        'Content-Range': f'bytes {start}-{end}/{file_size}',
+                        'Accept-Ranges': 'bytes',
+                        'Content-Length': str(content_length),
+                        'Content-Type': file_record['content_type'],
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                        'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
+                    },
+                    media_type=file_record['content_type']
+                )
+
+        # Если Range не запрошен, возвращаем весь файл
         return FileResponse(
             path=str(file_path),
             media_type=file_record['content_type'],
@@ -4050,7 +4128,7 @@ async def get_lesson_video(file_id: str):
                 'Content-Disposition': 'inline',
                 'Access-Control-Allow-Origin': '*',
                 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+                'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
             }
         )
     except HTTPException:
@@ -4726,4 +4804,4 @@ app.add_middleware(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

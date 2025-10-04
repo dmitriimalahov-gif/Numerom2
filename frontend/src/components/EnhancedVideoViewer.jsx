@@ -72,8 +72,13 @@ const EnhancedVideoViewer = ({
     }
   };
 
-  const handleVideoError = () => {
+  const handleVideoError = (e) => {
     console.error('Video loading error for URL:', videoUrl);
+    console.error('Video error details:', e);
+    if (videoRef.current && videoRef.current.error) {
+      console.error('Video element error code:', videoRef.current.error.code);
+      console.error('Video element error message:', videoRef.current.error.message);
+    }
     setLoading(false);
     setError(true);
   };
@@ -279,7 +284,6 @@ const EnhancedVideoViewer = ({
                   onError={handleVideoError}
                   controls={isMobile}
                   playsInline
-                  crossOrigin="anonymous"
                 >
                   {consultation?.subtitles_file_id && showSubtitles && (
                     <track

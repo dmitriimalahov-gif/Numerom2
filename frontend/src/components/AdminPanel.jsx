@@ -336,13 +336,26 @@ const AdminPanel = () => {
   // Загрузка видео для консультации
   const handleConsultationVideoUpload = async (event) => {
     const file = event.target.files[0];
-    if (!file) return;
+
+    console.log('=== FRONTEND: НАЧАЛО ЗАГРУЗКИ ВИДЕО ===');
+    console.log('Файл:', file);
+    console.log('Имя файла:', file?.name);
+    console.log('Тип файла:', file?.type);
+    console.log('Размер файла:', file?.size, 'байт', file ? `(${(file.size / 1024 / 1024).toFixed(2)} MB)` : '');
+
+    if (!file) {
+      console.error('ОШИБКА: Файл не выбран!');
+      return;
+    }
 
     setUploadingVideo(true);
 
     try {
       const formData = new FormData();
       formData.append('file', file);
+
+      console.log('FormData создан, файл добавлен');
+      console.log('Отправляем запрос на:', `${backendUrl}/api/admin/consultations/upload-video`);
 
       const response = await fetch(`${backendUrl}/api/admin/consultations/upload-video`, {
         method: 'POST',
@@ -352,20 +365,28 @@ const AdminPanel = () => {
         body: formData
       });
 
+      console.log('Ответ получен. Статус:', response.status, response.statusText);
+
       if (response.ok) {
         const result = await response.json();
+        console.log('✅ УСПЕХ! Результат:', result);
         setEditingConsultation(prev => ({
           ...prev,
           video_file_id: result.file_id,
           video_filename: result.filename
         }));
+        alert(`Видео успешно загружено: ${result.filename}`);
       } else {
-        alert('Ошибка загрузки видео');
+        const errorText = await response.text();
+        console.error('❌ ОШИБКА от сервера:', errorText);
+        alert(`Ошибка загрузки видео: ${errorText}`);
       }
     } catch (error) {
-      console.error('Ошибка загрузки видео консультации:', error);
+      console.error('❌ КРИТИЧЕСКАЯ ОШИБКА при загрузке:', error);
+      alert(`Ошибка загрузки видео: ${error.message}`);
     } finally {
       setUploadingVideo(false);
+      console.log('=== FRONTEND: ЗАВЕРШЕНИЕ ЗАГРУЗКИ ===');
     }
   };
 
@@ -1694,9 +1715,9 @@ const AdminPanel = () => {
   const renderConsultationsTab = () => (
     <div className="space-y-6">
       {/* Header with Create Button */}
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold">Личные консультации</h3>
-        <Button 
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <h3 className="text-base sm:text-lg font-semibold">Личные консультации</h3>
+        <Button
           onClick={() => {
             setEditingConsultation({
               isNew: true,
@@ -1709,9 +1730,11 @@ const AdminPanel = () => {
               expires_at: ''
             });
           }}
+          className="w-full sm:w-auto text-sm"
         >
           <Plus className="w-4 h-4 mr-2" />
-          Создать консультацию
+          <span className="hidden sm:inline">Создать консультацию</span>
+          <span className="sm:hidden">Создать</span>
         </Button>
       </div>
 
@@ -1775,7 +1798,7 @@ const AdminPanel = () => {
                   <option value="">Выберите ученика</option>
                   {filteredUsersForConsultation.map(user => (
                     <option key={user.id} value={user.id}>
-                      {user.full_name || user.email} - {user.email}
+                      {user.full_name ? `${user.full_name} (${user.email})` : user.email}
                     </option>
                   ))}
                 </select>
@@ -3333,50 +3356,50 @@ const AdminPanel = () => {
   const renderUsersTab = () => (
     <div className="space-y-6">
       {/* Статистика */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center space-x-2">
-              <Users className="h-4 w-4 text-blue-600" />
-              <div>
-                <p className="text-xs text-muted-foreground">Всего учеников</p>
-                <p className="text-lg font-bold">{users?.length || 0}</p>
+              <Users className="h-4 w-4 text-blue-600 flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground truncate">Всего учеников</p>
+                <p className="text-base md:text-lg font-bold">{users?.length || 0}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center space-x-2">
-              <Award className="h-4 w-4 text-green-600" />
-              <div>
-                <p className="text-xs text-muted-foreground">Premium учеников</p>
-                <p className="text-lg font-bold">{users?.filter(u => u.is_premium)?.length || 0}</p>
+              <Award className="h-4 w-4 text-green-600 flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground truncate">Premium</p>
+                <p className="text-base md:text-lg font-bold">{users?.filter(u => u.is_premium)?.length || 0}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center space-x-2">
-              <CreditCard className="h-4 w-4 text-orange-600" />
-              <div>
-                <p className="text-xs text-muted-foreground">Всего кредитов</p>
-                <p className="text-lg font-bold">{users?.reduce((sum, u) => sum + (u.credits_remaining || 0), 0) || 0}</p>
+              <CreditCard className="h-4 w-4 text-orange-600 flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground truncate">Кредитов</p>
+                <p className="text-base md:text-lg font-bold">{users?.reduce((sum, u) => sum + (u.credits_remaining || 0), 0) || 0}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center space-x-2">
-              <TrendingUp className="h-4 w-4 text-purple-600" />
-              <div>
-                <p className="text-xs text-muted-foreground">Средний прогресс</p>
-                <p className="text-lg font-bold">
+              <TrendingUp className="h-4 w-4 text-purple-600 flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground truncate">Прогресс</p>
+                <p className="text-base md:text-lg font-bold">
                   {users?.length ? Math.round(users.reduce((sum, u) => sum + (u.lessons_progress_percent || 0), 0) / users.length) : 0}%
                 </p>
               </div>
@@ -3388,23 +3411,23 @@ const AdminPanel = () => {
       {/* Таблица пользователей */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center">
-            <Users className="w-5 h-5 mr-2" />
+          <CardTitle className="flex items-center text-base sm:text-lg">
+            <Users className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
             База данных учеников
           </CardTitle>
-          <CardDescription>Управление пользователями и их кредитами</CardDescription>
+          <CardDescription className="text-xs sm:text-sm">Управление пользователями и их кредитами</CardDescription>
         </CardHeader>
         <CardContent>
           {/* Поиск пользователей */}
           <div className="mb-4">
-            <Label htmlFor="user-search">Поиск учеников</Label>
+            <Label htmlFor="user-search" className="text-xs sm:text-sm">Поиск учеников</Label>
             <Input
               id="user-search"
               type="text"
-              placeholder="Введите имя или email для поиска..."
+              placeholder="Введите имя или email..."
               value={userSearchTerm}
               onChange={(e) => setUserSearchTerm(e.target.value)}
-              className="max-w-md"
+              className="max-w-md text-sm"
             />
             {userSearchTerm && (
               <p className="text-sm text-gray-600 mt-1">
@@ -3416,20 +3439,203 @@ const AdminPanel = () => {
           {loading ? (
             <div className="text-center py-4">Загрузка...</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left p-2">Ученик</th>
-                    <th className="text-left p-2">Контакты</th>
-                    <th className="text-left p-2">Кредиты</th>
-                    <th className="text-left p-2">Статус</th>
-                    <th className="text-left p-2">Прогресс уроков</th>
-                    <th className="text-left p-2">Действия</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(filteredUsers || []).map((u) => (
+            <>
+              {/* Mobile View - Cards */}
+              <div className="block md:hidden space-y-3">
+                {(filteredUsers || []).map((u) => (
+                  <Card key={u.id} className="p-4">
+                    <div className="space-y-3">
+                      {/* Header with name and status */}
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="font-semibold text-sm">{u.name || 'Без имени'}</div>
+                          <div className="text-xs text-gray-500">{u.email}</div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          {u.is_premium ? (
+                            <Badge className="bg-green-600 text-xs">
+                              {u.subscription_type || 'Premium'}
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-xs">Базовый</Badge>
+                          )}
+                          {u.is_super_admin && (
+                            <Badge className="bg-red-600 text-xs">Super Admin</Badge>
+                          )}
+                          {u.is_admin && !u.is_super_admin && (
+                            <Badge className="bg-blue-600 text-xs">Admin</Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Credits */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-600">Кредиты:</span>
+                        {editingCredits[u.id] ? (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="number"
+                              min="0"
+                              defaultValue={u.credits_remaining}
+                              className="w-16 h-7 text-xs"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  updateUserCredits(u.id, e.target.value);
+                                }
+                              }}
+                              id={`credits-${u.id}`}
+                            />
+                            <Button
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => {
+                                const input = document.getElementById(`credits-${u.id}`);
+                                updateUserCredits(u.id, input.value);
+                              }}
+                            >
+                              <Save className="w-3 h-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setEditingCredits(prev => ({ ...prev, [u.id]: false }))}
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <Badge variant={u.credits_remaining > 0 ? "default" : "secondary"}>
+                              {u.credits_remaining || 0}
+                            </Badge>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setEditingCredits(prev => ({ ...prev, [u.id]: true }))}
+                            >
+                              <Edit3 className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Progress */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-gray-600">Прогресс уроков:</span>
+                          <span>{u.lessons_completed} из {u.lessons_total}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-blue-600 h-2 rounded-full"
+                              style={{ width: `${u.lessons_progress_percent}%` }}
+                            ></div>
+                          </div>
+                          <span className="text-xs">{u.lessons_progress_percent}%</span>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0"
+                            onClick={() => fetchUserProgress(u.id)}
+                          >
+                            <Eye className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex flex-wrap gap-1 pt-2 border-t">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            const newCredits = (u.credits_remaining || 0) + 10;
+                            updateUserCredits(u.id, newCredits);
+                          }}
+                          title="Добавить 10 кредитов"
+                        >
+                          <Plus className="w-3 h-3 mr-1" />
+                          +10
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            const newCredits = Math.max(0, (u.credits_remaining || 0) - 10);
+                            updateUserCredits(u.id, newCredits);
+                          }}
+                          title="Убрать 10 кредитов"
+                        >
+                          <Minus className="w-3 h-3 mr-1" />
+                          -10
+                        </Button>
+
+                        {user?.is_super_admin && !u.is_super_admin && (
+                          <>
+                            {u.is_admin ? (
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                className="h-7 text-xs"
+                                onClick={() => revokeAdminRights(u.id)}
+                                title="Отозвать права администратора"
+                              >
+                                <User className="w-3 h-3 mr-1" />
+                                Отозвать Admin
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className="h-7 text-xs"
+                                onClick={() => grantAdminRights(u.id)}
+                                title="Предоставить права администратора"
+                              >
+                                <Settings className="w-3 h-3 mr-1" />
+                                Сделать Admin
+                              </Button>
+                            )}
+                          </>
+                        )}
+
+                        {user?.is_super_admin && u.id !== user.id && !u.is_super_admin && (
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="h-7 text-xs bg-red-600 hover:bg-red-700"
+                            onClick={() => deleteUser(u.id)}
+                            title="УДАЛИТЬ ПОЛЬЗОВАТЕЛЯ (необратимо!)"
+                          >
+                            <Trash2 className="w-3 h-3 mr-1" />
+                            Удалить
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+
+              {/* Desktop View - Table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left p-2">Ученик</th>
+                      <th className="text-left p-2">Контакты</th>
+                      <th className="text-left p-2">Кредиты</th>
+                      <th className="text-left p-2">Статус</th>
+                      <th className="text-left p-2">Прогресс уроков</th>
+                      <th className="text-left p-2">Действия</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(filteredUsers || []).map((u) => (
                     <tr key={u.id} className="border-b hover:bg-gray-50">
                       <td className="p-2">
                         <div>
@@ -3607,10 +3813,11 @@ const AdminPanel = () => {
                         </div>
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -3868,8 +4075,8 @@ const AdminPanel = () => {
                               size="sm"
                               variant="outline"
                               onClick={() => {
-                                // Предварительный просмотр как в PersonalConsultations
-                                window.open(`${backendUrl}/api/consultations/video/${editingMaterial.video_file_id}`, '_blank');
+                                // Предварительный просмотр видео урока
+                                window.open(`${backendUrl}/api/lessons/video/${editingMaterial.video_file_id}`, '_blank');
                               }}
                             >
                               <PlayCircle className="w-4 h-4 mr-1" />
@@ -4355,11 +4562,11 @@ const AdminPanel = () => {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl flex items-center">
-            <Settings className="w-6 h-6 mr-2" />
+          <CardTitle className="text-lg sm:text-2xl flex items-center">
+            <Settings className="w-5 h-5 sm:w-6 sm:h-6 mr-2" />
             Панель Администратора
           </CardTitle>
-          <CardDescription>
+          <CardDescription className="text-xs sm:text-sm">
             Управление пользователями, кредитами и учебными материалами
           </CardDescription>
         </CardHeader>
@@ -4367,32 +4574,32 @@ const AdminPanel = () => {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className={`grid w-full ${user?.is_super_admin ? 'grid-cols-7' : 'grid-cols-2'}`}>
-          <TabsTrigger value="overview" className="flex items-center">
-            <TrendingUp className="w-4 h-4 mr-2" />
+          <TabsTrigger value="overview" className="flex items-center justify-center px-1 sm:px-3" title="Обзор">
+            <TrendingUp className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Обзор</span>
           </TabsTrigger>
-          <TabsTrigger value="users" className="flex items-center">
-            <Users className="w-4 h-4 mr-2" />
+          <TabsTrigger value="users" className="flex items-center justify-center px-1 sm:px-3" title="Ученики">
+            <Users className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Ученики</span>
           </TabsTrigger>
-          <TabsTrigger value="consultations" className="flex items-center">
-            <Video className="w-4 h-4 mr-2" />
+          <TabsTrigger value="consultations" className="flex items-center justify-center px-1 sm:px-3" title="Консультации">
+            <Video className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Консультации</span>
           </TabsTrigger>
-          <TabsTrigger value="lessons" className="flex items-center">
-            <BookOpen className="w-4 h-4 mr-2" />
+          <TabsTrigger value="lessons" className="flex items-center justify-center px-1 sm:px-3" title="Уроки">
+            <BookOpen className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Уроки</span>
           </TabsTrigger>
-          <TabsTrigger value="lessons-editor" className="flex items-center">
-            <Edit3 className="w-4 h-4 mr-2" />
-            <span className="hidden sm:inline">Редактор уроков</span>
+          <TabsTrigger value="lessons-editor" className="flex items-center justify-center px-1 sm:px-3" title="Редактор уроков">
+            <Edit3 className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Редактор</span>
           </TabsTrigger>
-          <TabsTrigger value="first-lesson" className="flex items-center">
-            <Star className="w-4 h-4 mr-2" />
-            <span className="hidden sm:inline">Первый урок</span>
+          <TabsTrigger value="first-lesson" className="flex items-center justify-center px-1 sm:px-3" title="Первый урок">
+            <Star className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">1 урок</span>
           </TabsTrigger>
-          <TabsTrigger value="settings" className="flex items-center">
-            <Settings className="w-4 h-4 mr-2" />
+          <TabsTrigger value="settings" className="flex items-center justify-center px-1 sm:px-3" title="Настройки">
+            <Settings className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Настройки</span>
           </TabsTrigger>
         </TabsList>
