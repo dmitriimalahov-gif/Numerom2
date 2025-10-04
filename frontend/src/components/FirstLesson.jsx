@@ -22,7 +22,10 @@ const FirstLesson = () => {
   const [lessonData, setLessonData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeSection, setActiveSection] = useState('theory');
+  const [activeSection, setActiveSection] = useState(() => {
+    // Восстановить последнюю активную секцию из localStorage
+    return localStorage.getItem('firstLesson_activeSection') || 'theory';
+  });
   const [completedSections, setCompletedSections] = useState(new Set());
   const [overallProgress, setOverallProgress] = useState(0);
   
@@ -76,6 +79,11 @@ const FirstLesson = () => {
     loadAdditionalPdfs();
     loadAdditionalVideos();
   }, []);
+
+  // Сохранять активную секцию в localStorage при изменении
+  useEffect(() => {
+    localStorage.setItem('firstLesson_activeSection', activeSection);
+  }, [activeSection]);
 
   // Функции для навигации и фильтрации материалов
   const getFilteredAndSortedMaterials = () => {
@@ -617,7 +625,10 @@ const FirstLesson = () => {
       <Card>
         <CardContent className="text-center py-8">
           <div className="text-red-500 mb-4">{error}</div>
-          <Button onClick={loadFirstLesson} variant="outline">
+          <Button onClick={() => {
+            resetQuiz();
+            setActiveSection('quiz');
+          }} variant="outline">
             Попробовать снова
           </Button>
         </CardContent>
@@ -912,7 +923,7 @@ const FirstLesson = () => {
                   >
                     <div className="flex items-center mb-3">
                       <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${planet.color} flex items-center justify-center mr-3 shadow-lg`}>
-                        <span className="text-2xl text-white font-bold filter drop-shadow-sm">{planet.icon}</span>
+                        <span className={`text-2xl font-bold filter drop-shadow-sm ${planet.number === 2 ? 'text-gray-700' : 'text-white'}`}>{planet.icon}</span>
                       </div>
                       <div className="flex-1">
                         <h3 className={`font-bold text-base ${planet.textColor}`}>
@@ -1273,9 +1284,9 @@ const FirstLesson = () => {
               </div>
               
               <div className="mt-6 text-center">
-                <Button 
+                <Button
                   onClick={completeTheory}
-                  className="numerology-gradient"
+                  className="numerology-gradient hover:brightness-90 disabled:brightness-90 disabled:cursor-not-allowed transition-all duration-200"
                   disabled={completedSections.has('theory')}
                 >
                   {completedSections.has('theory') ? (
@@ -1391,7 +1402,7 @@ const FirstLesson = () => {
                       Сохранить ответ
                     </Button>
                     
-                    <Button 
+                    <Button
                       onClick={() => {
                         if (savedExercises.has(exercise.id)) {
                           setCompletedExercises(prev => new Set([...prev, exercise.id]));
@@ -1400,17 +1411,24 @@ const FirstLesson = () => {
                         }
                       }}
                       disabled={completedExercises.has(exercise.id) || !savedExercises.has(exercise.id)}
-                      className="flex-1 sm:flex-none"
+                      className={`flex-1 sm:flex-none numerology-gradient transition-all duration-200 ${
+                        completedExercises.has(exercise.id)
+                          ? 'cursor-not-allowed'
+                          : 'hover:brightness-90'
+                      }`}
+                      style={completedExercises.has(exercise.id) ? { filter: 'brightness(0.9)' } : {}}
                     >
                       {completedExercises.has(exercise.id) ? (
                         <>
-                          <CheckCircle className="w-4 h-4 mr-2" />
-                          Упражнение выполнено
+                          <CheckCircle className="w-4 h-4 mr-1 sm:mr-2" />
+                          <span className="hidden sm:inline">Упражнение выполнено</span>
+                          <span className="sm:hidden">Выполнено</span>
                         </>
                       ) : (
                         <>
-                          <Target className="w-4 h-4 mr-2" />
-                          Отметить как выполненное
+                          <Target className="w-4 h-4 mr-1 sm:mr-2" />
+                          <span className="hidden sm:inline">Отметить как выполненное</span>
+                          <span className="sm:hidden">Отметить</span>
                         </>
                       )}
                     </Button>
@@ -1430,7 +1448,7 @@ const FirstLesson = () => {
                 <p className="text-green-700 mb-4">
                   Теперь вы можете перейти к тестированию знаний
                 </p>
-                <Button onClick={() => setActiveSection('quiz')} className="numerology-gradient">
+                <Button onClick={() => setActiveSection('quiz')} className="numerology-gradient hover:brightness-90 transition-all duration-200">
                   Пройти тест
                 </Button>
               </CardContent>
@@ -1479,10 +1497,10 @@ const FirstLesson = () => {
                 ))}
                 
                 <div className="pt-4 text-center">
-                  <Button 
+                  <Button
                     onClick={submitQuiz}
                     disabled={quizSubmitting || Object.keys(quizAnswers).length < 5}
-                    className="numerology-gradient px-8"
+                    className="numerology-gradient hover:brightness-90 disabled:brightness-90 disabled:cursor-not-allowed transition-all duration-200 px-8"
                   >
                     {quizSubmitting ? (
                       <>
@@ -1540,7 +1558,7 @@ const FirstLesson = () => {
                         <div className="text-green-800 font-semibold">🎉 Поздравляем!</div>
                         <div className="text-green-700 text-sm">Тест успешно пройден и засчитан в отчёт</div>
                       </div>
-                      <Button onClick={() => setActiveSection('challenge')} className="numerology-gradient">
+                      <Button onClick={() => setActiveSection('challenge')} className="numerology-gradient hover:brightness-90 transition-all duration-200">
                         Перейти к челленджу
                       </Button>
                     </>

@@ -398,7 +398,7 @@ class LessonSystem:
             quiz=intro_quiz,
             challenges=[sun_challenge],
             habit_tracker=sun_habit_tracker,
-            points_required=5
+            points_required=0
         )
         
         self.lessons[first_lesson.id] = first_lesson

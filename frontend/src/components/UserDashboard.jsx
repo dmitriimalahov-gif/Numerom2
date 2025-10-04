@@ -28,7 +28,10 @@ import LessonAdmin from './LessonAdmin';
 
 const UserDashboard = () => {
   const { user, logout, loading, isAuthenticated, isInitialized } = useAuth();
-  const [activeSection, setActiveSection] = useState('home');
+  const [activeSection, setActiveSection] = useState(() => {
+    // Восстановить последнюю активную секцию из localStorage
+    return localStorage.getItem('userDashboard_activeSection') || 'home';
+  });
 
   // Показываем загрузку пока инициализируется аутентификация
   if (loading || !isInitialized) {
@@ -48,6 +51,11 @@ const UserDashboard = () => {
   if (!isAuthenticated || !user) {
     return null; // MainDashboard покажет лендинг
   }
+
+  // Сохранять активную секцию в localStorage при изменении
+  useEffect(() => {
+    localStorage.setItem('userDashboard_activeSection', activeSection);
+  }, [activeSection]);
 
   // Проверка аутентификации
   useEffect(() => {

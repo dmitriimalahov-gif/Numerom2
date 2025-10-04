@@ -38,10 +38,14 @@ import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
 import LessonAdmin from './LessonAdmin';
 import MultipleLessonAdmin from './MultipleLessonAdmin';
+import FirstLesson from './FirstLesson';
 
 const AdminPanel = () => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('users');
+  const [activeTab, setActiveTab] = useState(() => {
+    // Восстановить последнюю активную вкладку из localStorage
+    return localStorage.getItem('adminPanel_activeTab') || 'users';
+  });
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [editingCredits, setEditingCredits] = useState({});
@@ -1446,6 +1450,11 @@ const AdminPanel = () => {
     questions[questionIndex].options.push('');
     setEditingMaterial({...editingMaterial, quiz_questions: questions});
   };
+
+  // Сохранять активную вкладку в localStorage при изменении
+  useEffect(() => {
+    localStorage.setItem('adminPanel_activeTab', activeTab);
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab === 'users') {
@@ -4618,6 +4627,10 @@ const AdminPanel = () => {
 
         <TabsContent value="consultations" className="space-y-6">
           {renderConsultationsTab()}
+        </TabsContent>
+
+        <TabsContent value="first-lesson" className="space-y-6">
+          <FirstLesson />
         </TabsContent>
 
         {user?.is_super_admin && (
