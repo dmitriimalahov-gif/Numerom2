@@ -206,12 +206,28 @@ async def register(user_data: UserCreate, request: Request):
 
 @api_router.post('/auth/login', response_model=TokenResponse)
 async def login(login_data: LoginRequest):
+    print(f"=== ПОПЫТКА ВХОДА ===")
+    print(f"Email: {login_data.email}")
+    print(f"Пароль (первые 3 символа): {login_data.password[:3]}...")
+
     user_dict = await db.users.find_one({'email': login_data.email})
+    print(f"Найден пользователь в БД: {user_dict is not None}")
+
     if not user_dict:
+        print(f"ОШИБКА: Пользователь с email {login_data.email} не найден в БД")
         raise HTTPException(status_code=401, detail='Invalid credentials')
+
     user = User(**user_dict)
-    if not verify_password(login_data.password, user.password_hash):
+    print(f"User ID: {user.id}")
+    print(f"User password_hash (первые 10 символов): {user.password_hash[:10]}...")
+
+    password_valid = verify_password(login_data.password, user.password_hash)
+    print(f"Проверка пароля: {password_valid}")
+
+    if not password_valid:
+        print(f"ОШИБКА: Неверный пароль для пользователя {login_data.email}")
         raise HTTPException(status_code=401, detail='Invalid credentials')
+
     # expire subscription if needed
     if user.subscription_expires_at and user.subscription_expires_at < datetime.utcnow():
         await db.users.update_one(
@@ -220,7 +236,9 @@ async def login(login_data: LoginRequest):
         )
         user.is_premium = False
         user.subscription_type = None
+
     token = create_access_token({'sub': user.id})
+    print(f"✅ УСПЕШНЫЙ ВХОД для {login_data.email}")
     return TokenResponse(access_token=token, user=create_user_response(user))
 
 # ----------------- PAYMENTS -----------------
