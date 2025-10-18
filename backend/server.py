@@ -198,9 +198,21 @@ async def register(user_data: UserCreate, request: Request):
         birth_date=user_data.birth_date,
         city=city or 'Москва',
         phone_number=user_data.phone_number,
-        credits_remaining=1
+        credits_remaining=100
     )
     await db.users.insert_one(user.dict())
+
+    # Записываем начисление бонусных кредитов при регистрации
+    credit_transaction = CreditTransaction(
+        user_id=user.id,
+        transaction_type='credit',
+        amount=100,
+        description='Приветственный бонус при регистрации',
+        category='purchase',
+        details={'reason': 'registration_bonus'}
+    )
+    await db.credit_transactions.insert_one(credit_transaction.dict())
+
     token = create_access_token({'sub': user.id})
     return TokenResponse(access_token=token, user=create_user_response(user))
 
