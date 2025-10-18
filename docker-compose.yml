@@ -47,6 +47,8 @@ services:
 
 volumes:
   mongodb_data:
+    driver: local
+    name: numerom_mongodb_data
 
 networks:
   numerom_network:
