@@ -5,12 +5,17 @@ services:
     image: mongo:5.0
     container_name: numerom_mongodb
     restart: always
-    ports:
-      - "27017:27017"
+    # Порт 27017 закрыт от внешнего доступа для безопасности
+    # Backend подключается через внутреннюю сеть Docker
+    # ports:
+    #   - "27017:27017"
     volumes:
       - mongodb_data:/data/db
     environment:
       - MONGO_INITDB_DATABASE=numerom
+      # Добавим аутентификацию
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=SecurePassword123!ChangeMe
     networks:
       - numerom_network
 
@@ -30,7 +35,7 @@ services:
     networks:
       - numerom_network
     environment:
-      - MONGO_URL=mongodb://mongodb:27017
+      - MONGO_URL=mongodb://admin:SecurePassword123!ChangeMe@mongodb:27017
 
   frontend:
     build:
