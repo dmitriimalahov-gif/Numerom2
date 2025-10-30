@@ -52,7 +52,19 @@ def generate_vapid_keys():
     print("\n" + "=" * 80)
 
     # Сохраняем в файл для удобства
-    with open('.env.vapid', 'w') as f:
+    import os
+    import shutil
+
+    vapid_file = '/app/.env.vapid'
+
+    # Если .env.vapid существует как директория - удаляем её
+    if os.path.exists(vapid_file):
+        if os.path.isdir(vapid_file):
+            shutil.rmtree(vapid_file)
+        else:
+            os.remove(vapid_file)
+
+    with open(vapid_file, 'w') as f:
         f.write(f"VAPID_PUBLIC_KEY={public_key_b64}\n")
         # Сохраняем приватный ключ в одну строку с \n в виде литералов
         private_pem_escaped = private_pem.replace('\n', '\\n')
