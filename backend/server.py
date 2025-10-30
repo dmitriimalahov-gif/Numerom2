@@ -5,6 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
+import pytz
 import os
 import uuid
 import io
@@ -31,6 +32,7 @@ from auth import (
     get_current_user, create_access_token, get_password_hash, verify_password,
     create_user_response, ensure_super_admin_exists
 )
+from push_notifications import PushNotificationManager, push_manager
 from numerology import (
     calculate_personal_numbers,
     calculate_compatibility,
@@ -96,6 +98,7 @@ TMP_DIR = UPLOAD_ROOT / 'tmp'
 
 @app.on_event('startup')
 async def on_startup():
+    global push_manager
     try:
         await ensure_super_admin_exists(db)
         MATERIALS_DIR.mkdir(parents=True, exist_ok=True)
@@ -107,6 +110,13 @@ async def on_startup():
         LESSONS_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
         LESSONS_PDF_DIR.mkdir(parents=True, exist_ok=True)
         TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Инициализируем менеджер push уведомлений
+        import push_notifications
+        push_notifications.push_manager = PushNotificationManager(db)
+        push_manager = push_notifications.push_manager
+        logger.info('Push notification manager initialized')
+
         logger.info('Startup tasks completed')
     except Exception as e:
         logger.error(f'Startup error: {e}')
@@ -213,7 +223,10 @@ async def register(user_data: UserCreate, request: Request):
     )
     await db.credit_transactions.insert_one(credit_transaction.dict())
 
-    token = create_access_token({'sub': user.id})
+    # Вычисляем роль из флагов (для новых пользователей всегда 'user')
+    role = 'admin' if (user.is_super_admin or user.is_admin) else 'user'
+
+    token = create_access_token({'sub': user.id, 'role': role})
     return TokenResponse(access_token=token, user=create_user_response(user))
 
 @api_router.post('/auth/login', response_model=TokenResponse)
@@ -249,8 +262,11 @@ async def login(login_data: LoginRequest):
         user.is_premium = False
         user.subscription_type = None
 
-    token = create_access_token({'sub': user.id})
-    print(f"✅ УСПЕШНЫЙ ВХОД для {login_data.email}")
+    # Вычисляем роль из флагов
+    role = 'admin' if (user.is_super_admin or user.is_admin) else 'user'
+
+    token = create_access_token({'sub': user.id, 'role': role})
+    print(f"✅ УСПЕШНЫЙ ВХОД для {login_data.email}, роль: {role}")
     return TokenResponse(access_token=token, user=create_user_response(user))
 
 # ----------------- PAYMENTS -----------------
@@ -617,8 +633,9 @@ async def vedic_daily_schedule(vedic_request: VedicTimeRequest = Depends(), curr
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
-        date_obj = datetime.now()
-        
+        # Используем UTC время с timezone для корректной конвертации в локальное время города
+        date_obj = datetime.now(pytz.UTC)
+
     schedule = get_vedic_day_schedule(city=city, date=date_obj)
     if 'error' in schedule:
         # Возвращаем балл при ошибке
@@ -654,8 +671,9 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
-        date_obj = datetime.now()
-        
+        # Используем UTC время с timezone для корректной конвертации в локальное время города
+        date_obj = datetime.now(pytz.UTC)
+
     city = vedic_request.city or user.city
     if not city:
         raise HTTPException(status_code=422, detail="Город не указан. Укажите город в запросе или обновите профиль пользователя.")
@@ -712,8 +730,9 @@ async def monthly_planetary_route(vedic_request: VedicTimeRequest = Depends(), c
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
-        date_obj = datetime.now()
-    
+        # Используем UTC время с timezone для корректной конвертации в локальное время города
+        date_obj = datetime.now(pytz.UTC)
+
     city = vedic_request.city or user.city
     if not city:
         raise HTTPException(status_code=422, detail="Город не указан. Укажите город в запросе или обновите профиль пользователя.")
@@ -753,8 +772,9 @@ async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(),
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
-        date_obj = datetime.now()
-    
+        # Используем UTC время с timezone для корректной конвертации в локальное время города
+        date_obj = datetime.now(pytz.UTC)
+
     city = vedic_request.city or user.city
     if not city:
         raise HTTPException(status_code=422, detail="Город не указан. Укажите город в запросе или обновите профиль пользователя.")
@@ -777,8 +797,9 @@ async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(),
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
-        date_obj = datetime.now()
-    
+        # Используем UTC время с timezone для корректной конвертации в локальное время города
+        date_obj = datetime.now(pytz.UTC)
+
     city = vedic_request.city or user.city
     if not city:
         raise HTTPException(status_code=422, detail="Город не указан. Укажите город в запросе или обновите профиль пользователя.")
@@ -1226,7 +1247,7 @@ async def upload_lesson_pdf(lesson_id: str, file: UploadFile = File(...), curren
 # OLD LESSON MANAGEMENT ENDPOINTS (for compatibility)
 @api_router.post('/admin/lessons')
 async def create_video_lesson(lesson: VideoLesson, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    admin_user = await check_admin_rights(current_user, require_super_admin=False)
     await db.video_lessons.insert_one(lesson.dict())
     return {'message': 'Lesson created successfully', 'lesson_id': lesson.id}
 
@@ -1427,7 +1448,7 @@ async def delete_lesson(lesson_id: str, current_user: dict = Depends(get_current
 
 @api_router.post('/admin/make-admin/{user_id}')
 async def make_user_admin(user_id: str, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    admin_user = await check_admin_rights(current_user, require_super_admin=False)
     
     # Check if target user exists
     target_user = await db.users.find_one({'id': user_id})
@@ -1448,7 +1469,7 @@ async def make_user_admin(user_id: str, current_user: dict = Depends(get_current
 
 @api_router.delete('/admin/revoke-admin/{user_id}')
 async def revoke_user_admin(user_id: str, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    admin_user = await check_admin_rights(current_user, require_super_admin=False)
     
     # Check if target user exists
     target_user = await db.users.find_one({'id': user_id})
@@ -1481,7 +1502,7 @@ async def materials_upload_init(
     total_size: int = Form(...),
     current_user: dict = Depends(get_current_user)
 ):
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    admin_user = await check_admin_rights(current_user, require_super_admin=False)
     upload_id = str(uuid.uuid4())
     await db.material_upload_sessions.insert_one({
         'upload_id': upload_id, 'filename': filename, 'title': title, 'description': description,
@@ -1493,7 +1514,7 @@ async def materials_upload_init(
 
 @api_router.post('/admin/materials/upload/chunk')
 async def materials_upload_chunk(uploadId: str = Form(...), index: int = Form(...), chunk: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    admin_user = await check_admin_rights(current_user, require_super_admin=False)
     tmp_dir = TMP_DIR / uploadId
     if not tmp_dir.exists():
         raise HTTPException(status_code=404, detail='Upload session not found')
@@ -1505,7 +1526,7 @@ async def materials_upload_chunk(uploadId: str = Form(...), index: int = Form(..
 
 @api_router.post('/admin/materials/upload/finish')
 async def materials_upload_finish(uploadId: str = Form(...), current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    admin_user = await check_admin_rights(current_user, require_super_admin=False)
     session = await db.material_upload_sessions.find_one({'upload_id': uploadId})
     if not session:
         raise HTTPException(status_code=404, detail='Upload session not found')
@@ -1737,7 +1758,7 @@ async def update_user_credits(user_id: str, credits_data: dict, current_user: di
 @api_router.delete('/admin/users/{user_id}')
 async def delete_user(user_id: str, current_user: dict = Depends(get_current_user)):
     """Удалить пользователя (только для супер-админа)"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    admin_user = await check_admin_rights(current_user, require_super_admin=False)
     
     # Проверяем что пользователь не является супер-админом
     user_to_delete = await db.users.find_one({'id': user_id})
@@ -2015,7 +2036,7 @@ async def calculate_address_numerology_endpoint(address_data: Dict[str, str], cu
 # Video upload for lessons endpoint
 @api_router.post('/admin/lessons/{lesson_id}/upload-video')
 async def upload_lesson_video(lesson_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    admin_user = await check_admin_rights(current_user, require_super_admin=False)
     
     # Check if lesson exists
     lesson = await db.video_lessons.find_one({'id': lesson_id})
@@ -3073,14 +3094,243 @@ async def get_first_lesson():
         lesson = lesson_system.get_lesson("lesson_numerom_intro")
         if not lesson:
             raise HTTPException(status_code=404, detail="First lesson not found")
-        
+
+        # Преобразуем структуру для фронтенда
+        lesson_dict = lesson.dict()
+
+        # Перемещаем exercises, quiz, challenges внутрь content для фронтенда
+        if "content" not in lesson_dict:
+            lesson_dict["content"] = {}
+
+        # Загружаем кастомные изменения в контенте (теория и т.д.)
+        custom_content = await db.lesson_content.find({
+            "lesson_id": "lesson_numerom_intro",
+            "type": "content_update"
+        }).to_list(100)
+
+        if custom_content:
+            for item in custom_content:
+                section = item.get("section")
+                field = item.get("field")
+                value = item.get("value")
+
+                if section and field and value is not None:
+                    if section not in lesson_dict["content"]:
+                        lesson_dict["content"][section] = {}
+                    lesson_dict["content"][section][field] = value
+
+        # Загружаем кастомные упражнения из БД (если есть)
+        custom_exercises = await db.lesson_exercises.find({
+            "lesson_id": "lesson_numerom_intro",
+            "content_type": "exercise_update"
+        }).to_list(100)
+
+        if custom_exercises:
+            # Создаем словарь для быстрого поиска кастомных упражнений
+            custom_exercises_dict = {ex["exercise_id"]: ex for ex in custom_exercises}
+
+            # Обновляем базовые упражнения кастомными (если есть)
+            if "exercises" not in lesson_dict or not lesson_dict["exercises"]:
+                lesson_dict["exercises"] = []
+
+            updated_exercises = []
+            existing_ids = set()
+
+            # Обновляем существующие упражнения
+            for exercise in lesson_dict["exercises"]:
+                exercise_id = exercise.get("id")
+                existing_ids.add(exercise_id)
+                if exercise_id in custom_exercises_dict:
+                    # Используем кастомное упражнение
+                    custom = custom_exercises_dict[exercise_id]
+                    updated_exercises.append({
+                        "id": custom["exercise_id"],
+                        "title": custom["title"],
+                        "type": custom["type"],
+                        "content": custom["content"],
+                        "instructions": custom["instructions"],
+                        "expected_outcome": custom.get("expected_outcome", "")
+                    })
+                else:
+                    # Используем базовое упражнение
+                    updated_exercises.append(exercise)
+
+            # Добавляем НОВЫЕ упражнения которых нет в базовом уроке
+            for exercise_id, custom in custom_exercises_dict.items():
+                if exercise_id not in existing_ids:
+                    updated_exercises.append({
+                        "id": custom["exercise_id"],
+                        "title": custom["title"],
+                        "type": custom["type"],
+                        "content": custom["content"],
+                        "instructions": custom["instructions"],
+                        "expected_outcome": custom.get("expected_outcome", "")
+                    })
+
+            lesson_dict["exercises"] = updated_exercises
+
+        # Присваиваем ID базовым упражнениям (если их нет)
+        if "exercises" in lesson_dict:
+            for idx, exercise in enumerate(lesson_dict["exercises"]):
+                if isinstance(exercise, dict):
+                    if "id" not in exercise or not exercise["id"]:
+                        exercise["id"] = f"exercise_{idx + 1}"
+
+        # Добавляем exercises в content
+        if "exercises" in lesson_dict and lesson_dict["exercises"]:
+            lesson_dict["content"]["exercises"] = lesson_dict["exercises"]
+
+        # Присваиваем ID базовым вопросам (если их нет)
+        if "quiz" in lesson_dict and lesson_dict["quiz"] and "questions" in lesson_dict["quiz"]:
+            for idx, question in enumerate(lesson_dict["quiz"]["questions"]):
+                if "id" not in question or not question["id"]:
+                    question["id"] = f"q{idx + 1}"
+
+        # Загружаем кастомные вопросы теста из БД (если есть)
+        custom_quiz_questions = await db.lesson_quiz_questions.find({
+            "lesson_id": "lesson_numerom_intro",
+            "content_type": "quiz_question_update"
+        }).to_list(100)
+
+        if custom_quiz_questions:
+            # Создаем словарь для быстрого поиска кастомных вопросов
+            custom_questions_dict = {q["question_id"]: q for q in custom_quiz_questions}
+            logger.info(f"Found {len(custom_quiz_questions)} custom quiz questions: {list(custom_questions_dict.keys())}")
+
+            # Обновляем базовые вопросы кастомными (если есть)
+            if "quiz" in lesson_dict and lesson_dict["quiz"]:
+                if "questions" not in lesson_dict["quiz"]:
+                    lesson_dict["quiz"]["questions"] = []
+
+                updated_questions = []
+                existing_ids = set()
+
+                # Обновляем существующие вопросы
+                for question in lesson_dict["quiz"]["questions"]:
+                    question_id = question.get("id")
+                    existing_ids.add(question_id)
+                    if question_id in custom_questions_dict:
+                        # Используем кастомный вопрос
+                        logger.info(f"Replacing base question {question_id} with custom version")
+                        custom = custom_questions_dict[question_id]
+                        updated_questions.append({
+                            "id": custom["question_id"],
+                            "question": custom["question"],
+                            "options": custom["options"],
+                            "correct_answer": custom["correct_answer"],
+                            "explanation": custom.get("explanation", "")
+                        })
+                    else:
+                        # Используем базовый вопрос
+                        logger.info(f"Using base question {question_id}")
+                        updated_questions.append(question)
+
+                # Добавляем НОВЫЕ вопросы которых нет в базовом уроке
+                for question_id, custom in custom_questions_dict.items():
+                    if question_id not in existing_ids:
+                        logger.info(f"Adding NEW custom question {question_id}")
+                        updated_questions.append({
+                            "id": custom["question_id"],
+                            "question": custom["question"],
+                            "options": custom["options"],
+                            "correct_answer": custom["correct_answer"],
+                            "explanation": custom.get("explanation", "")
+                        })
+
+                lesson_dict["quiz"]["questions"] = updated_questions
+                logger.info(f"Final quiz has {len(updated_questions)} questions")
+
+        # Добавляем quiz в content
+        if "quiz" in lesson_dict and lesson_dict["quiz"]:
+            lesson_dict["content"]["quiz"] = lesson_dict["quiz"]
+
+        # Загружаем кастомные дни челленджа из БД (если есть)
+        custom_challenge_days = await db.lesson_challenge_days.find({
+            "lesson_id": "lesson_numerom_intro",
+            "content_type": "challenge_day_update"
+        }).to_list(100)
+
+        # Применяем кастомные дни к челленджу
+        if custom_challenge_days and "challenges" in lesson_dict and lesson_dict["challenges"]:
+            custom_days_dict = {day["day"]: day for day in custom_challenge_days}
+
+            # Получаем первый челлендж
+            challenge = lesson_dict["challenges"][0]
+            if "daily_tasks" in challenge:
+                updated_daily_tasks = []
+
+                # Обновляем существующие дни или добавляем новые
+                existing_days = {task.get("day"): task for task in challenge["daily_tasks"]}
+                all_days = set(existing_days.keys()) | set(custom_days_dict.keys())
+
+                for day_num in sorted(all_days):
+                    if day_num in custom_days_dict:
+                        # Используем кастомный день
+                        custom = custom_days_dict[day_num]
+                        updated_daily_tasks.append({
+                            "day": custom["day"],
+                            "title": custom["title"],
+                            "tasks": custom["tasks"]
+                        })
+                    elif day_num in existing_days:
+                        # Используем оригинальный день
+                        updated_daily_tasks.append(existing_days[day_num])
+
+                challenge["daily_tasks"] = updated_daily_tasks
+
+        # Загружаем кастомный habit_tracker из MongoDB (если есть)
+        lesson_in_db = await db.lessons.find_one({"id": "lesson_numerom_intro"})
+        if lesson_in_db and "habit_tracker" in lesson_in_db:
+            # Если урок существует в MongoDB и имеет habit_tracker, используем его
+            lesson_dict["habit_tracker"] = lesson_in_db["habit_tracker"]
+
+        # Добавляем первый challenge как challenge (не challenges[0])
+        if "challenges" in lesson_dict and lesson_dict["challenges"]:
+            lesson_dict["content"]["challenge"] = lesson_dict["challenges"][0]
+
         return {
-            "lesson": lesson.dict(),
+            "lesson": lesson_dict,
             "message": "Первое занятие успешно загружено"
         }
     except Exception as e:
         logger.error(f"Error getting first lesson: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting first lesson: {str(e)}")
+
+@app.get("/api/lessons/{lesson_id}")
+async def get_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить урок по ID (для кастомных уроков из MongoDB или первого урока из lesson_system)"""
+    try:
+        # Если это первый урок - используем endpoint first-lesson
+        if lesson_id == "lesson_numerom_intro":
+            lesson = lesson_system.get_lesson(lesson_id)
+            if not lesson:
+                raise HTTPException(status_code=404, detail="Lesson not found")
+            lesson_dict = lesson.dict()
+
+            # Перемещаем exercises, quiz, challenges внутрь content для единообразия
+            if "content" not in lesson_dict:
+                lesson_dict["content"] = {}
+
+            return {"lesson": lesson_dict}
+
+        # Для кастомных уроков - загружаем из MongoDB
+        custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
+
+        if custom_lesson:
+            lesson_dict = dict(custom_lesson)
+            lesson_dict.pop('_id', None)
+            logger.info(f"Loaded custom lesson {lesson_id} from MongoDB")
+            return {"lesson": lesson_dict}
+
+        # Если не нашли нигде - 404
+        logger.error(f"Lesson {lesson_id} not found")
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting lesson {lesson_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting lesson: {str(e)}")
 
 @app.post("/api/lessons/start-challenge/{challenge_id}")
 async def start_challenge(
@@ -3090,19 +3340,37 @@ async def start_challenge(
     """Начать челлендж для пользователя"""
     try:
         user_id = current_user["user_id"]
-        lesson = lesson_system.get_lesson("lesson_numerom_intro")
-        
-        if not lesson or not lesson.challenges:
-            raise HTTPException(status_code=404, detail="Challenge not found")
-        
-        # Найти челлендж
-        challenge = None
-        for ch in lesson.challenges:
-            if ch.id == challenge_id:
-                challenge = ch
-                break
-        
-        if not challenge:
+
+        # Попытка извлечь lesson_id из challenge_id (формат: challenge_lesson_XXXXX или challenge_sun_7days)
+        lesson_id = None
+        if challenge_id.startswith("challenge_lesson_"):
+            lesson_id = challenge_id.replace("challenge_", "")
+        elif challenge_id == "challenge_sun_7days":
+            lesson_id = "lesson_numerom_intro"
+
+        # Попытка найти урок в MongoDB (для кастомных уроков)
+        custom_lesson = None
+        challenge_dict = None
+
+        if lesson_id:
+            custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
+
+        if custom_lesson and custom_lesson.get("content", {}).get("challenge"):
+            # Урок найден в MongoDB
+            challenge_dict = custom_lesson["content"]["challenge"]
+            if challenge_dict.get("id") != challenge_id:
+                challenge_dict = None
+        else:
+            # Попытка найти в lesson_system (для первого урока)
+            lesson = lesson_system.get_lesson("lesson_numerom_intro")
+            if lesson and lesson.challenges:
+                for ch in lesson.challenges:
+                    if ch.id == challenge_id:
+                        challenge_dict = ch.dict()
+                        break
+
+        if not challenge_dict:
+            logger.error(f"Challenge {challenge_id} not found in any lesson")
             raise HTTPException(status_code=404, detail="Challenge not found")
         
         # Сохранить начало челленджа в базе данных
@@ -3119,10 +3387,10 @@ async def start_challenge(
         }
         
         await db.challenge_progress.insert_one(challenge_progress)
-        
+
         return {
             "message": "Челлендж успешно начат",
-            "challenge": challenge.dict(),
+            "challenge": challenge_dict,
             "start_date": challenge_progress["start_date"],
             "current_day": 1
         }
@@ -3205,38 +3473,71 @@ async def submit_quiz(
     """Отправить ответы на квиз"""
     try:
         user_id = current_user["user_id"]
-        
+
         # Парс ответов
         import json
         user_answers = json.loads(answers)
-        
-        # Получить квиз из урока
-        lesson = lesson_system.get_lesson("lesson_numerom_intro")
-        if not lesson or not lesson.quiz or lesson.quiz.id != quiz_id:
+
+        # Попытка извлечь lesson_id из quiz_id (формат: quiz_lesson_XXXXX или quiz_intro_1)
+        lesson_id = None
+        if quiz_id.startswith("quiz_lesson_"):
+            lesson_id = quiz_id.replace("quiz_", "")
+        elif quiz_id.startswith("quiz_intro"):
+            lesson_id = "lesson_numerom_intro"
+
+        # Попытка найти урок в MongoDB (для кастомных уроков)
+        custom_lesson = None
+        quiz_dict = None
+
+        if lesson_id:
+            custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
+
+        if custom_lesson and custom_lesson.get("content", {}).get("quiz"):
+            # Урок найден в MongoDB
+            quiz_dict = custom_lesson["content"]["quiz"]
+            if quiz_dict.get("id") != quiz_id:
+                quiz_dict = None
+        else:
+            # Попытка найти в lesson_system (для первого урока)
+            lesson = lesson_system.get_lesson("lesson_numerom_intro")
+            if lesson and lesson.quiz and lesson.quiz.id == quiz_id:
+                quiz_dict = lesson.quiz.dict()
+
+        if not quiz_dict:
+            logger.error(f"Quiz {quiz_id} not found in any lesson")
             raise HTTPException(status_code=404, detail="Quiz not found")
-        
+
         # Проверить ответы
         score = 0
-        total_questions = len(lesson.quiz.questions)
-        correct_answers = lesson.quiz.correct_answers
-        explanations = lesson.quiz.explanations
-        
+        questions = quiz_dict.get("questions", [])
+        total_questions = len(questions)
+
         results = []
-        for i, question in enumerate(lesson.quiz.questions):
-            question_id = f"q{i+1}"
+        for i, question in enumerate(questions):
+            question_id = question.get("id", f"q{i+1}")
             user_answer = user_answers.get(question_id, "")
-            correct_answer = correct_answers[i]
+
+            # Для новой структуры correct_answer находится в самом вопросе
+            correct_answer = question.get("correct_answer", "")
+            explanation = question.get("explanation", "")
+
+            # Если нет в вопросе, попытка получить из старой структуры
+            if not correct_answer and "correct_answers" in quiz_dict:
+                correct_answer = quiz_dict["correct_answers"][i] if i < len(quiz_dict["correct_answers"]) else ""
+            if not explanation and "explanations" in quiz_dict:
+                explanation = quiz_dict["explanations"][i] if i < len(quiz_dict["explanations"]) else ""
+
             is_correct = user_answer.lower() == correct_answer.lower()
-            
+
             if is_correct:
                 score += 1
-            
+
             results.append({
-                "question": question["question"],
+                "question": question.get("question", ""),
                 "user_answer": user_answer,
                 "correct_answer": correct_answer,
                 "is_correct": is_correct,
-                "explanation": explanations[i]
+                "explanation": explanation
             })
         
         percentage = (score / total_questions) * 100
@@ -3280,10 +3581,41 @@ async def add_habit_tracker(
     """Добавить трекер привычек к пользователю"""
     try:
         user_id = current_user["user_id"]
-        
+
+        # Получить привычки из урока (с учетом кастомизаций из админ-панели)
+        active_habits = []
+
+        # Сначала проверяем MongoDB (кастомные привычки)
+        lesson_in_db = await db.lessons.find_one({"id": lesson_id})
+        if lesson_in_db and "habit_tracker" in lesson_in_db:
+            # Если есть кастомный habit_tracker в MongoDB
+            habit_tracker = lesson_in_db["habit_tracker"]
+            planet_habits = habit_tracker.get("planet_habits", {})
+
+            # Берем привычки для планеты sun (для первого урока)
+            sun_habits = planet_habits.get("sun", [])
+            active_habits = [h["habit"] for h in sun_habits if isinstance(h, dict) and "habit" in h]
+
+        # Если нет кастомных привычек, берем из lesson_system
+        if not active_habits:
+            lesson = lesson_system.get_lesson(lesson_id)
+            if lesson and lesson.habit_tracker:
+                sun_habits = lesson.habit_tracker.planet_habits.get("sun", [])
+                active_habits = [h["habit"] for h in sun_habits if isinstance(h, dict) and "habit" in h]
+
+        # Если все еще нет привычек, используем дефолтные
+        if not active_habits:
+            active_habits = [
+                "Утренняя аффирмация или медитация",
+                "Осознание лидерских качеств",
+                "Проявление инициативы",
+                "Контроль осанки и речи",
+                "Вечернее подведение итогов"
+            ]
+
         # Добавить пользователя к трекеру привычек урока
         lesson_system.add_user_to_tracker(lesson_id, user_id)
-        
+
         # Сохранить трекер в базе данных
         habit_tracker_data = {
             "_id": f"{user_id}_{lesson_id}_tracker",
@@ -3292,22 +3624,41 @@ async def add_habit_tracker(
             "type": "habit_tracker",
             "start_date": datetime.now().isoformat(),
             "daily_completions": {},
-            "active_habits": [
-                "Утренняя аффирмация или медитация",
-                "Осознание лидерских качеств", 
-                "Проявление инициативы",
-                "Контроль осанки и речи",
-                "Вечернее подведение итогов"
-            ]
+            "active_habits": active_habits
         }
-        
+
         await db.habit_trackers.insert_one(habit_tracker_data)
-        
+
         return {"message": "Трекер привычек успешно добавлен"}
-        
+
     except Exception as e:
         logger.error(f"Error adding habit tracker: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error adding habit tracker: {str(e)}")
+
+@app.get("/api/lessons/habit-tracker/{lesson_id}")
+async def get_habit_tracker(
+    lesson_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Получить трекер привычек пользователя для урока"""
+    try:
+        user_id = current_user["user_id"]
+        tracker_id = f"{user_id}_{lesson_id}_tracker"
+
+        # Получить трекер из базы данных
+        tracker = await db.habit_trackers.find_one({"_id": tracker_id, "type": "habit_tracker"})
+
+        if not tracker:
+            return {"tracker": None, "message": "Трекер привычек не найден"}
+
+        # Удалить _id для JSON сериализации
+        tracker["_id"] = str(tracker["_id"])
+
+        return {"tracker": tracker, "message": "Трекер привычек успешно загружен"}
+
+    except Exception as e:
+        logger.error(f"Error getting habit tracker: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting habit tracker: {str(e)}")
 
 @app.post("/api/lessons/update-habit")
 async def update_habit(
@@ -3512,11 +3863,24 @@ async def get_overall_progress(
     """Получить общий прогресс урока в процентах"""
     try:
         user_id = current_user["user_id"]
-        
-        # Получить данные урока
-        lesson = lesson_system.get_lesson(lesson_id)
-        if not lesson:
-            raise HTTPException(status_code=404, detail="Lesson not found")
+        logger.info(f"Getting overall progress for lesson {lesson_id}, user {user_id}")
+
+        # Получить данные урока (сначала MongoDB, потом lesson_system)
+        custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
+
+        lesson = None
+        if custom_lesson:
+            # Урок существует в MongoDB
+            logger.info(f"Found custom lesson {lesson_id} in MongoDB")
+            lesson_exists = True
+        else:
+            # Проверяем lesson_system
+            logger.info(f"Checking lesson_system for {lesson_id}")
+            lesson = lesson_system.get_lesson(lesson_id)
+            if not lesson:
+                logger.error(f"Lesson {lesson_id} not found in MongoDB or lesson_system")
+                raise HTTPException(status_code=404, detail="Lesson not found")
+            lesson_exists = True
         
         # Подсчитать общий прогресс
         total_components = 5  # теория, упражнения, квиз, челлендж, привычки
@@ -3528,8 +3892,15 @@ async def get_overall_progress(
             "lesson_id": lesson_id,
             "type": "exercise_response"
         }).to_list(100)
-        
-        exercises_completed = len(exercise_responses) >= len(lesson.exercises)
+
+        # Получить общее количество упражнений
+        total_exercises_count = 0
+        if lesson:
+            total_exercises_count = len(lesson.exercises) if lesson.exercises else 0
+        elif custom_lesson and custom_lesson.get("content", {}).get("exercises"):
+            total_exercises_count = len(custom_lesson["content"]["exercises"])
+
+        exercises_completed = total_exercises_count > 0 and len(exercise_responses) >= total_exercises_count
         if exercises_completed:
             completed_components += 1
         
@@ -3571,6 +3942,13 @@ async def get_overall_progress(
         
         overall_percentage = int((completed_components / total_components) * 100)
         
+        # Получить общее количество упражнений
+        total_exercises = 0
+        if lesson:
+            total_exercises = len(lesson.exercises)
+        elif custom_lesson and custom_lesson.get("content", {}).get("exercises"):
+            total_exercises = len(custom_lesson["content"]["exercises"])
+
         return {
             "lesson_id": lesson_id,
             "overall_percentage": overall_percentage,
@@ -3584,7 +3962,7 @@ async def get_overall_progress(
                 "habits": habits_active
             },
             "exercise_count": len(exercise_responses),
-            "total_exercises": len(lesson.exercises)
+            "total_exercises": total_exercises
         }
         
     except Exception as e:
@@ -3602,13 +3980,15 @@ async def update_lesson_content(
     current_user: dict = Depends(get_current_user)
 ):
     """Обновить содержимое урока (только для администраторов)"""
+    # Проверить права администратора (ДО try блока!)
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
+
     try:
-        # Проверить права администратора
-        if current_user.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
-        
         user_id = current_user["user_id"]
-        
+
+        logger.info(f"Updating lesson content: lesson_id={lesson_id}, section={section}, field={field}, value_length={len(value)}")
+
         # Сохранить изменения в коллекции lesson_content
         content_update = {
             "_id": f"{lesson_id}_{section}_{field}",
@@ -3620,17 +4000,20 @@ async def update_lesson_content(
             "updated_at": datetime.now().isoformat(),
             "type": "content_update"
         }
-        
+
         await db.lesson_content.update_one(
             {"_id": f"{lesson_id}_{section}_{field}"},
             {"$set": content_update},
             upsert=True
         )
-        
+
+        logger.info(f"Successfully updated {section}.{field}")
         return {"message": f"Content updated successfully for {section}.{field}"}
-        
+
     except Exception as e:
-        logger.error(f"Error updating lesson content: {str(e)}")
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Error updating lesson content: {str(e)}\n{error_details}")
         raise HTTPException(status_code=500, detail=f"Error updating lesson content: {str(e)}")
 
 @app.post("/api/admin/upload-video")
@@ -3789,7 +4172,7 @@ async def add_lesson_additional_pdf(
 ):
     """Добавить дополнительный PDF файл к уроку (используем consultations endpoint)"""
     try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         
         # Используем тот же endpoint что и для консультаций - УНИФИКАЦИЯ!
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
@@ -3874,7 +4257,7 @@ async def add_lesson_additional_video(
 ):
     """Добавить дополнительный видео файл к уроку (используем consultations endpoint)"""
     try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         
         # Используем тот же endpoint что и для консультаций - УНИФИКАЦИЯ!
         temp_file = tempfile.NamedTemporaryFile(delete=False)
@@ -3963,7 +4346,7 @@ async def upload_lesson_video(
         logger.info(f"Starting lesson video upload for user: {current_user.get('user_id')}")
 
         # Проверить права администратора
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         logger.info(f"Admin rights verified for user: {admin_user}")
 
         # Проверяем тип файла
@@ -4023,7 +4406,7 @@ async def upload_lesson_pdf(
     """Загрузка PDF файла для урока (упрощенный endpoint)"""
     try:
         # Проверить права администратора
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         
         # Проверяем тип файла
         if file.content_type != 'application/pdf':
@@ -4357,15 +4740,15 @@ async def update_exercise(
     lesson_id: str = Form(...),
     exercise_id: str = Form(...),
     title: str = Form(...),
-    content: str = Form(...),
-    instructions: str = Form(...),
-    expected_outcome: str = Form(...),
+    content: str = Form(""),
+    instructions: str = Form(""),
+    expected_outcome: str = Form(""),
     exercise_type: str = Form("reflection"),
     current_user: dict = Depends(get_current_user)
 ):
     """Обновить упражнение (только для администраторов)"""
     try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         user_id = current_user["user_id"]
         
         # Разделить инструкции по переносам строк
@@ -4408,13 +4791,35 @@ async def add_exercise(
     current_user: dict = Depends(get_current_user)
 ):
     """Добавить новое упражнение (только для администраторов)"""
+    # Проверить права администратора
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
+
     try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
         user_id = current_user["user_id"]
-        
-        # Сгенерировать ID для нового упражнения
-        exercise_count = await db.lesson_exercises.count_documents({"lesson_id": lesson_id})
-        exercise_id = f"exercise_{exercise_count + 1}"
+
+        # Сгенерировать ID для нового упражнения с учетом базовых и кастомных
+        max_exercise_num = 0
+
+        # Получить базовый урок и посмотреть существующие ID
+        lesson = lesson_system.get_lesson(lesson_id)
+        if lesson and lesson.exercises:
+            for ex in lesson.exercises:
+                # Извлекаем номер из ID типа "exercise_1", "exercise_2"
+                # ex может быть dict или Pydantic объектом
+                exid = ex.id if hasattr(ex, 'id') else ex.get('id', '')
+                if exid.startswith('exercise_') and exid[9:].isdigit():
+                    max_exercise_num = max(max_exercise_num, int(exid[9:]))
+
+        # Проверяем кастомные упражнения в MongoDB
+        custom_exercises = await db.lesson_exercises.find({"lesson_id": lesson_id}).to_list(100)
+        for ex in custom_exercises:
+            exid = ex.get("exercise_id", "")
+            if exid.startswith('exercise_') and exid[9:].isdigit():
+                max_exercise_num = max(max_exercise_num, int(exid[9:]))
+
+        exercise_id = f"exercise_{max_exercise_num + 1}"
+        logger.info(f"Generated new exercise_id: {exercise_id}")
         
         instructions_list = [inst.strip() for inst in instructions.split('\n') if inst.strip()]
         
@@ -4447,13 +4852,18 @@ async def update_quiz_question(
     question_text: str = Form(...),
     options: str = Form(...),
     correct_answer: str = Form(...),
-    explanation: str = Form(...),
+    explanation: str = Form(""),  # Сделаем необязательным
     current_user: dict = Depends(get_current_user)
 ):
     """Обновить вопрос квиза (только для администраторов)"""
+    # Проверить права администратора
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
+
     try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
         user_id = current_user["user_id"]
+
+        logger.info(f"Updating quiz question: lesson_id={lesson_id}, question_id={question_id}, question={question_text[:50]}")
         
         # Разделить варианты ответов по переносам строк
         options_list = [opt.strip() for opt in options.split('\n') if opt.strip()]
@@ -4489,17 +4899,41 @@ async def add_quiz_question(
     question_text: str = Form(...),
     options: str = Form(...),
     correct_answer: str = Form(...),
-    explanation: str = Form(...),
+    explanation: str = Form(""),  # Сделаем необязательным
     current_user: dict = Depends(get_current_user)
 ):
     """Добавить новый вопрос в квиз (только для администраторов)"""
+    # Проверить права администратора
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
+
     try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
         user_id = current_user["user_id"]
-        
-        # Сгенерировать ID для нового вопроса
-        question_count = await db.lesson_quiz_questions.count_documents({"lesson_id": lesson_id})
-        question_id = f"q{question_count + 1}"
+
+        logger.info(f"Adding quiz question: lesson_id={lesson_id}, question={question_text[:50]}, options={options[:100]}, correct={correct_answer}")
+
+        # Сгенерировать ID для нового вопроса с учетом базовых и кастомных
+        max_question_num = 0
+
+        # Получить базовый урок и посмотреть существующие ID
+        lesson = lesson_system.get_lesson(lesson_id)
+        if lesson and lesson.quiz and lesson.quiz.questions:
+            for q in lesson.quiz.questions:
+                # Извлекаем номер из ID типа "q1", "q2"
+                # q может быть dict или Pydantic объектом
+                qid = q.id if hasattr(q, 'id') else q.get('id', '')
+                if qid.startswith('q') and qid[1:].isdigit():
+                    max_question_num = max(max_question_num, int(qid[1:]))
+
+        # Проверяем кастомные вопросы в MongoDB
+        custom_questions = await db.lesson_quiz_questions.find({"lesson_id": lesson_id}).to_list(100)
+        for q in custom_questions:
+            qid = q.get("question_id", "")
+            if qid.startswith('q') and qid[1:].isdigit():
+                max_question_num = max(max_question_num, int(qid[1:]))
+
+        question_id = f"q{max_question_num + 1}"
+        logger.info(f"Generated new question_id: {question_id}")
         
         options_list = [opt.strip() for opt in options.split('\n') if opt.strip()]
         
@@ -4535,7 +4969,7 @@ async def update_challenge_day(
 ):
     """Обновить день челленджа (только для администраторов)"""
     try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         user_id = current_user["user_id"]
         
         # Разделить задачи по переносам строк
@@ -4575,7 +5009,7 @@ async def add_challenge_day(
 ):
     """Добавить новый день в челлендж (только для администраторов)"""
     try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         user_id = current_user["user_id"]
         
         # Найти следующий номер дня
@@ -4602,10 +5036,466 @@ async def add_challenge_day(
         await db.lesson_challenge_days.insert_one(new_day)
         
         return {"message": f"Challenge day {next_day} added successfully", "day": next_day}
-        
+
     except Exception as e:
         logger.error(f"Error adding challenge day: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error adding challenge day: {str(e)}")
+
+# ==================== HABITS MANAGEMENT (ADMIN) ====================
+
+@app.post("/api/admin/add-habit")
+async def add_habit(
+    lesson_id: str = Form(...),
+    planet: str = Form(...),
+    habit: str = Form(...),
+    description: str = Form(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Добавить привычку к планете в уроке (только для администраторов)"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+
+        # Проверяем существование урока в MongoDB
+        lesson_in_db = await db.lessons.find_one({"id": lesson_id})
+
+        if not lesson_in_db:
+            # Если урока нет в MongoDB, получаем его из lesson_system
+            lesson_from_system = lesson_system.get_lesson(lesson_id)
+            if not lesson_from_system:
+                raise HTTPException(status_code=404, detail="Lesson not found")
+
+            # Создаем урок в MongoDB с базовой структурой
+            lesson_dict = lesson_from_system.dict()
+            lesson_dict["_id"] = lesson_id
+
+            # Если у урока нет habit_tracker, создаем его
+            if "habit_tracker" not in lesson_dict or not lesson_dict["habit_tracker"]:
+                lesson_dict["habit_tracker"] = {
+                    "planet_habits": {
+                        "sun": [], "moon": [], "jupiter": [], "rahu": [],
+                        "mercury": [], "venus": [], "ketu": [], "saturn": [], "mars": []
+                    }
+                }
+            else:
+                # Если habit_tracker существует, убеждаемся что все планеты инициализированы
+                if "planet_habits" not in lesson_dict["habit_tracker"]:
+                    lesson_dict["habit_tracker"]["planet_habits"] = {}
+
+                planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
+                for planet in planets:
+                    if planet not in lesson_dict["habit_tracker"]["planet_habits"]:
+                        lesson_dict["habit_tracker"]["planet_habits"][planet] = []
+
+            await db.lessons.insert_one(lesson_dict)
+
+        new_habit = {
+            "habit": habit,
+            "description": description
+        }
+
+        # Обновить habit_tracker урока, добавив привычку в массив для планеты
+        await db.lessons.update_one(
+            {"id": lesson_id},
+            {"$push": {f"habit_tracker.planet_habits.{planet}": new_habit}}
+        )
+
+        return {"message": f"Habit added to {planet} successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding habit: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error adding habit: {str(e)}")
+
+@app.post("/api/admin/update-habit-content")
+async def update_habit_content(
+    lesson_id: str = Form(...),
+    planet: str = Form(...),
+    habit_index: str = Form(...),
+    habit: str = Form(...),
+    description: str = Form(""),
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить привычку в уроке (только для администраторов)"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+
+        logger.info(f"Updating habit - lesson_id: {lesson_id}, planet: {planet}, habit_index: {habit_index}")
+
+        # Конвертируем habit_index в int
+        try:
+            index = int(habit_index)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid habit_index")
+
+        # Проверяем существование урока в MongoDB
+        lesson = await db.lessons.find_one({"id": lesson_id})
+
+        if not lesson:
+            logger.info(f"Lesson {lesson_id} not found in MongoDB, trying to get from lesson_system")
+            # Если урока нет в MongoDB, получаем его из lesson_system
+            lesson_from_system = lesson_system.get_lesson(lesson_id)
+            if not lesson_from_system:
+                raise HTTPException(status_code=404, detail=f"Lesson {lesson_id} not found in lesson_system")
+
+            # Создаем урок в MongoDB с базовой структурой
+            lesson_dict = lesson_from_system.dict()
+            lesson_dict["_id"] = lesson_id
+
+            # Если у урока нет habit_tracker, создаем его
+            if "habit_tracker" not in lesson_dict or not lesson_dict["habit_tracker"]:
+                lesson_dict["habit_tracker"] = {
+                    "planet_habits": {
+                        "sun": [], "moon": [], "jupiter": [], "rahu": [],
+                        "mercury": [], "venus": [], "ketu": [], "saturn": [], "mars": []
+                    }
+                }
+            else:
+                # Если habit_tracker существует, убеждаемся что все планеты инициализированы
+                if "planet_habits" not in lesson_dict["habit_tracker"]:
+                    lesson_dict["habit_tracker"]["planet_habits"] = {}
+
+                planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
+                for planet in planets:
+                    if planet not in lesson_dict["habit_tracker"]["planet_habits"]:
+                        lesson_dict["habit_tracker"]["planet_habits"][planet] = []
+
+            await db.lessons.insert_one(lesson_dict)
+            lesson = await db.lessons.find_one({"id": lesson_id})
+
+        if "habit_tracker" not in lesson:
+            raise HTTPException(status_code=404, detail="Habit tracker not found in lesson")
+
+        # Убеждаемся что все планеты инициализированы
+        if "planet_habits" not in lesson["habit_tracker"]:
+            lesson["habit_tracker"]["planet_habits"] = {}
+            await db.lessons.update_one(
+                {"id": lesson_id},
+                {"$set": {"habit_tracker.planet_habits": {}}}
+            )
+
+        planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
+        for p in planets:
+            if p not in lesson["habit_tracker"]["planet_habits"]:
+                await db.lessons.update_one(
+                    {"id": lesson_id},
+                    {"$set": {f"habit_tracker.planet_habits.{p}": []}}
+                )
+                lesson["habit_tracker"]["planet_habits"][p] = []
+
+        # Получаем привычки планеты
+        planet_habits = lesson.get("habit_tracker", {}).get("planet_habits", {}).get(planet, [])
+
+        if index < 0 or index >= len(planet_habits):
+            raise HTTPException(status_code=400, detail=f"Invalid habit index: {index}, planet has {len(planet_habits)} habits")
+
+        # Обновить конкретную привычку в массиве планеты
+        update_fields = {
+            f"habit_tracker.planet_habits.{planet}.{index}.habit": habit,
+            f"habit_tracker.planet_habits.{planet}.{index}.description": description
+        }
+
+        await db.lessons.update_one(
+            {"id": lesson_id},
+            {"$set": update_fields}
+        )
+
+        return {"message": f"Habit {index} for {planet} updated successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating habit: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating habit: {str(e)}")
+
+@app.post("/api/admin/delete-habit")
+async def delete_habit(
+    lesson_id: str = Form(...),
+    planet: str = Form(...),
+    habit_index: str = Form(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Удалить привычку из урока (только для администраторов)"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+
+        # Конвертируем habit_index в int
+        try:
+            index = int(habit_index)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid habit_index")
+
+        # Сначала получим текущие привычки планеты
+        lesson = await db.lessons.find_one({"id": lesson_id})
+        if not lesson:
+            # Пытаемся загрузить из lesson_system
+            lesson_from_system = lesson_system.get_lesson(lesson_id)
+            if not lesson_from_system:
+                raise HTTPException(status_code=404, detail="Lesson not found")
+
+            # Создаем урок в MongoDB
+            lesson_dict = lesson_from_system.dict()
+            lesson_dict["_id"] = lesson_id
+
+            if "habit_tracker" not in lesson_dict or not lesson_dict["habit_tracker"]:
+                lesson_dict["habit_tracker"] = {
+                    "planet_habits": {
+                        "sun": [], "moon": [], "jupiter": [], "rahu": [],
+                        "mercury": [], "venus": [], "ketu": [], "saturn": [], "mars": []
+                    }
+                }
+            else:
+                if "planet_habits" not in lesson_dict["habit_tracker"]:
+                    lesson_dict["habit_tracker"]["planet_habits"] = {}
+
+                planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
+                for p in planets:
+                    if p not in lesson_dict["habit_tracker"]["planet_habits"]:
+                        lesson_dict["habit_tracker"]["planet_habits"][p] = []
+
+            await db.lessons.insert_one(lesson_dict)
+            lesson = await db.lessons.find_one({"id": lesson_id})
+
+        if "habit_tracker" not in lesson:
+            raise HTTPException(status_code=404, detail="Habit tracker not found in lesson")
+
+        # Убеждаемся что все планеты инициализированы
+        if "planet_habits" not in lesson["habit_tracker"]:
+            lesson["habit_tracker"]["planet_habits"] = {}
+            await db.lessons.update_one(
+                {"id": lesson_id},
+                {"$set": {"habit_tracker.planet_habits": {}}}
+            )
+
+        planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
+        for p in planets:
+            if p not in lesson["habit_tracker"]["planet_habits"]:
+                await db.lessons.update_one(
+                    {"id": lesson_id},
+                    {"$set": {f"habit_tracker.planet_habits.{p}": []}}
+                )
+                lesson["habit_tracker"]["planet_habits"][p] = []
+
+        planet_habits = lesson.get("habit_tracker", {}).get("planet_habits", {}).get(planet, [])
+
+        if index < 0 or index >= len(planet_habits):
+            raise HTTPException(status_code=400, detail=f"Invalid habit index: {index}")
+
+        # Удалить привычку из массива
+        planet_habits.pop(index)
+
+        # Обновить весь массив привычек планеты
+        await db.lessons.update_one(
+            {"id": lesson_id},
+            {"$set": {f"habit_tracker.planet_habits.{planet}": planet_habits}}
+        )
+
+        return {"message": f"Habit {index} deleted from {planet} successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting habit: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting habit: {str(e)}")
+
+# ==================== ADMIN: GET LESSONS ====================
+
+@app.get("/api/admin/lessons")
+async def get_all_lessons_admin(current_user: dict = Depends(get_current_user)):
+    """Получить список всех уроков для админа"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+
+        # Получить все уроки из системы (in-memory)
+        system_lessons = lesson_system.get_all_lessons()
+
+        lessons_list = []
+        for lesson in system_lessons:
+            lessons_list.append({
+                "id": lesson.id,
+                "title": lesson.title,
+                "module": lesson.module,
+                "points_required": lesson.points_required
+            })
+
+        # Добавить кастомные уроки из MongoDB (из обеих коллекций)
+        custom_lessons_from_lessons = await db.lessons.find({}).to_list(1000)
+        custom_lessons_from_custom = await db.custom_lessons.find({}).to_list(1000)
+
+        all_custom_lessons = custom_lessons_from_lessons + custom_lessons_from_custom
+
+        for lesson in all_custom_lessons:
+            # Проверяем что этого урока нет в system_lessons
+            if not any(sl["id"] == lesson["id"] for sl in lessons_list):
+                lessons_list.append({
+                    "id": lesson["id"],
+                    "title": lesson.get("title", "Без названия"),
+                    "module": lesson.get("module", "numerology"),
+                    "points_required": lesson.get("points_required", 0)
+                })
+
+        logger.info(f"Returning {len(lessons_list)} lessons ({len(system_lessons)} from system + {len(all_custom_lessons)} custom from both collections)")
+        return {"lessons": lessons_list}
+    except Exception as e:
+        logger.error(f"Error getting all lessons: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting all lessons: {str(e)}")
+
+@app.get("/api/admin/lessons/{lesson_id}")
+async def get_lesson_admin(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить урок со всеми кастомными изменениями для редактирования"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+
+        # Сначала проверяем custom_lessons (новые уроки)
+        custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
+
+        if custom_lesson:
+            # Это кастомный урок из MongoDB
+            lesson_dict = dict(custom_lesson)
+            lesson_dict.pop('_id', None)
+            logger.info(f"Loaded custom lesson {lesson_id} from MongoDB")
+            return {"lesson": lesson_dict}
+
+        # Если не нашли в custom_lessons, ищем в lesson_system
+        lesson = lesson_system.get_lesson(lesson_id)
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+
+        # Преобразуем структуру для фронтенда
+        lesson_dict = lesson.dict()
+        logger.info(f"Loaded system lesson {lesson_id}")
+
+        # Подготовим content
+        if "content" not in lesson_dict:
+            lesson_dict["content"] = {}
+
+        # Загружаем кастомные изменения в контенте
+        custom_content = await db.lesson_content.find({
+            "lesson_id": lesson_id,
+            "type": "content_update"
+        }).to_list(100)
+
+        if custom_content:
+            for item in custom_content:
+                section = item.get("section")
+                field = item.get("field")
+                value = item.get("value")
+
+                if section and field and value is not None:
+                    if section not in lesson_dict["content"]:
+                        lesson_dict["content"][section] = {}
+                    lesson_dict["content"][section][field] = value
+
+        # Загружаем кастомные упражнения из БД (если есть)
+        custom_exercises = await db.lesson_exercises.find({
+            "lesson_id": lesson_id,
+            "content_type": "exercise_update"
+        }).to_list(100)
+
+        if custom_exercises:
+            custom_exercises_dict = {ex["exercise_id"]: ex for ex in custom_exercises}
+
+            if "exercises" in lesson_dict and lesson_dict["exercises"]:
+                updated_exercises = []
+                for exercise in lesson_dict["exercises"]:
+                    if exercise.get("id") in custom_exercises_dict:
+                        custom = custom_exercises_dict[exercise["id"]]
+                        updated_exercises.append({
+                            "id": custom["exercise_id"],
+                            "title": custom["title"],
+                            "type": custom["type"],
+                            "content": custom["content"],
+                            "instructions": custom["instructions"],
+                            "expected_outcome": custom["expected_outcome"]
+                        })
+                    else:
+                        updated_exercises.append(exercise)
+                lesson_dict["exercises"] = updated_exercises
+
+        # Загружаем кастомные вопросы теста из БД (если есть)
+        custom_quiz_questions = await db.lesson_quiz_questions.find({
+            "lesson_id": lesson_id,
+            "content_type": "quiz_question_update"
+        }).to_list(100)
+
+        if custom_quiz_questions:
+            custom_questions_dict = {q["question_id"]: q for q in custom_quiz_questions}
+
+            if "quiz" in lesson_dict and lesson_dict["quiz"] and "questions" in lesson_dict["quiz"]:
+                updated_questions = []
+                for question in lesson_dict["quiz"]["questions"]:
+                    if question.get("id") in custom_questions_dict:
+                        custom = custom_questions_dict[question["id"]]
+                        updated_questions.append({
+                            "id": custom["question_id"],
+                            "question": custom["question"],
+                            "options": custom["options"],
+                            "correct_answer": custom["correct_answer"],
+                            "explanation": custom["explanation"]
+                        })
+                    else:
+                        updated_questions.append(question)
+                lesson_dict["quiz"]["questions"] = updated_questions
+
+        # Загружаем кастомные дни челленджа из БД (если есть)
+        custom_challenge_days = await db.lesson_challenge_days.find({
+            "lesson_id": lesson_id,
+            "content_type": "challenge_day_update"
+        }).to_list(100)
+
+        # Применяем кастомные дни к челленджу
+        if custom_challenge_days and "challenges" in lesson_dict and lesson_dict["challenges"]:
+            custom_days_dict = {day["day"]: day for day in custom_challenge_days}
+
+            # Получаем первый челлендж
+            challenge = lesson_dict["challenges"][0]
+            if "daily_tasks" in challenge:
+                updated_daily_tasks = []
+
+                # Обновляем существующие дни или добавляем новые
+                existing_days = {task.get("day"): task for task in challenge["daily_tasks"]}
+                all_days = set(existing_days.keys()) | set(custom_days_dict.keys())
+
+                for day_num in sorted(all_days):
+                    if day_num in custom_days_dict:
+                        # Используем кастомный день
+                        custom = custom_days_dict[day_num]
+                        updated_daily_tasks.append({
+                            "day": custom["day"],
+                            "title": custom["title"],
+                            "tasks": custom["tasks"]
+                        })
+                    elif day_num in existing_days:
+                        # Используем оригинальный день
+                        updated_daily_tasks.append(existing_days[day_num])
+
+                challenge["daily_tasks"] = updated_daily_tasks
+
+        # Загружаем кастомный habit_tracker из MongoDB (если есть)
+        lesson_in_db = await db.lessons.find_one({"id": lesson_id})
+        if lesson_in_db and "habit_tracker" in lesson_in_db:
+            # Если урок существует в MongoDB и имеет habit_tracker, используем его
+            lesson_dict["habit_tracker"] = lesson_in_db["habit_tracker"]
+
+        # Добавляем exercises в content
+        if "exercises" in lesson_dict and lesson_dict["exercises"]:
+            lesson_dict["content"]["exercises"] = lesson_dict["exercises"]
+
+        # Добавляем quiz в content
+        if "quiz" in lesson_dict and lesson_dict["quiz"]:
+            lesson_dict["content"]["quiz"] = lesson_dict["quiz"]
+
+        # Добавляем первый challenge как challenge (не challenges[0])
+        if "challenges" in lesson_dict and lesson_dict["challenges"]:
+            lesson_dict["content"]["challenge"] = lesson_dict["challenges"][0]
+
+        return {
+            "lesson": lesson_dict,
+            "message": "Урок успешно загружен"
+        }
+    except Exception as e:
+        logger.error(f"Error getting lesson for admin: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting lesson for admin: {str(e)}")
 
 @app.get("/api/admin/lesson-content/{lesson_id}")
 async def get_lesson_content_for_editing(
@@ -4614,7 +5504,7 @@ async def get_lesson_content_for_editing(
 ):
     """Получить все кастомизированное содержимое урока для редактирования"""
     try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         
         # Получить базовое содержимое урока
         lesson = lesson_system.get_lesson(lesson_id)
@@ -4668,7 +5558,7 @@ async def get_theory_sections(current_user: dict = Depends(get_current_user)):
     """Получение списка кастомных разделов теории"""
     try:
         # Проверяем права администратора
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         
         # Получаем кастомные разделы теории из базы
         theory_sections = await db.lesson_theory_sections.find({}).to_list(None)
@@ -4697,7 +5587,7 @@ async def add_theory_section(
     """Добавление нового раздела теории"""
     try:
         # Проверяем права администратора
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         
         title = request.get('title', '').strip()
         content = request.get('content', '').strip()
@@ -4740,7 +5630,7 @@ async def update_theory_section(
     """Обновление раздела теории"""
     try:
         # Проверяем права администратора
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         
         section_id = request.get('section_id', '').strip()
         title = request.get('title', '').strip()
@@ -4792,7 +5682,7 @@ async def delete_theory_section(
     """Удаление раздела теории"""
     try:
         # Проверяем права администратора
-        admin_user = await check_admin_rights(current_user, require_super_admin=True)
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
         
         # Проверяем валидность ID
         try:
@@ -4821,6 +5711,191 @@ async def delete_theory_section(
         raise HTTPException(status_code=500, detail=f"Error deleting theory section: {str(e)}")
 
 # ==================== END THEORY SECTIONS ====================
+
+# ==================== PUSH NOTIFICATIONS ====================
+
+@app.post("/api/push/subscribe")
+async def subscribe_to_push(
+    subscription_data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Подписка пользователя на push уведомления"""
+    try:
+        result = await push_manager.save_subscription(
+            user_id=current_user['id'],
+            subscription_data=subscription_data,
+            notification_time=subscription_data.get('notificationTime', '10:00'),
+            timezone=subscription_data.get('timezone', 'Europe/Moscow')
+        )
+
+        return {
+            "success": True,
+            "message": "Подписка на уведомления успешно создана"
+        }
+    except Exception as e:
+        logger.error(f"Error subscribing to push: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/push/vapid-public-key")
+async def get_vapid_public_key():
+    """Получить публичный VAPID ключ для фронтенда"""
+    return {
+        "publicKey": push_manager.vapid_public_key
+    }
+
+
+@app.get("/api/push/subscriptions")
+async def get_user_push_subscriptions(
+    current_user: dict = Depends(get_current_user)
+):
+    """Получить все подписки пользователя"""
+    try:
+        subscriptions = await push_manager.get_user_subscriptions(current_user['id'])
+        return {
+            "subscriptions": subscriptions
+        }
+    except Exception as e:
+        logger.error(f"Error getting subscriptions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/push/unsubscribe")
+async def unsubscribe_from_push(
+    endpoint: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Отписаться от push уведомлений"""
+    try:
+        success = await push_manager.remove_subscription(
+            user_id=current_user['id'],
+            endpoint=endpoint
+        )
+
+        if success:
+            return {
+                "success": True,
+                "message": "Подписка успешно удалена"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Подписка не найдена")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error unsubscribing: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/push/update-settings")
+async def update_push_settings(
+    settings: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить настройки push уведомлений"""
+    try:
+        endpoint = settings.get('endpoint')
+        if not endpoint:
+            raise HTTPException(status_code=400, detail="Endpoint required")
+
+        update_data = {}
+        if 'notificationTime' in settings:
+            update_data['notification_time'] = settings['notificationTime']
+        if 'timezone' in settings:
+            update_data['timezone'] = settings['timezone']
+        if 'enabled' in settings:
+            update_data['enabled'] = settings['enabled']
+
+        success = await push_manager.update_subscription_settings(
+            user_id=current_user['id'],
+            endpoint=endpoint,
+            **update_data
+        )
+
+        if success:
+            return {
+                "success": True,
+                "message": "Настройки успешно обновлены"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Подписка не найдена")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating settings: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/push/start-challenge-notifications")
+async def start_challenge_notifications(
+    lesson_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Начать отправку уведомлений для челленджа"""
+    try:
+        success = await push_manager.start_challenge_notifications(
+            user_id=current_user['id'],
+            lesson_id=lesson_id
+        )
+
+        return {
+            "success": True,
+            "message": "Уведомления для челленджа активированы"
+        }
+    except Exception as e:
+        logger.error(f"Error starting challenge notifications: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/push/stop-challenge-notifications")
+async def stop_challenge_notifications(
+    current_user: dict = Depends(get_current_user)
+):
+    """Остановить отправку уведомлений для челленджа"""
+    try:
+        success = await push_manager.stop_challenge_notifications(current_user['id'])
+
+        return {
+            "success": True,
+            "message": "Уведомления для челленджа отключены"
+        }
+    except Exception as e:
+        logger.error(f"Error stopping challenge notifications: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/push/send-test")
+async def send_test_notification(
+    current_user: dict = Depends(get_current_user)
+):
+    """Отправить тестовое уведомление"""
+    try:
+        subscriptions = await push_manager.get_user_subscriptions(current_user['id'])
+
+        if not subscriptions:
+            raise HTTPException(status_code=404, detail="Нет активных подписок")
+
+        sent_count = 0
+        for subscription in subscriptions:
+            success = push_manager.send_notification(
+                subscription_info=subscription,
+                title="Тестовое уведомление NumerOM",
+                body="Push-уведомления работают! 🎉",
+                url="/"
+            )
+            if success:
+                sent_count += 1
+
+        return {
+            "success": True,
+            "message": f"Отправлено {sent_count} уведомлений"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending test notification: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== END PUSH NOTIFICATIONS ====================
 
 # Include router and middleware at the end to ensure all endpoints are registered
 app.include_router(api_router)

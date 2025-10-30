@@ -5,13 +5,13 @@ import { Badge } from './ui/badge';
 import { Progress } from './ui/progress';
 import { Alert, AlertDescription } from './ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { 
-  Loader, 
-  PlayCircle, 
-  CheckCircle, 
-  Lock, 
-  Star, 
-  Trophy, 
+import {
+  Loader,
+  PlayCircle,
+  CheckCircle,
+  Lock,
+  Star,
+  Trophy,
   BookOpen,
   Video,
   Clock,
@@ -19,15 +19,15 @@ import {
   Award,
   FileText,
   Brain,
-  Zap
+  Zap,
+  Calendar
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
 import Quiz from './Quiz';
-import FirstLesson from './FirstLesson';
-import CustomLessonViewer from './CustomLessonViewer';
+import UniversalLessonViewer from './UniversalLessonViewer';
 
 const LearningSystem = () => {
   const { user } = useAuth();
@@ -40,14 +40,54 @@ const LearningSystem = () => {
   const [generatingQuiz, setGeneratingQuiz] = useState(false);
   const [lessonCompleted, setLessonCompleted] = useState(false);
   
-  // Состояние для отображения FirstLesson
-  const [showFirstLesson, setShowFirstLesson] = useState(false);
+  // Состояние для отображения FirstLesson (восстановление из localStorage)
+  const [showFirstLesson, setShowFirstLesson] = useState(() => {
+    const saved = localStorage.getItem('learningSystem_showFirstLesson');
+    return saved === 'true';
+  });
 
   const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
 
   useEffect(() => {
     loadLearningData();
   }, []);
+
+  // Сохранять showFirstLesson в localStorage при изменении
+  useEffect(() => {
+    localStorage.setItem('learningSystem_showFirstLesson', showFirstLesson.toString());
+    // Если открываем FirstLesson, очищаем selectedLesson
+    if (showFirstLesson) {
+      localStorage.removeItem('learningSystem_selectedLessonId');
+    }
+  }, [showFirstLesson]);
+
+  // Сохранять selectedLesson в localStorage при изменении
+  useEffect(() => {
+    if (selectedLesson && !showFirstLesson) {
+      localStorage.setItem('learningSystem_selectedLessonId', selectedLesson.id || '');
+      localStorage.setItem('learningSystem_selectedLessonData', JSON.stringify(selectedLesson));
+    } else if (!selectedLesson && !showFirstLesson) {
+      localStorage.removeItem('learningSystem_selectedLessonId');
+      localStorage.removeItem('learningSystem_selectedLessonData');
+    }
+  }, [selectedLesson, showFirstLesson]);
+
+  // Восстановить selectedLesson при загрузке
+  useEffect(() => {
+    if (learningData?.available_lessons?.length > 0 && !showFirstLesson) {
+      const savedLessonId = localStorage.getItem('learningSystem_selectedLessonId');
+      const savedLessonData = localStorage.getItem('learningSystem_selectedLessonData');
+
+      if (savedLessonId && savedLessonData && !selectedLesson) {
+        try {
+          const lessonData = JSON.parse(savedLessonData);
+          setSelectedLesson(lessonData);
+        } catch (e) {
+          console.error('Ошибка восстановления урока:', e);
+        }
+      }
+    }
+  }, [learningData, showFirstLesson]);
 
   const loadLearningData = async () => {
     setLoading(true);
@@ -336,50 +376,50 @@ const LearningSystem = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {hasCustomContent && lesson.content.theory && (
                   <div className="flex items-center">
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                    <BookOpen className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                     <span className="text-sm text-gray-700">Теоретическая часть</span>
                   </div>
                 )}
                 {hasCustomExercises && (
                   <div className="flex items-center">
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                    <Brain className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                     <span className="text-sm text-gray-700">{lesson.content.exercises.length} интерактивных упражнений</span>
                   </div>
                 )}
                 {hasCustomQuiz && (
                   <div className="flex items-center">
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                    <Target className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                     <span className="text-sm text-gray-700">Тест на знания ({lesson.content.quiz.questions.length} вопросов)</span>
                   </div>
                 )}
                 {hasCustomChallenge && (
                   <div className="flex items-center">
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                    <Calendar className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                     <span className="text-sm text-gray-700">{lesson.content.challenge.daily_tasks.length}-дневный челлендж</span>
                   </div>
                 )}
                 {(hasVideo || lesson.video_file_id) && (
                   <div className="flex items-center">
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                    <Video className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                     <span className="text-sm text-gray-700">Видеоматериалы</span>
                   </div>
                 )}
                 {(hasPDF || lesson.pdf_file_id) && (
                   <div className="flex items-center">
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                    <FileText className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                     <span className="text-sm text-gray-700">PDF справочники</span>
                   </div>
                 )}
-                
+
                 {/* Добавляем элементы если контента нет */}
                 {!hasCustomExercises && !hasCustomQuiz && !hasVideo && !lesson.video_file_id && (
                   <>
                     <div className="flex items-center">
-                      <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                      <BookOpen className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                       <span className="text-sm text-gray-700">Теория и объяснения</span>
                     </div>
                     <div className="flex items-center">
-                      <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                      <Star className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                       <span className="text-sm text-gray-700">Практические советы</span>
                     </div>
                   </>
@@ -635,7 +675,7 @@ const LearningSystem = () => {
 
         {/* Lessons Tab */}
         <TabsContent value="lessons">
-          {learningData && (
+          {learningData && !showFirstLesson && !selectedLesson && (
             <>
               {/* Level Progress */}
               {renderLevelProgress()}
@@ -712,19 +752,19 @@ const LearningSystem = () => {
                             </h4>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               <div className="flex items-center">
-                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                                <Star className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                                 <span className="text-sm text-gray-700">Теория планет</span>
                               </div>
                               <div className="flex items-center">
-                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                                <Brain className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                                 <span className="text-sm text-gray-700">Интерактивные упражнения</span>
                               </div>
                               <div className="flex items-center">
-                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                                <Calendar className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                                 <span className="text-sm text-gray-700">7-дневный челлендж</span>
                               </div>
                               <div className="flex items-center">
-                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-3 flex-shrink-0"></div>
+                                <Video className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
                                 <span className="text-sm text-gray-700">Видео и PDF материалы</span>
                               </div>
                             </div>
@@ -753,14 +793,7 @@ const LearningSystem = () => {
                         </CardContent>
                       </Card>
                     </div>
-                            Доступен сейчас
-                          </div>
-                          <div className="flex items-center mr-4">
-                            <FileText className="w-4 h-4 mr-1 text-purple-600" />
-                            4 материала
-                          </div>
-                          <div className="flex items-center">
-                            <Zap className="w-4 h-4 mr-1 text-yellow-500" />
+
                     {/* Обычные уроки - теперь включают custom_lessons */}
                     {learningData.available_lessons
                       .filter((lesson) => 
@@ -855,50 +888,59 @@ const LearningSystem = () => {
         </TabsContent>
       </Tabs>
 
-      {/* FirstLesson в полноэкранном режиме - интегрирован в обучение */}
+      {/* UniversalLessonViewer - для первого урока */}
       {showFirstLesson && (
-        <div className="fixed inset-0 bg-white z-50 overflow-auto">
-          <div className="flex justify-between items-center p-4 border-b bg-white sticky top-0 z-10">
-            <h2 className="text-xl font-bold flex items-center text-purple-900">
-              <Video className="w-5 h-5 mr-2" />
-              Первое занятие NumerOM
-            </h2>
-            <Button
-              variant="outline"
-              onClick={() => setShowFirstLesson(false)}
-              className="border-purple-300 text-purple-700 hover:bg-purple-50"
-            >
-              <CheckCircle className="w-4 h-4 mr-2" />
-              Вернуться к обучению
-            </Button>
-          </div>
-          <div className="p-4">
-            <FirstLesson />
-          </div>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader className="bg-gradient-to-r from-purple-50 to-indigo-50">
+              <div className="flex justify-between items-center">
+                <CardTitle className="flex items-center text-purple-900">
+                  <Video className="w-5 h-5 mr-2" />
+                  Первое занятие NumerOM
+                </CardTitle>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowFirstLesson(false)}
+                  className="border-purple-300 text-purple-700 hover:bg-purple-50"
+                >
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Список уроков
+                </Button>
+              </div>
+            </CardHeader>
+          </Card>
+          <UniversalLessonViewer
+            lessonId="lesson_numerom_intro"
+            onBack={() => setShowFirstLesson(false)}
+          />
         </div>
       )}
 
-      {/* ПРОСМОТРЩИК CUSTOM LESSONS (интерактивные уроки) */}
+      {/* ПРОСМОТРЩИК CUSTOM LESSONS (интерактивные уроки) - UniversalLessonViewer */}
       {selectedLesson && selectedLesson.isCustomLesson && !selectedLesson.showPDFOnly && !showQuiz && (
-        <div className="fixed inset-0 bg-white z-50 overflow-auto">
-          <div className="flex justify-between items-center p-4 border-b bg-white sticky top-0 z-10">
-            <h2 className="text-xl font-bold flex items-center text-purple-900">
-              <BookOpen className="w-5 h-5 mr-2" />
-              {selectedLesson.title}
-            </h2>
-            <Button
-              variant="outline"
-              onClick={() => setSelectedLesson(null)}
-              className="border-purple-300 text-purple-700 hover:bg-purple-50"
-            >
-              <CheckCircle className="w-4 h-4 mr-2" />
-              Вернуться к обучению
-            </Button>
-          </div>
-          <div className="p-4">
-            {/* Здесь будет компонент для интерактивного урока */}
-            <CustomLessonViewer lesson={selectedLesson} />
-          </div>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader className="bg-gradient-to-r from-purple-50 to-indigo-50">
+              <div className="flex justify-between items-center">
+                <CardTitle className="flex items-center text-purple-900">
+                  <BookOpen className="w-5 h-5 mr-2" />
+                  {selectedLesson.title}
+                </CardTitle>
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedLesson(null)}
+                  className="border-purple-300 text-purple-700 hover:bg-purple-50"
+                >
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Список уроков
+                </Button>
+              </div>
+            </CardHeader>
+          </Card>
+          <UniversalLessonViewer
+            lessonId={selectedLesson.id}
+            onBack={() => setSelectedLesson(null)}
+          />
         </div>
       )}
 

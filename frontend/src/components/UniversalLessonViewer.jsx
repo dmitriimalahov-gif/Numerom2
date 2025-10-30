@@ -15,7 +15,7 @@ import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
 import PushNotificationSettings from './PushNotificationSettings';
 
-const FirstLesson = () => {
+const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
   const { user } = useAuth();
   const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
   
@@ -25,7 +25,7 @@ const FirstLesson = () => {
   const [error, setError] = useState('');
   const [activeSection, setActiveSection] = useState(() => {
     // Восстановить последнюю активную секцию из localStorage
-    return localStorage.getItem('firstLesson_activeSection') || 'theory';
+    return localStorage.getItem(`lesson_${lessonId}_activeSection`) || 'theory';
   });
   const [completedSections, setCompletedSections] = useState(new Set());
   const [overallProgress, setOverallProgress] = useState(0);
@@ -76,15 +76,38 @@ const FirstLesson = () => {
   const [materialsSortBy, setMaterialsSortBy] = useState('recent'); // 'recent', 'name', 'type'
 
   useEffect(() => {
-    loadFirstLesson();
+    // Сбросить состояния при смене урока
+    setLessonData(null);
+    setLoading(true);
+    setError('');
+    setCompletedSections(new Set());
+    setOverallProgress(0);
+    setQuizAnswers({});
+    setQuizResults(null);
+    setChallengeProgress(null);
+    setChallengeStarted(false);
+    setSelectedChallengeDay(1);
+    setChallengeCompleted(false);
+    setChallengeRating(0);
+    setChallengeDayNotes('');
+    setHabitTracker(null);
+    setTodayHabits({});
+    setHabitProgress(0);
+    setHabitStreakDays(0);
+    setExerciseResponses({});
+    setCompletedExercises(new Set());
+    setSavedExercises(new Set());
+
+    // Загрузить новый урок
+    loadLesson();
     loadUploadedLessonFiles();
     loadAdditionalPdfs();
     loadAdditionalVideos();
-  }, []);
+  }, [lessonId]); // Перезагружать урок при изменении lessonId
 
   // Сохранять активную секцию в localStorage при изменении
   useEffect(() => {
-    localStorage.setItem('firstLesson_activeSection', activeSection);
+    localStorage.setItem(`lesson_${lessonId}_activeSection`, activeSection);
   }, [activeSection]);
 
   // Автоматический пересчет прогресса при изменении completedSections
@@ -100,6 +123,11 @@ const FirstLesson = () => {
       setCompletedSections(prev => new Set([...prev, 'exercises']));
     }
   }, [completedExercises, lessonData]);
+
+  // Пересчитывать прогресс привычек при изменении todayHabits или habitTracker
+  useEffect(() => {
+    calculateHabitProgress();
+  }, [todayHabits, habitTracker]);
 
   // Функция расчета общего прогресса урока
   const calculateOverallProgress = () => {
@@ -301,12 +329,17 @@ const FirstLesson = () => {
   };
 
   // Загрузка данных первого урока
-  const loadFirstLesson = async () => {
+  const loadLesson = async () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${backendUrl}/api/lessons/first-lesson`, {
+
+      // Для первого урока используем специальный endpoint, для остальных - общий
+      const endpoint = lessonId === 'lesson_numerom_intro'
+        ? `${backendUrl}/api/lessons/first-lesson`
+        : `${backendUrl}/api/lessons/${lessonId}`;
+
+      const response = await fetch(endpoint, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -319,12 +352,12 @@ const FirstLesson = () => {
 
       const data = await response.json();
       setLessonData(data.lesson);
-      
-      // Загрузить прогресс пользователя если есть
-      await loadUserProgress();
-      
+
+      // Загрузить прогресс пользователя если есть (передаем lesson для получения challenge/quiz ID)
+      await loadUserProgress(data.lesson);
+
     } catch (err) {
-      console.error('Ошибка загрузки первого урока:', err);
+      console.error(`Ошибка загрузки урока ${lessonId}:`, err);
       setError('Не удалось загрузить урок. Попробуйте обновить страницу.');
     } finally {
       setLoading(false);
@@ -332,22 +365,22 @@ const FirstLesson = () => {
   };
 
   // Загрузка прогресса пользователя
-  const loadUserProgress = async () => {
+  const loadUserProgress = async (lesson) => {
     try {
       const token = localStorage.getItem('token');
-      
+
       // Загрузить общий прогресс урока
       const overallResponse = await fetch(
-        `${backendUrl}/api/lessons/overall-progress/lesson_numerom_intro`, 
+        `${backendUrl}/api/lessons/overall-progress/${lessonId}`,
         {
           headers: { 'Authorization': `Bearer ${token}` }
         }
       );
-      
+
       if (overallResponse.ok) {
         const overallData = await overallResponse.json();
         setOverallProgress(overallData.overall_percentage);
-        
+
         // Обновить завершенные секции на основе данных с сервера
         const newCompletedSections = new Set();
         if (overallData.breakdown.theory) newCompletedSections.add('theory');
@@ -355,44 +388,47 @@ const FirstLesson = () => {
         if (overallData.breakdown.quiz) newCompletedSections.add('quiz');
         if (overallData.breakdown.challenge) newCompletedSections.add('challenge');
         if (overallData.breakdown.habits) newCompletedSections.add('habits');
-        
+
         setCompletedSections(newCompletedSections);
       }
-      
+
       // Загрузить ответы на упражнения
       const exerciseResponse = await fetch(
-        `${backendUrl}/api/lessons/exercise-responses/lesson_numerom_intro`, 
+        `${backendUrl}/api/lessons/exercise-responses/${lessonId}`,
         {
           headers: { 'Authorization': `Bearer ${token}` }
         }
       );
-      
+
       if (exerciseResponse.ok) {
         const exerciseData = await exerciseResponse.json();
         setExerciseResponses(exerciseData.responses || {});
         setSavedExercises(new Set(Object.keys(exerciseData.responses || {})));
       }
-      
-      // Загрузить прогресс челленджа
-      const challengeResponse = await fetch(
-        `${backendUrl}/api/lessons/challenge-progress/challenge_sun_7days`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` }
-        }
-      );
 
-      if (challengeResponse.ok) {
-        const challengeData = await challengeResponse.json();
-        if (challengeData.progress) {
-          setChallengeProgress(challengeData.progress);
-          setChallengeStarted(true);
-          setChallengeCompleted(challengeData.progress.status === 'completed');
+      // Загрузить прогресс челленджа (получаем challenge ID из данных урока)
+      const challengeId = lesson?.content?.challenge?.id;
+      if (challengeId) {
+        const challengeResponse = await fetch(
+          `${backendUrl}/api/lessons/challenge-progress/${challengeId}`,
+          {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }
+        );
+
+        if (challengeResponse.ok) {
+          const challengeData = await challengeResponse.json();
+          if (challengeData.progress) {
+            setChallengeProgress(challengeData.progress);
+            setChallengeStarted(true);
+            setChallengeCompleted(challengeData.progress.status === 'completed');
+          }
         }
       }
 
       // Загрузить трекер привычек
       const habitTrackerResponse = await fetch(
-        `${backendUrl}/api/lessons/habit-tracker/lesson_numerom_intro`,
+        `${backendUrl}/api/lessons/habit-tracker/${lessonId}`,
         {
           headers: { 'Authorization': `Bearer ${token}` }
         }
@@ -427,7 +463,7 @@ const FirstLesson = () => {
     try {
       const token = localStorage.getItem('token');
       const formData = new FormData();
-      formData.append('lesson_id', 'lesson_numerom_intro');
+      formData.append('lesson_id', lessonId);
       formData.append('exercise_id', exerciseId);
       formData.append('response_text', responseText);
 
@@ -587,7 +623,7 @@ const FirstLesson = () => {
     try {
       const token = localStorage.getItem('token');
       const formData = new FormData();
-      formData.append('lesson_id', 'lesson_numerom_intro');
+      formData.append('lesson_id', lessonId);
 
       const response = await fetch(`${backendUrl}/api/lessons/add-habit-tracker`, {
         method: 'POST',
@@ -618,7 +654,7 @@ const FirstLesson = () => {
     try {
       const token = localStorage.getItem('token');
       const formData = new FormData();
-      formData.append('lesson_id', 'lesson_numerom_intro');
+      formData.append('lesson_id', lessonId);
       formData.append('habit_name', habitName);
       formData.append('completed', completed.toString());
       formData.append('notes', notes);
@@ -636,12 +672,7 @@ const FirstLesson = () => {
           ...prev,
           [habitName]: completed
         }));
-        
-        // Пересчитать прогресс привычек
-        calculateHabitProgress();
-        
-        // Перезагрузить общий прогресс
-        await loadUserProgress();
+        // useEffect автоматически пересчитает прогресс при изменении todayHabits
       }
     } catch (err) {
       console.error('Ошибка обновления привычки:', err);
@@ -672,7 +703,8 @@ const FirstLesson = () => {
 
   // Отправить квиз
   const submitQuiz = async () => {
-    if (Object.keys(quizAnswers).length < 5) {
+    const totalQuestions = lessonData?.content?.quiz?.questions?.length || 0;
+    if (Object.keys(quizAnswers).length < totalQuestions) {
       setError('Пожалуйста, ответьте на все вопросы');
       return;
     }
@@ -681,7 +713,8 @@ const FirstLesson = () => {
       setQuizSubmitting(true);
       const token = localStorage.getItem('token');
       const formData = new FormData();
-      formData.append('quiz_id', 'quiz_intro_1');
+      const quizId = lessonData?.content?.quiz?.id || 'quiz_intro_1';
+      formData.append('quiz_id', quizId);
       formData.append('answers', JSON.stringify(quizAnswers));
 
       const response = await fetch(`${backendUrl}/api/lessons/submit-quiz`, {
@@ -793,41 +826,39 @@ const FirstLesson = () => {
       <div className="relative overflow-hidden">
         <Card className="border border-gray-200 bg-white shadow-sm">          
           <CardHeader className="p-6 border-b border-gray-100">
-            <div className="flex items-start justify-between flex-wrap gap-6">
-              <div className="flex-1">
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="p-3 bg-blue-50 rounded-xl border border-blue-100">
-                    <Rocket className="w-8 h-8 text-blue-600" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-2xl sm:text-3xl font-semibold text-gray-900 mb-2">
-                      {lessonData.title}
-                    </CardTitle>
-                    <CardDescription className="text-gray-600 text-base">
-                      Введение в NumerOM: История космического корабля и основы нумерологии
-                    </CardDescription>
-                  </div>
-                </div>
+            {/* Заголовок урока */}
+            <div className="flex items-center gap-4 mb-6">
+              <div className="p-3 bg-blue-50 rounded-xl border border-blue-100">
+                <Rocket className="w-8 h-8 text-blue-600" />
               </div>
-              
-              <div className="text-right">
-                <div className="flex flex-col items-end gap-2 mb-4">
-                  <Badge className="bg-green-50 text-green-700 border border-green-200 font-medium px-4 py-2 rounded-full">
-                    🎁 Бесплатный урок
-                  </Badge>
-                  <Badge className="bg-gray-50 text-gray-700 border border-gray-200 px-3 py-1">
-                    Модуль 1 • Базовый уровень
-                  </Badge>
+              <div>
+                <CardTitle className="text-2xl sm:text-3xl font-semibold text-gray-900 mb-2">
+                  {lessonData.title}
+                </CardTitle>
+                <CardDescription className="text-gray-600 text-base">
+                  Введение в NumerOM: История космического корабля и основы нумерологии
+                </CardDescription>
+              </div>
+            </div>
+
+            {/* Бейджи и информация - по центру */}
+            <div className="flex flex-col items-center gap-4">
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Badge className="bg-green-50 text-green-700 border border-green-200 font-medium px-4 py-2 rounded-full">
+                  🎁 Бесплатный урок
+                </Badge>
+                <Badge className="bg-gray-50 text-gray-700 border border-gray-200 px-3 py-1">
+                  Модуль 1 • Базовый уровень
+                </Badge>
+              </div>
+              <div className="flex items-center justify-center gap-4 text-sm text-gray-600">
+                <div className="flex items-center">
+                  <Clock className="w-4 h-4 mr-1" />
+                  ~45 мин
                 </div>
-                <div className="flex items-center gap-4 text-sm text-white/90">
-                  <div className="flex items-center">
-                    <Clock className="w-4 h-4 mr-1" />
-                    ~45 мин
-                  </div>
-                  <div className="flex items-center">
-                    <Target className="w-4 h-4 mr-1" />
-                    {completedSections.size}/5 разделов
-                  </div>
+                <div className="flex items-center">
+                  <Target className="w-4 h-4 mr-1" />
+                  {completedSections.size}/5 разделов
                 </div>
               </div>
             </div>
@@ -2157,4 +2188,4 @@ const FirstLesson = () => {
   );
 };
 
-export default FirstLesson;
+export default UniversalLessonViewer;

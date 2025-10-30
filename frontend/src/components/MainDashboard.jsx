@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { Navigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Calculator, Compass, Heart, Star, Grid3X3, Clock, BarChart3, FileText, Sparkles, Users, TrendingUp, Shield } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import AuthModal from './AuthModal';
-import UserDashboard from './UserDashboard';
 
 const MainDashboard = () => {
   const { user, loading, isInitialized } = useAuth();
@@ -49,10 +49,10 @@ const MainDashboard = () => {
     );
   }
 
-  // If user is logged in, show user dashboard
+  // If user is logged in, redirect to dashboard
   if (user) {
-    console.log('MainDashboard: пользователь найден, показываем UserDashboard для:', user.email);
-    return <UserDashboard key={user.id || user.email} />;
+    console.log('MainDashboard: пользователь найден, перенаправляем на /dashboard для:', user.email);
+    return <Navigate to="/dashboard" replace />;
   }
 
   console.log('MainDashboard: пользователь не найден, показываем лендинг');

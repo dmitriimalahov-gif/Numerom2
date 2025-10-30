@@ -5,10 +5,10 @@ services:
     image: mongo:5.0
     container_name: numerom_mongodb
     restart: always
-    # Порт 27017 закрыт от внешнего доступа для безопасности
-    # Backend подключается через внутреннюю сеть Docker
-    # ports:
-    #   - "27017:27017"
+    # Порт 27017 открыт для локальной разработки
+    # Backend подключается через localhost:27017
+    #ports:
+    #  - "27017:27017"
     volumes:
       - mongodb_data:/data/db
     environment:
@@ -27,12 +27,19 @@ services:
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/.env:/app/.env
+      - ./backend/.env.vapid:/app/.env.vapid
     depends_on:
       - mongodb
     networks:
       - numerom_network
     environment:
       - MONGO_URL=mongodb://mongodb:27017
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-numerom}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
 
   frontend:
     build:

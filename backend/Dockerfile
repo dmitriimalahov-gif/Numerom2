@@ -13,8 +13,11 @@ COPY . .
 # Создать директорию для загрузок
 RUN mkdir -p uploads
 
+# Сделать entrypoint скрипт исполняемым
+RUN chmod +x docker-entrypoint.sh
+
 # Открыть порт
 EXPOSE 8000
 
-# Запустить приложение
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Использовать entrypoint для инициализации
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

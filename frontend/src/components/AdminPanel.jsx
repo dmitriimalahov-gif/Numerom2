@@ -36,9 +36,7 @@ import {
 import { useAuth } from './AuthContext';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
-import LessonAdmin from './LessonAdmin';
-import MultipleLessonAdmin from './MultipleLessonAdmin';
-import FirstLesson from './FirstLesson';
+import UnifiedLessonEditor from './UnifiedLessonEditor';
 
 const AdminPanel = () => {
   const { user } = useAuth();
@@ -4582,11 +4580,7 @@ const AdminPanel = () => {
       </Card>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className={`grid w-full ${user?.is_super_admin ? 'grid-cols-7' : 'grid-cols-2'}`}>
-          <TabsTrigger value="overview" className="flex items-center justify-center px-1 sm:px-3" title="Обзор">
-            <TrendingUp className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">Обзор</span>
-          </TabsTrigger>
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="users" className="flex items-center justify-center px-1 sm:px-3" title="Ученики">
             <Users className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Ученики</span>
@@ -4599,14 +4593,6 @@ const AdminPanel = () => {
             <BookOpen className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Уроки</span>
           </TabsTrigger>
-          <TabsTrigger value="lessons-editor" className="flex items-center justify-center px-1 sm:px-3" title="Редактор уроков">
-            <Edit3 className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">Редактор</span>
-          </TabsTrigger>
-          <TabsTrigger value="first-lesson" className="flex items-center justify-center px-1 sm:px-3" title="Первый урок">
-            <Star className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">1 урок</span>
-          </TabsTrigger>
           <TabsTrigger value="settings" className="flex items-center justify-center px-1 sm:px-3" title="Настройки">
             <Settings className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Настройки</span>
@@ -4617,10 +4603,6 @@ const AdminPanel = () => {
           {renderUsersTab()}
         </TabsContent>
 
-        <TabsContent value="lessons" className="space-y-6">
-          <MultipleLessonAdmin />
-        </TabsContent>
-
         <TabsContent value="materials" className="space-y-6">
           {renderMaterialsTab()}
         </TabsContent>
@@ -4629,15 +4611,87 @@ const AdminPanel = () => {
           {renderConsultationsTab()}
         </TabsContent>
 
-        <TabsContent value="first-lesson" className="space-y-6">
-          <FirstLesson />
+        <TabsContent value="lessons" className="space-y-6">
+          <UnifiedLessonEditor showLessonsList={true} />
         </TabsContent>
 
-        {user?.is_super_admin && (
-          <TabsContent value="lesson-editor" className="space-y-6">
-            {renderLessonEditor()}
-          </TabsContent>
-        )}
+        <TabsContent value="settings" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <Settings className="w-5 h-5 mr-2" />
+                Настройки системы
+              </CardTitle>
+              <CardDescription>Управление настройками платформы NumerOM</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-4">
+                <Card className="bg-blue-50 border-blue-200">
+                  <CardContent className="p-4">
+                    <h3 className="font-semibold text-lg mb-2 text-blue-800">
+                      <BookOpen className="w-5 h-5 inline mr-2" />
+                      Управление уроками
+                    </h3>
+                    <p className="text-sm text-gray-700 mb-3">
+                      Настройки уроков доступны в разделах:
+                    </p>
+                    <ul className="text-sm text-gray-600 space-y-1 ml-4">
+                      <li>• <strong>Материалы</strong> - редактор первого урока</li>
+                      <li>• Создание и редактирование всех уроков через API</li>
+                    </ul>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-purple-50 border-purple-200">
+                  <CardContent className="p-4">
+                    <h3 className="font-semibold text-lg mb-2 text-purple-800">
+                      <Video className="w-5 h-5 inline mr-2" />
+                      Управление консультациями
+                    </h3>
+                    <p className="text-sm text-gray-700 mb-3">
+                      Настройки консультаций находятся во вкладке <strong>Консультации</strong>
+                    </p>
+                    <ul className="text-sm text-gray-600 space-y-1 ml-4">
+                      <li>• Загрузка видео и PDF материалов</li>
+                      <li>• Управление доступом к консультациям</li>
+                    </ul>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-green-50 border-green-200">
+                  <CardContent className="p-4">
+                    <h3 className="font-semibold text-lg mb-2 text-green-800">
+                      <Users className="w-5 h-5 inline mr-2" />
+                      Управление пользователями
+                    </h3>
+                    <p className="text-sm text-gray-700 mb-3">
+                      Настройки пользователей находятся во вкладке <strong>Ученики</strong>
+                    </p>
+                    <ul className="text-sm text-gray-600 space-y-1 ml-4">
+                      <li>• Управление баллами и кредитами</li>
+                      <li>• Назначение прав администратора</li>
+                      <li>• Просмотр активности учеников</li>
+                    </ul>
+                  </CardContent>
+                </Card>
+
+                {user?.is_super_admin && (
+                  <Card className="bg-red-50 border-red-200">
+                    <CardContent className="p-4">
+                      <h3 className="font-semibold text-lg mb-2 text-red-800">
+                        <Settings className="w-5 h-5 inline mr-2" />
+                        Системные настройки (Super Admin)
+                      </h3>
+                      <p className="text-sm text-gray-700 mb-3">
+                        Расширенные настройки доступны во вкладке <strong>System</strong> (только для суперадминов)
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {user?.is_super_admin && (
           <TabsContent value="system" className="space-y-6">

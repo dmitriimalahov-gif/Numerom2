@@ -41,13 +41,14 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
+        role: str = payload.get("role", "user")  # По умолчанию "user"
         if user_id is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    
-    # Return user_id for further processing
-    return {"user_id": user_id}
+
+    # Return user_id and role for further processing
+    return {"user_id": user_id, "role": role}
 
 
 async def get_current_user_full(credentials: HTTPAuthorizationCredentials = Depends(security), db=None):
