@@ -12,13 +12,16 @@ if [ -z "$VAPID_PUBLIC_KEY" ] || [ -z "$VAPID_PRIVATE_KEY" ]; then
 
         # Пытаемся сгенерировать, но не падаем если не получится
         set +e  # Временно отключаем exit on error
-        python generate_vapid_keys.py 2>/dev/null
+        python generate_vapid_keys.py
         VAPID_EXIT_CODE=$?
         set -e  # Включаем обратно
 
-        if [ $VAPID_EXIT_CODE -eq 0 ] && [ -f "/app/.env.vapid" ]; then
+        # Даем время на запись файла
+        sleep 1
+
+        if [ -f "/app/.env.vapid" ]; then
             echo "✅ VAPID keys generated successfully"
-            echo "📝 Keys saved to .env.vapid"
+            echo "📝 Loading keys from .env.vapid"
             export $(cat /app/.env.vapid | xargs)
         else
             echo "⚠️  Failed to generate VAPID keys - continuing without push notifications"
