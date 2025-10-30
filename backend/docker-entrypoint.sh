@@ -1,27 +1,28 @@
 #!/bin/bash
-set -e
 
 echo "🚀 Starting NumerOM Backend..."
 
-# Проверка наличия VAPID ключей
+# Проверка наличия VAPID ключей (без set -e чтобы не падать на ошибках генерации)
 if [ -z "$VAPID_PUBLIC_KEY" ] || [ -z "$VAPID_PRIVATE_KEY" ]; then
     echo "⚠️  VAPID keys not found in environment"
 
     # Проверяем, есть ли файл с ключами
     if [ ! -f "/app/.env.vapid" ]; then
-        echo "🔑 Generating VAPID keys..."
-        python generate_vapid_keys.py
+        echo "🔑 Trying to generate VAPID keys..."
 
-        # Читаем сгенерированные ключи
-        if [ -f "/app/.env.vapid" ]; then
+        # Пытаемся сгенерировать, но не падаем если не получится
+        set +e  # Временно отключаем exit on error
+        python generate_vapid_keys.py 2>/dev/null
+        VAPID_EXIT_CODE=$?
+        set -e  # Включаем обратно
+
+        if [ $VAPID_EXIT_CODE -eq 0 ] && [ -f "/app/.env.vapid" ]; then
             echo "✅ VAPID keys generated successfully"
-            echo "📝 Keys saved to .env.vapid - please add them to your .env file"
-
-            # Экспортируем ключи для текущей сессии
+            echo "📝 Keys saved to .env.vapid"
             export $(cat /app/.env.vapid | xargs)
         else
-            echo "❌ Failed to generate VAPID keys"
-            exit 1
+            echo "⚠️  Failed to generate VAPID keys - continuing without push notifications"
+            echo "💡 Push notifications will be disabled. To enable them, add VAPID keys to .env"
         fi
     else
         echo "📂 Loading existing VAPID keys from .env.vapid"
@@ -30,6 +31,9 @@ if [ -z "$VAPID_PUBLIC_KEY" ] || [ -z "$VAPID_PRIVATE_KEY" ]; then
 else
     echo "✅ VAPID keys found in environment"
 fi
+
+# Включаем exit on error для остальной части скрипта
+set -e
 
 # Создаём необходимые директории
 echo "📁 Creating upload directories..."
