@@ -3980,12 +3980,13 @@ async def update_lesson_content(
     current_user: dict = Depends(get_current_user)
 ):
     """Обновить содержимое урока (только для администраторов)"""
-    # Проверить права администратора (ДО try блока!)
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
-
     try:
         user_id = current_user["user_id"]
+
+        # Проверить права администратора из базы данных
+        user = await db.users.find_one({"id": user_id})
+        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
+            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
 
         logger.info(f"Updating lesson content: lesson_id={lesson_id}, section={section}, field={field}, value_length={len(value)}")
 
@@ -4025,9 +4026,10 @@ async def upload_video(
 ):
     """Загрузить видео для урока (только для администраторов)"""
     try:
-        # Проверить права администратора
-        if current_user.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
+        # Проверить права администратора из базы данных
+        user = await db.users.find_one({"id": current_user["user_id"]})
+        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
+            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
         
         # Проверить формат файла
         if not video.content_type.startswith('video/'):
@@ -4086,9 +4088,10 @@ async def upload_pdf(
 ):
     """Загрузить PDF для урока (только для администраторов)"""
     try:
-        # Проверить права администратора
-        if current_user.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
+        # Проверить права администратора из базы данных
+        user = await db.users.find_one({"id": current_user["user_id"]})
+        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
+            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
         
         # Проверить формат файла
         if pdf.content_type != 'application/pdf':
@@ -4144,9 +4147,10 @@ async def get_lesson_media(
 ):
     """Получить загруженные медиафайлы урока"""
     try:
-        # Проверить права администратора
-        if current_user.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
+        # Проверить права администратора из базы данных
+        user = await db.users.find_one({"id": current_user["user_id"]})
+        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
+            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
         
         media_files = await db.lesson_media.find({
             "lesson_id": lesson_id,
@@ -4791,12 +4795,13 @@ async def add_exercise(
     current_user: dict = Depends(get_current_user)
 ):
     """Добавить новое упражнение (только для администраторов)"""
-    # Проверить права администратора
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
-
     try:
         user_id = current_user["user_id"]
+
+        # Проверить права администратора из базы данных
+        user = await db.users.find_one({"id": user_id})
+        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
+            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
 
         # Сгенерировать ID для нового упражнения с учетом базовых и кастомных
         max_exercise_num = 0
@@ -4856,12 +4861,13 @@ async def update_quiz_question(
     current_user: dict = Depends(get_current_user)
 ):
     """Обновить вопрос квиза (только для администраторов)"""
-    # Проверить права администратора
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
-
     try:
         user_id = current_user["user_id"]
+
+        # Проверить права администратора из базы данных
+        user = await db.users.find_one({"id": user_id})
+        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
+            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
 
         logger.info(f"Updating quiz question: lesson_id={lesson_id}, question_id={question_id}, question={question_text[:50]}")
         
@@ -4903,12 +4909,13 @@ async def add_quiz_question(
     current_user: dict = Depends(get_current_user)
 ):
     """Добавить новый вопрос в квиз (только для администраторов)"""
-    # Проверить права администратора
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
-
     try:
         user_id = current_user["user_id"]
+
+        # Проверить права администратора из базы данных
+        user = await db.users.find_one({"id": user_id})
+        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
+            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
 
         logger.info(f"Adding quiz question: lesson_id={lesson_id}, question={question_text[:50]}, options={options[:100]}, correct={correct_answer}")
 
@@ -5496,6 +5503,177 @@ async def get_lesson_admin(lesson_id: str, current_user: dict = Depends(get_curr
     except Exception as e:
         logger.error(f"Error getting lesson for admin: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting lesson for admin: {str(e)}")
+
+@app.post("/api/admin/lessons/create")
+async def create_lesson(
+    lesson_data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Создать новый урок"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+
+        # Проверяем обязательные поля
+        if not lesson_data.get("id") or not lesson_data.get("title"):
+            raise HTTPException(status_code=400, detail="Missing required fields: id and title")
+
+        # Проверяем, не существует ли урок с таким ID
+        existing_lesson = await db.custom_lessons.find_one({"id": lesson_data["id"]})
+        if existing_lesson:
+            raise HTTPException(status_code=400, detail=f"Lesson with id {lesson_data['id']} already exists")
+
+        # Также проверяем в системных уроках
+        system_lesson = lesson_system.get_lesson(lesson_data["id"])
+        if system_lesson:
+            raise HTTPException(status_code=400, detail=f"Lesson with id {lesson_data['id']} already exists in system")
+
+        # Создаем новый урок
+        new_lesson = {
+            "id": lesson_data["id"],
+            "title": lesson_data["title"],
+            "module": lesson_data.get("module", "numerology"),
+            "description": lesson_data.get("description", ""),
+            "points_required": lesson_data.get("points_required", 0),
+            "is_active": lesson_data.get("is_active", True),
+            "content": lesson_data.get("content", {}),
+            "video_file_id": lesson_data.get("video_file_id"),
+            "video_filename": lesson_data.get("video_filename"),
+            "pdf_file_id": lesson_data.get("pdf_file_id"),
+            "pdf_filename": lesson_data.get("pdf_filename"),
+            "created_at": lesson_data.get("created_at"),
+            "created_by": admin_user["id"]
+        }
+
+        # Сохраняем в MongoDB
+        result = await db.custom_lessons.insert_one(new_lesson)
+        logger.info(f"Created new lesson {lesson_data['id']} by admin {admin_user['id']}")
+
+        return {
+            "message": "Lesson created successfully",
+            "lesson_id": lesson_data["id"]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating lesson: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating lesson: {str(e)}")
+
+@app.put("/api/admin/lessons/{lesson_id}")
+async def update_lesson(
+    lesson_id: str,
+    lesson_data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить существующий урок"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+
+        # Проверяем, существует ли урок в custom_lessons
+        existing_lesson = await db.custom_lessons.find_one({"id": lesson_id})
+
+        if existing_lesson:
+            # Обновляем существующий кастомный урок
+            update_data = {
+                "title": lesson_data.get("title", existing_lesson.get("title")),
+                "module": lesson_data.get("module", existing_lesson.get("module")),
+                "description": lesson_data.get("description", existing_lesson.get("description")),
+                "points_required": lesson_data.get("points_required", existing_lesson.get("points_required")),
+                "is_active": lesson_data.get("is_active", existing_lesson.get("is_active")),
+                "content": lesson_data.get("content", existing_lesson.get("content")),
+                "video_file_id": lesson_data.get("video_file_id", existing_lesson.get("video_file_id")),
+                "video_filename": lesson_data.get("video_filename", existing_lesson.get("video_filename")),
+                "pdf_file_id": lesson_data.get("pdf_file_id", existing_lesson.get("pdf_file_id")),
+                "pdf_filename": lesson_data.get("pdf_filename", existing_lesson.get("pdf_filename")),
+                "updated_at": datetime.utcnow().isoformat(),
+                "updated_by": admin_user["id"]
+            }
+
+            await db.custom_lessons.update_one(
+                {"id": lesson_id},
+                {"$set": update_data}
+            )
+            logger.info(f"Updated custom lesson {lesson_id} by admin {admin_user['id']}")
+
+        else:
+            # Это системный урок - создаем запись в custom_lessons
+            system_lesson = lesson_system.get_lesson(lesson_id)
+            if not system_lesson:
+                raise HTTPException(status_code=404, detail=f"Lesson {lesson_id} not found")
+
+            new_custom_lesson = {
+                "id": lesson_id,
+                "title": lesson_data.get("title", system_lesson.title),
+                "module": lesson_data.get("module", system_lesson.module),
+                "description": lesson_data.get("description", ""),
+                "points_required": lesson_data.get("points_required", system_lesson.points_required),
+                "is_active": lesson_data.get("is_active", True),
+                "content": lesson_data.get("content", {}),
+                "video_file_id": lesson_data.get("video_file_id"),
+                "video_filename": lesson_data.get("video_filename"),
+                "pdf_file_id": lesson_data.get("pdf_file_id"),
+                "pdf_filename": lesson_data.get("pdf_filename"),
+                "created_at": datetime.utcnow().isoformat(),
+                "created_by": admin_user["id"]
+            }
+
+            await db.custom_lessons.insert_one(new_custom_lesson)
+            logger.info(f"Created custom override for system lesson {lesson_id} by admin {admin_user['id']}")
+
+        return {
+            "message": "Lesson updated successfully",
+            "lesson_id": lesson_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating lesson: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating lesson: {str(e)}")
+
+@app.delete("/api/admin/lessons/{lesson_id}")
+async def delete_lesson(
+    lesson_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Удалить урок (только кастомные уроки, не системные)"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+
+        # Нельзя удалить первый урок
+        if lesson_id == "lesson_numerom_intro":
+            raise HTTPException(status_code=403, detail="Cannot delete the first lesson")
+
+        # Проверяем, это системный урок или кастомный
+        system_lesson = lesson_system.get_lesson(lesson_id)
+        if system_lesson:
+            raise HTTPException(status_code=403, detail="Cannot delete system lessons. You can only delete custom lessons.")
+
+        # Удаляем из custom_lessons
+        result = await db.custom_lessons.delete_one({"id": lesson_id})
+
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+
+        # Также удаляем все связанные данные
+        await db.lesson_content.delete_many({"lesson_id": lesson_id})
+        await db.lesson_exercises.delete_many({"lesson_id": lesson_id})
+        await db.lesson_quiz_questions.delete_many({"lesson_id": lesson_id})
+        await db.lesson_challenge_days.delete_many({"lesson_id": lesson_id})
+        await db.lessons.delete_many({"id": lesson_id})
+
+        logger.info(f"Deleted lesson {lesson_id} by admin {admin_user['id']}")
+
+        return {
+            "message": "Lesson deleted successfully",
+            "lesson_id": lesson_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting lesson: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting lesson: {str(e)}")
 
 @app.get("/api/admin/lesson-content/{lesson_id}")
 async def get_lesson_content_for_editing(

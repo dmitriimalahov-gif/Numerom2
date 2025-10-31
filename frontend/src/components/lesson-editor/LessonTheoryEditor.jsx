@@ -1,6 +1,7 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Label } from '../ui/label';
+import { Input } from '../ui/input';
 
 /**
  * LESSON THEORY EDITOR
@@ -20,69 +21,90 @@ const LessonTheoryEditor = ({
 }) => {
 
   // Для первого урока - 3 поля, для остальных - 4 поля
-  const theoryFields = isFirstLesson ? [
+  const defaultTheoryFields = isFirstLesson ? [
     {
       key: 'what_is_numerology',
-      label: 'Что такое нумерология?',
+      defaultLabel: 'Что такое нумерология?',
       placeholder: 'Описание нумерологии...',
       rows: 8
     },
     {
       key: 'cosmic_ship_story',
-      label: 'История космического корабля',
+      defaultLabel: 'История космического корабля',
       placeholder: 'История о космическом корабле и планетах...',
       rows: 12
     },
     {
       key: 'planets_and_numbers',
-      label: 'Соответствие планет и чисел',
+      defaultLabel: 'Соответствие планет и чисел',
       placeholder: 'Описание соответствия планет и чисел...',
       rows: 8
     }
   ] : [
     {
       key: 'what_is_topic',
-      label: 'Что изучаем в этом уроке?',
+      defaultLabel: 'Что изучаем в этом уроке?',
       placeholder: 'Введение в тему урока...',
       rows: 8
     },
     {
       key: 'main_story',
-      label: 'Основная история/объяснение',
+      defaultLabel: 'Основная история/объяснение',
       placeholder: 'Основное содержание урока...',
       rows: 12
     },
     {
       key: 'key_concepts',
-      label: 'Ключевые концепции',
+      defaultLabel: 'Ключевые концепции',
       placeholder: 'Важные понятия и термины...',
       rows: 8
     },
     {
       key: 'practical_applications',
-      label: 'Практическое применение',
+      defaultLabel: 'Практическое применение',
       placeholder: 'Как применить знания на практике...',
       rows: 8
     }
   ];
+
+  // Получаем кастомные заголовки из theory_labels или используем дефолтные
+  const getFieldLabel = (field) => {
+    const labelKey = `${field.key}_label`;
+    return lessonContent.theory_labels?.[labelKey] || field.defaultLabel;
+  };
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Теоретическая часть</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {theoryFields.map((field) => (
-          <div key={field.key}>
-            <Label>{field.label}</Label>
-            <textarea
-              key={`${field.key}_${lessonId}_${lessonContent.theory?.[field.key]?.length || 0}`}
-              className="w-full p-3 border rounded-lg min-h-32 text-sm"
-              rows={field.rows}
-              defaultValue={lessonContent.theory?.[field.key] || ''}
-              onBlur={(e) => onSave('theory', field.key, e.target.value)}
-              placeholder={field.placeholder}
-            />
+      <CardContent className="space-y-6">
+        {defaultTheoryFields.map((field) => (
+          <div key={field.key} className="space-y-2">
+            {/* Редактируемый заголовок */}
+            <div>
+              <Label className="text-xs text-gray-500">Заголовок блока</Label>
+              <Input
+                key={`label_${field.key}_${lessonId}`}
+                className="font-medium"
+                defaultValue={getFieldLabel(field)}
+                onBlur={(e) => onSave('theory_labels', `${field.key}_label`, e.target.value)}
+                placeholder={field.defaultLabel}
+              />
+            </div>
+
+            {/* Контент блока */}
+            <div>
+              <Label className="text-xs text-gray-500">Содержание</Label>
+              <textarea
+                key={`${field.key}_${lessonId}_${lessonContent.theory?.[field.key]?.length || 0}`}
+                className="w-full p-3 border rounded-lg min-h-32 text-sm"
+                rows={field.rows}
+                defaultValue={lessonContent.theory?.[field.key] || ''}
+                onBlur={(e) => onSave('theory', field.key, e.target.value)}
+                placeholder={field.placeholder}
+              />
+            </div>
           </div>
         ))}
       </CardContent>

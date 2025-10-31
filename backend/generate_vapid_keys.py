@@ -53,16 +53,12 @@ def generate_vapid_keys():
 
     # Сохраняем в файл для удобства
     import os
-    import shutil
 
     vapid_file = '/app/.env.vapid'
 
-    # Если .env.vapid существует как директория - удаляем её
-    if os.path.exists(vapid_file):
-        if os.path.isdir(vapid_file):
-            shutil.rmtree(vapid_file)
-        else:
-            os.remove(vapid_file)
+    # Если файл существует - удаляем его (перезапись)
+    if os.path.exists(vapid_file) and os.path.isfile(vapid_file):
+        os.remove(vapid_file)
 
     with open(vapid_file, 'w') as f:
         f.write(f"VAPID_PUBLIC_KEY={public_key_b64}\n")

@@ -926,163 +926,141 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
           </TabsList>
         </div>
 
-        {/* ТЕОРИЯ */}
+        {/* ТЕОРИЯ - динамическое отображение с кастомными заголовками */}
         <TabsContent value="theory" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <BookOpen className="w-5 h-5 mr-2" />
-                Что такое нумерология?
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="prose max-w-none">
-              <p className="text-gray-700 leading-relaxed text-lg">
-                {lessonData.content?.theory?.what_is_numerology}
-              </p>
-            </CardContent>
-          </Card>
+          {/* Определяем является ли это первым уроком */}
+          {(() => {
+            const isFirstLesson = lessonId === 'lesson_numerom_intro';
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Rocket className="w-5 h-5 mr-2" />
-                История космического корабля
-              </CardTitle>
-              <CardDescription>
-                Представьте космический корабль, где каждая планета выполняет свою роль
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* Планеты в нумерологическом порядке с ведическими символами */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                {[
-                  { 
-                    number: 1, 
-                    name: "СОЛНЦЕ", 
-                    graha: "Surya (Сурья)",
-                    icon: "☉", 
-                    color: "from-yellow-300 to-yellow-400", 
-                    textColor: "text-yellow-800", 
-                    bgColor: "bg-yellow-50",
-                    borderColor: "border-yellow-200",
-                    description: "Создание идеи о корабле, лидерство, вдохновение команды"
-                  },
-                  { 
-                    number: 2, 
-                    name: "ЛУНА", 
-                    graha: "Chandra (Чандра)",
-                    icon: "☽", 
-                    color: "from-white to-gray-100", 
-                    textColor: "text-gray-800", 
-                    bgColor: "bg-gray-50",
-                    borderColor: "border-gray-300 shadow-md",
-                    description: "Обустройство уюта, взаимоотношения в команде"
-                  },
-                  { 
-                    number: 3, 
-                    name: "ЮПИТЕР", 
-                    graha: "Guru (Гуру)",
-                    icon: "♃", 
-                    color: "from-orange-400 to-orange-600", 
-                    textColor: "text-orange-800", 
-                    bgColor: "bg-orange-50",
-                    borderColor: "border-orange-200",
-                    description: "Технологии, образование, банковская система"
-                  },
-                  { 
-                    number: 4, 
-                    name: "РАХУ", 
-                    graha: "Rahu (Раху)",
-                    icon: "☊", 
-                    color: "from-gray-400 to-gray-500", 
-                    textColor: "text-gray-800", 
-                    bgColor: "bg-gray-50",
-                    borderColor: "border-gray-300",
-                    description: "Современные тенденции, продвинутые технологии"
-                  },
-                  { 
-                    number: 5, 
-                    name: "МЕРКУРИЙ", 
-                    graha: "Budha (Буддха)",
-                    icon: "☿", 
-                    color: "from-emerald-300 to-emerald-400", 
-                    textColor: "text-emerald-800", 
-                    bgColor: "bg-emerald-50",
-                    borderColor: "border-emerald-200",
-                    description: "Коммуникации, связь между отделами"
-                  },
-                  { 
-                    number: 6, 
-                    name: "ВЕНЕРА", 
-                    graha: "Shukra (Шукра)",
-                    icon: "♀", 
-                    color: "from-pink-300 to-pink-400", 
-                    textColor: "text-pink-800", 
-                    bgColor: "bg-pink-50",
-                    borderColor: "border-pink-200",
-                    description: "Красота, дизайн корабля, эстетика"
-                  },
-                  { 
-                    number: 7, 
-                    name: "КЕТУ", 
-                    graha: "Ketu (Кету)",
-                    icon: "☋", 
-                    color: "from-violet-400 to-violet-500", 
-                    textColor: "text-violet-800", 
-                    bgColor: "bg-violet-50",
-                    borderColor: "border-violet-200",
-                    description: "Духовность, философия путешествий"
-                  },
-                  { 
-                    number: 8, 
-                    name: "САТУРН", 
-                    graha: "Shani (Шани)",
-                    icon: "♄", 
-                    color: "from-slate-500 to-slate-600", 
-                    textColor: "text-slate-800", 
-                    bgColor: "bg-slate-50",
-                    borderColor: "border-slate-300",
-                    description: "Порядок, контроль, регламенты, дисциплина"
-                  },
-                  { 
-                    number: 9, 
-                    name: "МАРС", 
-                    graha: "Mangal (Мангал)",
-                    icon: "♂", 
-                    color: "from-red-400 to-red-500", 
-                    textColor: "text-red-800", 
-                    bgColor: "bg-red-50",
-                    borderColor: "border-red-200",
-                    description: "Энергия двигателей, движение, действие"
-                  }
-                ].map((planet) => (
-                  <div 
-                    key={planet.number} 
-                    className={`p-4 rounded-lg border-2 hover:shadow-lg transition-all duration-300 transform hover:scale-105 ${planet.bgColor} ${planet.borderColor}`}
-                  >
-                    <div className="flex items-center mb-3">
-                      <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${planet.color} flex items-center justify-center mr-3 shadow-lg`}>
-                        <span className={`text-2xl font-bold filter drop-shadow-sm ${planet.number === 2 ? 'text-gray-700' : 'text-white'}`}>{planet.icon}</span>
-                      </div>
-                      <div className="flex-1">
-                        <h3 className={`font-bold text-base ${planet.textColor}`}>
-                          {planet.name} ({planet.number})
-                        </h3>
-                        <div className={`text-xs ${planet.textColor} opacity-75 font-medium`}>
-                          {planet.graha}
+            if (isFirstLesson) {
+              // Блоки для первого урока
+              return (
+                <>
+                  {lessonData.content?.theory?.what_is_numerology && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center">
+                          <BookOpen className="w-5 h-5 mr-2" />
+                          {lessonData.content.theory_labels?.what_is_numerology_label || 'Что такое нумерология?'}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="prose max-w-none">
+                        <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                          {lessonData.content.theory.what_is_numerology}
                         </div>
-                      </div>
-                    </div>
-                    <p className={`text-sm leading-relaxed ${planet.textColor} opacity-90`}>
-                      {planet.description}
-                    </p>
-                  </div>
-                ))}
-              </div>
+                      </CardContent>
+                    </Card>
+                  )}
 
-              {/* УЛУЧШЕННЫЙ БЛОК ДОПОЛНИТЕЛЬНЫХ МАТЕРИАЛОВ С НАВИГАЦИЕЙ */}
-              {(additionalVideos.length > 0 || additionalPdfs.length > 0) && (
-                <div className="mb-8">
+                  {lessonData.content?.theory?.cosmic_ship_story && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center">
+                          <Rocket className="w-5 h-5 mr-2" />
+                          {lessonData.content.theory_labels?.cosmic_ship_story_label || 'История космического корабля'}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="prose max-w-none">
+                        <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                          {lessonData.content.theory.cosmic_ship_story}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {lessonData.content?.theory?.planets_and_numbers && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center">
+                          <BookOpen className="w-5 h-5 mr-2" />
+                          {lessonData.content.theory_labels?.planets_and_numbers_label || 'Соответствие планет и чисел'}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="prose max-w-none">
+                        <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                          {lessonData.content.theory.planets_and_numbers}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              );
+            } else {
+              // Блоки для других уроков
+              return (
+                <>
+                  {lessonData.content?.theory?.what_is_topic && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center">
+                          <BookOpen className="w-5 h-5 mr-2" />
+                          {lessonData.content.theory_labels?.what_is_topic_label || 'Что изучаем в этом уроке?'}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="prose max-w-none">
+                        <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                          {lessonData.content.theory.what_is_topic}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {lessonData.content?.theory?.main_story && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center">
+                          <BookOpen className="w-5 h-5 mr-2" />
+                          {lessonData.content.theory_labels?.main_story_label || 'Основная история/объяснение'}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="prose max-w-none">
+                        <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                          {lessonData.content.theory.main_story}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {lessonData.content?.theory?.key_concepts && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center">
+                          <Lightbulb className="w-5 h-5 mr-2" />
+                          {lessonData.content.theory_labels?.key_concepts_label || 'Ключевые концепции'}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="prose max-w-none">
+                        <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                          {lessonData.content.theory.key_concepts}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {lessonData.content?.theory?.practical_applications && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center">
+                          <Sparkles className="w-5 h-5 mr-2" />
+                          {lessonData.content.theory_labels?.practical_applications_label || 'Практическое применение'}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="prose max-w-none">
+                        <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                          {lessonData.content.theory.practical_applications}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              );
+            }
+          })()}
+
+          {/* ДОПОЛНИТЕЛЬНЫЕ МАТЕРИАЛЫ */}
+          {(additionalVideos.length > 0 || additionalPdfs.length > 0) && (
+            <Card>
+              <CardContent className="pt-6">
                   {/* Заголовок секции */}
                   <div className="text-center mb-6">
                     <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-600 rounded-full mb-4 shadow-lg">
@@ -1398,51 +1376,10 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                       </div>
                     </div>
                   </div>
-                </div>
               )}
-              
-              <div className="p-4 bg-blue-50 rounded-lg">
-                <h4 className="font-semibold mb-2 flex items-center">
-                  <Lightbulb className="w-4 h-4 mr-2 text-blue-600" />
-                  Три состояния планет (Гуны)
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                  <div className="p-3 bg-red-50 rounded border-l-4 border-red-400">
-                    <div className="font-medium text-red-700">🔴 РАДЖАС</div>
-                    <div className="text-red-600">Активность, страсть, действие</div>
-                  </div>
-                  <div className="p-3 bg-blue-50 rounded border-l-4 border-blue-400">
-                    <div className="font-medium text-blue-700">🔵 САТТВА</div>
-                    <div className="text-blue-600">Гармония, мудрость, баланс</div>
-                  </div>
-                  <div className="p-3 bg-gray-50 rounded border-l-4 border-gray-400">
-                    <div className="font-medium text-gray-700">⚫ ТАМАС</div>
-                    <div className="text-gray-600">Инертность, лень, разрушение</div>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="mt-6 text-center">
-                <Button
-                  onClick={completeTheory}
-                  className="numerology-gradient hover:brightness-90 disabled:brightness-90 disabled:cursor-not-allowed transition-all duration-200"
-                  disabled={completedSections.has('theory')}
-                >
-                  {completedSections.has('theory') ? (
-                    <>
-                      <CheckCircle className="w-4 h-4 mr-2" />
-                      Теория изучена
-                    </>
-                  ) : (
-                    <>
-                      <ArrowRight className="w-4 h-4 mr-2" />
-                      Завершить изучение теории
-                    </>
-                  )}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* УПРАЖНЕНИЯ */}

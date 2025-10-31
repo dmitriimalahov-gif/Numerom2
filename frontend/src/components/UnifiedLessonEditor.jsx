@@ -290,12 +290,6 @@ const UnifiedLessonEditor = ({
       }
     }
 
-    // Нельзя сохранить первый урок через этот метод
-    if (isFirstLesson && !isCreatingNew) {
-      alert('Первый урок редактируется через специальные endpoints');
-      return;
-    }
-
     try {
       setSaving(true);
       const token = localStorage.getItem('token');
