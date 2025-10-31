@@ -932,11 +932,23 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
           {(() => {
             const isFirstLesson = lessonId === 'lesson_numerom_intro';
 
+            // Получаем список скрытых полей
+            let hiddenFields = new Set();
+            const hiddenFieldsData = lessonData.content?.hidden_theory_fields?.fields;
+            if (hiddenFieldsData) {
+              try {
+                const parsed = typeof hiddenFieldsData === 'string' ? JSON.parse(hiddenFieldsData) : hiddenFieldsData;
+                hiddenFields = new Set(Array.isArray(parsed) ? parsed : []);
+              } catch (e) {
+                console.error('Error parsing hidden_theory_fields:', e);
+              }
+            }
+
             if (isFirstLesson) {
               // Блоки для первого урока
               return (
                 <>
-                  {lessonData.content?.theory?.what_is_numerology && (
+                  {!hiddenFields.has('what_is_numerology') && lessonData.content?.theory?.what_is_numerology && (
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center">
@@ -952,7 +964,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                     </Card>
                   )}
 
-                  {lessonData.content?.theory?.cosmic_ship_story && (
+                  {!hiddenFields.has('cosmic_ship_story') && lessonData.content?.theory?.cosmic_ship_story && (
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center">
@@ -968,7 +980,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                     </Card>
                   )}
 
-                  {lessonData.content?.theory?.planets_and_numbers && (
+                  {!hiddenFields.has('planets_and_numbers') && lessonData.content?.theory?.planets_and_numbers && (
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center">
@@ -989,7 +1001,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
               // Блоки для других уроков
               return (
                 <>
-                  {lessonData.content?.theory?.what_is_topic && (
+                  {!hiddenFields.has('what_is_topic') && lessonData.content?.theory?.what_is_topic && (
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center">
@@ -1005,7 +1017,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                     </Card>
                   )}
 
-                  {lessonData.content?.theory?.main_story && (
+                  {!hiddenFields.has('main_story') && lessonData.content?.theory?.main_story && (
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center">
@@ -1021,7 +1033,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                     </Card>
                   )}
 
-                  {lessonData.content?.theory?.key_concepts && (
+                  {!hiddenFields.has('key_concepts') && lessonData.content?.theory?.key_concepts && (
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center">
@@ -1037,7 +1049,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                     </Card>
                   )}
 
-                  {lessonData.content?.theory?.practical_applications && (
+                  {!hiddenFields.has('practical_applications') && lessonData.content?.theory?.practical_applications && (
                     <Card>
                       <CardHeader>
                         <CardTitle className="flex items-center">
@@ -1055,6 +1067,46 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                 </>
               );
             }
+          })()}
+
+          {/* Кастомные блоки теории */}
+          {(() => {
+            let customBlocks = lessonData.content?.custom_theory_blocks?.blocks;
+
+            // Парсим JSON если это строка
+            if (typeof customBlocks === 'string') {
+              try {
+                customBlocks = JSON.parse(customBlocks);
+              } catch (e) {
+                console.error('Error parsing custom_theory_blocks:', e);
+                customBlocks = [];
+              }
+            }
+
+            // Проверяем что это массив и он не пустой
+            if (!Array.isArray(customBlocks) || customBlocks.length === 0) {
+              return null;
+            }
+
+            return (
+              <>
+                {customBlocks.map((block) => (
+                  <Card key={block.id}>
+                    <CardHeader>
+                      <CardTitle className="flex items-center">
+                        <BookOpen className="w-5 h-5 mr-2" />
+                        {block.title}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="prose max-w-none">
+                      <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                        {block.content}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </>
+            );
           })()}
 
           {/* ДОПОЛНИТЕЛЬНЫЕ МАТЕРИАЛЫ */}

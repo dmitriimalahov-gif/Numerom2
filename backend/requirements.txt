@@ -18,3 +18,4 @@ reportlab==4.0.7
 stripe==7.8.0
 pywebpush==1.14.0
 py-vapid>=1.9.1
+httpx==0.25.2

@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
-import { Upload, Video, FileText, Loader } from 'lucide-react';
+import { Upload, Video, FileText, Loader, Cloud, CheckCircle2 } from 'lucide-react';
 
 /**
  * LESSON MEDIA EDITOR
@@ -28,7 +28,13 @@ const LessonMediaEditor = ({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Медиа файлы</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <Cloud className="w-5 h-5 text-blue-600" />
+          Медиа файлы (Bunny.net CDN)
+        </CardTitle>
+        <p className="text-sm text-gray-500 mt-2">
+          Файлы загружаются на Bunny.net CDN для быстрого и безопасного стриминга
+        </p>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Загрузка видео */}
@@ -63,13 +69,27 @@ const LessonMediaEditor = ({
             </Button>
           </div>
           {editingLesson?.video_filename && (
-            <div className="mt-2 flex items-center gap-2 text-sm text-green-600">
-              <Video className="w-4 h-4" />
-              <span>{editingLesson.video_filename}</span>
+            <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-md">
+              <div className="flex items-center gap-2 text-sm text-green-700">
+                <CheckCircle2 className="w-4 h-4" />
+                <span className="font-medium">{editingLesson.video_filename}</span>
+              </div>
+              {editingLesson?.video_status === 'processing' && (
+                <div className="mt-2 flex items-center gap-2 text-xs text-yellow-600">
+                  <Loader className="w-3 h-3 animate-spin" />
+                  <span>Обрабатывается на Bunny.net...</span>
+                </div>
+              )}
+              {editingLesson?.video_status === 'ready' && (
+                <div className="mt-1 text-xs text-green-600 flex items-center gap-1">
+                  <Cloud className="w-3 h-3" />
+                  <span>Загружено на CDN</span>
+                </div>
+              )}
             </div>
           )}
           <p className="text-xs text-gray-500 mt-1">
-            Форматы: MP4, AVI, MOV, WEBM. Максимум: 500MB
+            Форматы: MP4, AVI, MOV, WEBM. Максимум: 500MB. Загружается на Bunny.net CDN.
           </p>
         </div>
 

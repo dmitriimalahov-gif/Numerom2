@@ -6077,6 +6077,18 @@ async def send_test_notification(
 
 # Include router and middleware at the end to ensure all endpoints are registered
 app.include_router(api_router)
+
+# Bunny.net Stream integration
+try:
+    from bunny_endpoints import bunny_router
+    from bunny_manual_link import manual_link_router
+    app.include_router(bunny_router)
+    app.include_router(manual_link_router)
+    logger.info("Bunny.net Stream endpoints loaded successfully")
+except ImportError as e:
+    logger.warning(f"Bunny.net endpoints not loaded: {e}. Install httpx to enable Bunny.net integration.")
+except Exception as e:
+    logger.error(f"Error loading Bunny.net endpoints: {e}")
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

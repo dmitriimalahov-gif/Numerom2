@@ -788,6 +788,13 @@ const UnifiedLessonEditor = ({
     const file = event.target.files[0];
     if (!file || !editingLesson) return;
 
+    // Проверка размера файла (500MB)
+    const maxSize = 500 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(`Файл слишком большой (${(file.size / (1024 * 1024)).toFixed(1)}MB). Максимум: 500MB`);
+      return;
+    }
+
     const formData = new FormData();
     formData.append('file', file);
 
@@ -795,7 +802,8 @@ const UnifiedLessonEditor = ({
       setUploadingVideo(true);
       const token = localStorage.getItem('token');
 
-      const endpoint = `${backendUrl}/api/admin/lessons/${editingLesson.id}/upload-video`;
+      // Используем Bunny.net endpoint
+      const endpoint = `${backendUrl}/api/admin/lessons/${editingLesson.id}/upload-video-bunny`;
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -809,17 +817,20 @@ const UnifiedLessonEditor = ({
         const data = await response.json();
         setEditingLesson(prev => ({
           ...prev,
-          video_file_id: data.file_id,
-          video_filename: data.filename
+          video_id: data.video_id,
+          video_filename: file.name,
+          video_platform: 'bunny',
+          video_status: data.status,
+          video_thumbnail: data.thumbnail_url
         }));
-        alert('Видео успешно загружено!');
+        alert(data.message || 'Видео успешно загружено на Bunny.net CDN!');
       } else {
         const errorData = await response.json();
         alert(errorData.detail || 'Ошибка загрузки видео');
       }
     } catch (err) {
       console.error('Ошибка загрузки видео:', err);
-      alert('Ошибка загрузки видео');
+      alert('Ошибка загрузки видео: ' + err.message);
     } finally {
       setUploadingVideo(false);
     }
