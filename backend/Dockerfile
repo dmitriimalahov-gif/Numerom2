@@ -13,8 +13,8 @@ COPY . .
 # Создать директорию для загрузок
 RUN mkdir -p uploads
 
-# Сделать entrypoint скрипт исполняемым
-RUN chmod +x docker-entrypoint.sh
+# Сделать entrypoint скрипт и init_lessons.py исполняемыми
+RUN chmod +x docker-entrypoint.sh init_lessons.py
 
 # Открыть порт
 EXPOSE 8000

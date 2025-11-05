@@ -23,11 +23,12 @@ services:
     container_name: numerom_backend
     restart: always
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/.env:/app/.env
       - ./backend/.env.vapid:/app/.env.vapid
+      - ./файлы для запуска:/app/lesson_files:ro
     depends_on:
       - mongodb
     networks:
@@ -40,6 +41,7 @@ services:
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - BACKEND_URL=http://localhost:8000
 
   frontend:
     build:
@@ -48,7 +50,7 @@ services:
     container_name: numerom_frontend
     restart: always
     ports:
-      - "3000:80"
+      - "5128:80"
     depends_on:
       - backend
     networks:
