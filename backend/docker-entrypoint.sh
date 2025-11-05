@@ -86,6 +86,24 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+echo "✨ Starting Uvicorn server..."
+# Запускаем uvicorn в фоне
+uvicorn server:app --host 0.0.0.0 --port 8000 &
+UVICORN_PID=$!
+
+# Ждем, пока backend запустится
+echo "⏳ Waiting for backend to start..."
+for i in {1..30}; do
+    if curl -s http://localhost:8000/docs > /dev/null 2>&1; then
+        echo "✅ Backend is ready!"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "⚠️  Backend startup timeout (this is OK, continuing anyway)"
+    fi
+    sleep 1
+done
+
 # Инициализация уроков (если файлы доступны)
 if [ -d "/app/lesson_files" ] && [ "$(ls -A /app/lesson_files 2>/dev/null)" ]; then
     echo "📚 Инициализация уроков..."
@@ -94,5 +112,5 @@ else
     echo "ℹ️  Файлы уроков не найдены, пропускаем инициализацию"
 fi
 
-echo "✨ Starting Uvicorn server..."
-exec uvicorn server:app --host 0.0.0.0 --port 8000
+# Ожидаем завершения uvicorn процесса
+wait $UVICORN_PID
