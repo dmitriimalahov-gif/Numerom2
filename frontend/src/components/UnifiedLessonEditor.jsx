@@ -54,6 +54,7 @@ const UnifiedLessonEditor = ({
   // Состояния для медиа
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [uploadingPDF, setUploadingPDF] = useState(false);
+  const [uploadingWord, setUploadingWord] = useState(false);
 
   // ==================== ЖИЗНЕННЫЙ ЦИКЛ ====================
 
@@ -118,6 +119,10 @@ const UnifiedLessonEditor = ({
 
       if (response.ok) {
         const data = await response.json();
+        console.log('Урок загружен для редактирования:', data.lesson);
+        console.log('PDF file_id:', data.lesson?.pdf_file_id);
+        console.log('PDF filename:', data.lesson?.pdf_filename);
+        
         setIsCreatingNew(false);
         setEditingLesson(data.lesson);
         setLessonContent(data.lesson.content || {});
@@ -302,9 +307,11 @@ const UnifiedLessonEditor = ({
         is_active: editingLesson.is_active,
         video_file_id: editingLesson.video_file_id,
         video_filename: editingLesson.video_filename,
-        pdf_file_id: editingLesson.pdf_file_id,
-        pdf_filename: editingLesson.pdf_filename,
-        content: lessonContent
+                  pdf_file_id: editingLesson.pdf_file_id,
+          pdf_filename: editingLesson.pdf_filename,
+                    word_file_id: editingLesson.word_file_id,
+          word_filename: editingLesson.word_filename,
+          content: lessonContent
       };
 
       let response;
@@ -802,8 +809,8 @@ const UnifiedLessonEditor = ({
       setUploadingVideo(true);
       const token = localStorage.getItem('token');
 
-      // Используем Bunny.net endpoint
-      const endpoint = `${backendUrl}/api/admin/lessons/${editingLesson.id}/upload-video-bunny`;
+      // УНИФИКАЦИЯ: используем тот же endpoint что и для консультаций - РАБОТАЮЩИЙ!
+      const endpoint = `${backendUrl}/api/admin/consultations/upload-video`;
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -814,16 +821,17 @@ const UnifiedLessonEditor = ({
       });
 
       if (response.ok) {
-        const data = await response.json();
+        const result = await response.json();
+        console.log('Видео загружено успешно, результат:', result);
+        
+        // ТОЧНО КАК В КОНСУЛЬТАЦИЯХ: только обновляем состояние, НЕ сохраняем автоматически
         setEditingLesson(prev => ({
           ...prev,
-          video_id: data.video_id,
-          video_filename: file.name,
-          video_platform: 'bunny',
-          video_status: data.status,
-          video_thumbnail: data.thumbnail_url
+          video_file_id: result.file_id,
+          video_filename: result.filename
         }));
-        alert(data.message || 'Видео успешно загружено на Bunny.net CDN!');
+        
+        alert(`Видео успешно загружено: ${result.filename}. Не забудьте сохранить урок!`);
       } else {
         const errorData = await response.json();
         alert(errorData.detail || 'Ошибка загрузки видео');
@@ -847,7 +855,8 @@ const UnifiedLessonEditor = ({
       setUploadingPDF(true);
       const token = localStorage.getItem('token');
 
-      const endpoint = `${backendUrl}/api/admin/lessons/${editingLesson.id}/upload-pdf`;
+      // УНИФИКАЦИЯ: используем тот же endpoint что и для консультаций - РАБОТАЮЩИЙ!
+      const endpoint = `${backendUrl}/api/admin/consultations/upload-pdf`;
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -858,13 +867,17 @@ const UnifiedLessonEditor = ({
       });
 
       if (response.ok) {
-        const data = await response.json();
+        const result = await response.json();
+        console.log('PDF загружен успешно, результат:', result);
+        
+        // ТОЧНО КАК В КОНСУЛЬТАЦИЯХ: только обновляем состояние, НЕ сохраняем автоматически
         setEditingLesson(prev => ({
           ...prev,
-          pdf_file_id: data.file_id,
-          pdf_filename: data.filename
+          pdf_file_id: result.file_id,
+          pdf_filename: result.filename
         }));
-        alert('PDF успешно загружен!');
+        
+        alert(`PDF успешно загружен: ${result.filename}. Не забудьте сохранить урок!`);
       } else {
         const errorData = await response.json();
         alert(errorData.detail || 'Ошибка загрузки PDF');
@@ -874,6 +887,59 @@ const UnifiedLessonEditor = ({
       alert('Ошибка загрузки PDF');
     } finally {
       setUploadingPDF(false);
+    }
+  };
+
+  const handleWordUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file || !editingLesson) return;
+
+    // Проверка размера файла (50MB)
+    const maxSize = 50 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(`Файл слишком большой (${(file.size / (1024 * 1024)).toFixed(1)}MB). Максимум: 50MB`);
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      setUploadingWord(true);
+      const token = localStorage.getItem('token');
+
+      // Используем упрощенный endpoint для Word (аналогично PDF)
+      const endpoint = `${backendUrl}/api/admin/lessons/upload-word`;
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Word файл загружен успешно, результат:', result);
+        
+        // ТОЧНО КАК В КОНСУЛЬТАЦИЯХ: только обновляем состояние, НЕ сохраняем автоматически
+        setEditingLesson(prev => ({
+          ...prev,
+          word_file_id: result.file_id,
+          word_filename: result.filename
+        }));
+        
+        alert(`Word файл успешно загружен: ${result.filename}. Не забудьте сохранить урок!`);
+      } else {
+        const errorData = await response.json();
+        alert(errorData.detail || 'Ошибка загрузки Word файла');
+      }
+    } catch (err) {
+      console.error('Ошибка загрузки Word файла:', err);
+      alert('Ошибка загрузки Word файла');
+    } finally {
+      setUploadingWord(false);
     }
   };
 
@@ -1078,6 +1144,30 @@ const UnifiedLessonEditor = ({
                 </CardContent>
               </Card>
 
+              {/* Медиа файлы - ПЕРЕМЕЩЕНЫ В ВЕРХНЮЮ ЧАСТЬ, ВИДНЫ ВО ВСЕХ ВКЛАДКАХ */}
+              <Card className="border-blue-200 bg-blue-50/30">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Upload className="w-5 h-5 text-blue-600" />
+                    Загрузка медиафайлов
+                  </CardTitle>
+                  <CardDescription>
+                    Загрузите видео, PDF или Word документы для урока. Файлы будут доступны во всех разделах урока.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <LessonMediaEditor
+                    editingLesson={editingLesson}
+                    onVideoUpload={handleVideoUpload}
+                    onPDFUpload={handlePDFUpload}
+                    onWordUpload={handleWordUpload}
+                    uploadingVideo={uploadingVideo}
+                    uploadingPDF={uploadingPDF}
+                    uploadingWord={uploadingWord}
+                  />
+                </CardContent>
+              </Card>
+
               {/* Вложенные табы для редактирования контента */}
               <Tabs value={activeSection} onValueChange={setActiveSection} className="space-y-6">
                 <TabsList className="grid w-full grid-cols-2 lg:grid-cols-5">
@@ -1141,15 +1231,6 @@ const UnifiedLessonEditor = ({
                   />
                 </TabsContent>
               </Tabs>
-
-              {/* Медиа файлы - отдельно от вложенных табов */}
-              <LessonMediaEditor
-                editingLesson={editingLesson}
-                onVideoUpload={handleVideoUpload}
-                onPDFUpload={handlePDFUpload}
-                uploadingVideo={uploadingVideo}
-                uploadingPDF={uploadingPDF}
-              />
 
               {/* Кнопки сохранения и отмены */}
               <div className="pt-4 border-t flex gap-3">
