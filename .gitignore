@@ -93,3 +93,11 @@ backend/consultations_pdf/
 
 # Cache
 frontend/node_modules/.cache/
+# Environment files
+backend/.env
+backend/.env.vapid
+frontend/.env
+frontend/.env.local
+*.env
+.env
+.env.*
