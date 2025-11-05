@@ -26,6 +26,7 @@ import { useAuth } from './AuthContext';
 import axios from 'axios';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
+import WordViewer from './WordViewer';
 import Quiz from './Quiz';
 import UniversalLessonViewer from './UniversalLessonViewer';
 
@@ -35,16 +36,13 @@ const LearningSystem = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selectedLesson, setSelectedLesson] = useState(null);
+  const [selectedWord, setSelectedWord] = useState(null);
   const [showQuiz, setShowQuiz] = useState(false);
   const [quizData, setQuizData] = useState(null);
   const [generatingQuiz, setGeneratingQuiz] = useState(false);
   const [lessonCompleted, setLessonCompleted] = useState(false);
   
-  // Состояние для отображения FirstLesson (восстановление из localStorage)
-  const [showFirstLesson, setShowFirstLesson] = useState(() => {
-    const saved = localStorage.getItem('learningSystem_showFirstLesson');
-    return saved === 'true';
-  });
+  // Убрано: showFirstLesson больше не используется, все уроки отображаются в одном списке
 
   const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
 
@@ -52,33 +50,24 @@ const LearningSystem = () => {
     loadLearningData();
   }, []);
 
-  // Сохранять showFirstLesson в localStorage при изменении
-  useEffect(() => {
-    localStorage.setItem('learningSystem_showFirstLesson', showFirstLesson.toString());
-    // Если открываем FirstLesson, очищаем selectedLesson
-    if (showFirstLesson) {
-      localStorage.removeItem('learningSystem_selectedLessonId');
-    }
-  }, [showFirstLesson]);
-
   // Сохранять selectedLesson в localStorage при изменении
   useEffect(() => {
-    if (selectedLesson && !showFirstLesson) {
+    if (selectedLesson) {
       localStorage.setItem('learningSystem_selectedLessonId', selectedLesson.id || '');
       localStorage.setItem('learningSystem_selectedLessonData', JSON.stringify(selectedLesson));
-    } else if (!selectedLesson && !showFirstLesson) {
+    } else {
       localStorage.removeItem('learningSystem_selectedLessonId');
       localStorage.removeItem('learningSystem_selectedLessonData');
     }
-  }, [selectedLesson, showFirstLesson]);
+  }, [selectedLesson]);
 
   // Восстановить selectedLesson при загрузке
   useEffect(() => {
-    if (learningData?.available_lessons?.length > 0 && !showFirstLesson) {
+    if (learningData?.available_lessons?.length > 0 && !selectedLesson) {
       const savedLessonId = localStorage.getItem('learningSystem_selectedLessonId');
       const savedLessonData = localStorage.getItem('learningSystem_selectedLessonData');
 
-      if (savedLessonId && savedLessonData && !selectedLesson) {
+      if (savedLessonId && savedLessonData) {
         try {
           const lessonData = JSON.parse(savedLessonData);
           setSelectedLesson(lessonData);
@@ -87,7 +76,7 @@ const LearningSystem = () => {
         }
       }
     }
-  }, [learningData, showFirstLesson]);
+  }, [learningData]);
 
   const loadLearningData = async () => {
     setLoading(true);
@@ -491,6 +480,24 @@ const LearningSystem = () => {
                     PDF
                   </Button>
                 )}
+                
+                {/* Кнопка Word материалов - УНИФИЦИРОВАННАЯ ЛОГИКА */}
+                {lesson.word_file_id && !isLocked && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setSelectedWord({
+                        wordUrl: `${backendUrl}/api/lessons/word/${lesson.word_file_id}`,
+                        title: `${lesson.title} - Word материалы урока`
+                      });
+                    }}
+                    className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                  >
+                    <FileText className="w-4 h-4 mr-1" />
+                    Word
+                  </Button>
+                )}
               </div>
             </div>
           </CardContent>
@@ -675,7 +682,7 @@ const LearningSystem = () => {
 
         {/* Lessons Tab */}
         <TabsContent value="lessons">
-          {learningData && !showFirstLesson && !selectedLesson && (
+          {learningData && !selectedLesson && (
             <>
               {/* Level Progress */}
               {renderLevelProgress()}
@@ -693,111 +700,9 @@ const LearningSystem = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    
-                    {/* УЛУЧШЕННАЯ КАРТОЧКА - Первое занятие NumerOM */}
-                    <div className="mb-6">
-                      <Card className="border border-gray-200 bg-white shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden">
-                        
-                        <CardHeader className="pb-4">
-                          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                            <div className="flex-1">
-                              <div className="flex flex-wrap items-center gap-2 mb-3">
-                                <Badge className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1">
-                                  Специальный урок
-                                </Badge>
-                                <Badge className="bg-green-50 text-green-700 border border-green-200 px-3 py-1">
-                                  Бесплатно
-                                </Badge>
-                              </div>
-                              
-                              <CardTitle className="text-xl sm:text-2xl font-semibold text-gray-900 mb-2">
-                                Первое занятие NumerOM
-                              </CardTitle>
-                              
-                              <CardDescription className="text-gray-600 text-sm sm:text-base leading-relaxed">
-                                Интерактивное введение в мир ведической нумерологии с теорией планет, упражнениями и 7-дневным челленджем
-                              </CardDescription>
-                            </div>
-                            
-                            <div className="flex sm:flex-col items-center sm:items-end gap-2">
-                              <div className="p-3 bg-blue-50 rounded-xl border border-blue-100">
-                                <Video className="w-6 h-6 text-blue-600" />
-                              </div>
-                            </div>
-                          </div>
-                        </CardHeader>
-                        
-                        <CardContent className="pt-0 space-y-4">
-                          {/* Основная информация */}
-                          <div className="flex flex-wrap gap-3">
-                            <div className="flex items-center bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
-                              <Clock className="w-4 h-4 mr-2 text-gray-600" />
-                              <span className="text-sm text-gray-700">~45 минут</span>
-                            </div>
-                            <div className="flex items-center bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
-                              <Brain className="w-4 h-4 mr-2 text-gray-600" />
-                              <span className="text-sm text-gray-700">Интерактивный</span>
-                            </div>
-                            <div className="flex items-center bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
-                              <Target className="w-4 h-4 mr-2 text-gray-600" />
-                              <span className="text-sm text-gray-700">Для новичков</span>
-                            </div>
-                          </div>
-
-                          {/* Что включено */}
-                          <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
-                            <h4 className="font-medium mb-3 text-gray-900 flex items-center">
-                              <BookOpen className="w-4 h-4 mr-2 text-blue-600" />
-                              Что включено в урок:
-                            </h4>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              <div className="flex items-center">
-                                <Star className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
-                                <span className="text-sm text-gray-700">Теория планет</span>
-                              </div>
-                              <div className="flex items-center">
-                                <Brain className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
-                                <span className="text-sm text-gray-700">Интерактивные упражнения</span>
-                              </div>
-                              <div className="flex items-center">
-                                <Calendar className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
-                                <span className="text-sm text-gray-700">7-дневный челлендж</span>
-                              </div>
-                              <div className="flex items-center">
-                                <Video className="w-4 h-4 mr-2 text-blue-600 flex-shrink-0" />
-                                <span className="text-sm text-gray-700">Видео и PDF материалы</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Кнопка действия */}
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
-                            <div className="text-sm text-gray-500 flex items-center">
-                              <Award className="w-4 h-4 mr-1 text-blue-500 flex-shrink-0" />
-                              <span>Получите сертификат по завершении</span>
-                            </div>
-                            
-                            <Button
-                              onClick={() => {
-                                setShowFirstLesson(true);
-                                setSelectedLesson(null);
-                                setShowQuiz(false);
-                              }}
-                              size="lg"
-                              className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 rounded-lg shadow-sm hover:shadow-md transition-all duration-200 w-full sm:w-auto"
-                            >
-                              <PlayCircle className="w-5 h-5 mr-2" />
-                              Начать занятие
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-
-                    {/* Обычные уроки - теперь включают custom_lessons */}
+                    {/* Все уроки в последовательном порядке: вводное → 1-9 → 0 */}
                     {learningData.available_lessons
                       .filter((lesson) => 
-                        lesson.id !== 'lesson_numerom_intro' && // Первый урок отображается отдельно
                         !lesson.title.includes('Test Lesson') && 
                         !lesson.title.includes('for Editor') &&
                         !lesson.description.toLowerCase().includes('testing') &&
@@ -888,34 +793,6 @@ const LearningSystem = () => {
         </TabsContent>
       </Tabs>
 
-      {/* UniversalLessonViewer - для первого урока */}
-      {showFirstLesson && (
-        <div className="space-y-4">
-          <Card>
-            <CardHeader className="bg-gradient-to-r from-purple-50 to-indigo-50">
-              <div className="flex justify-between items-center">
-                <CardTitle className="flex items-center text-purple-900">
-                  <Video className="w-5 h-5 mr-2" />
-                  Первое занятие NumerOM
-                </CardTitle>
-                <Button
-                  variant="outline"
-                  onClick={() => setShowFirstLesson(false)}
-                  className="border-purple-300 text-purple-700 hover:bg-purple-50"
-                >
-                  <CheckCircle className="w-4 h-4 mr-2" />
-                  Список уроков
-                </Button>
-              </div>
-            </CardHeader>
-          </Card>
-          <UniversalLessonViewer
-            lessonId="lesson_numerom_intro"
-            onBack={() => setShowFirstLesson(false)}
-          />
-        </div>
-      )}
-
       {/* ПРОСМОТРЩИК CUSTOM LESSONS (интерактивные уроки) - UniversalLessonViewer */}
       {selectedLesson && selectedLesson.isCustomLesson && !selectedLesson.showPDFOnly && !showQuiz && (
         <div className="space-y-4">
@@ -944,12 +821,14 @@ const LearningSystem = () => {
         </div>
       )}
 
-      {/* Enhanced Video Player Modal (унифицированная консультационная система) */}
+      {/* Enhanced Video Player Modal - УНИФИЦИРОВАННАЯ ЛОГИКА КАК В КОНСУЛЬТАЦИЯХ */}
       {selectedLesson && !selectedLesson.showPDFOnly && !selectedLesson.isCustomLesson && !showQuiz && (
         <EnhancedVideoViewer
           videoUrl={
-            selectedLesson.video_url || 
-            (selectedLesson.video_file_id ? `${backendUrl}/api/consultations/video/${selectedLesson.video_file_id}` : null)
+            // Приоритет: video_file_id (загруженный файл через consultations endpoint)
+            selectedLesson.video_file_id 
+              ? `${backendUrl}/api/consultations/video/${selectedLesson.video_file_id}`
+              : selectedLesson.video_url
           }
           title={selectedLesson.title}
           description={selectedLesson.description}
@@ -972,15 +851,26 @@ const LearningSystem = () => {
         />
       )}
 
-      {/* PDF Viewer Modal (унифицированная консультационная система) */}
+      {/* PDF Viewer Modal - УНИФИЦИРОВАННАЯ ЛОГИКА КАК В КОНСУЛЬТАЦИЯХ */}
       {selectedLesson && selectedLesson.showPDFOnly && (
         <ConsultationPDFViewer
           pdfUrl={
+            // Используем consultations endpoint для PDF
             selectedLesson.pdfUrl || 
             (selectedLesson.pdf_file_id ? `${backendUrl}/api/consultations/pdf/${selectedLesson.pdf_file_id}` : '')
           }
           title={`${selectedLesson.title} - PDF материалы урока`}
           onClose={() => setSelectedLesson(null)}
+        />
+      )}
+
+      {/* Word Viewer Modal */}
+      {selectedWord && (
+        <WordViewer
+          wordUrl={selectedWord.wordUrl}
+          title={selectedWord.title}
+          backendUrl={backendUrl}
+          onClose={() => setSelectedWord(null)}
         />
       )}
 

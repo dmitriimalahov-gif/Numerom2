@@ -8,11 +8,12 @@ import {
   BookOpen, PlayCircle, CheckCircle, Clock, Target, Zap,
   Star, Calendar, Award, ArrowRight, ArrowLeft,
   Sparkles, Sun, Moon, Loader, Trophy, Heart,
-  Brain, Lightbulb, FileText, Timer, Rocket, Eye, Download, Video, Lock
+  Brain, Lightbulb, FileText, Timer, Rocket, Eye, Download, Video, Lock, File
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
+import WordViewer from './WordViewer';
 import PushNotificationSettings from './PushNotificationSettings';
 
 const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
@@ -57,12 +58,14 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
   // Состояния для загруженных файлов урока
   const [uploadedLessonFiles, setUploadedLessonFiles] = useState({
     video: null,
-    pdf: null
+    pdf: null,
+    word: null
   });
   
   // Состояния для модальных окон (как в PersonalConsultations)
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [selectedPDF, setSelectedPDF] = useState(null);
+  const [selectedWord, setSelectedWord] = useState(null);
   
   // Состояние для дополнительных PDF файлов
   const [additionalPdfs, setAdditionalPdfs] = useState([]);
@@ -100,10 +103,16 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
 
     // Загрузить новый урок
     loadLesson();
-    loadUploadedLessonFiles();
-    loadAdditionalPdfs();
-    loadAdditionalVideos();
   }, [lessonId]); // Перезагружать урок при изменении lessonId
+
+  // Загрузить медиафайлы после загрузки урока
+  useEffect(() => {
+    if (lessonData) {
+      loadUploadedLessonFiles();
+      loadAdditionalPdfs();
+      loadAdditionalVideos();
+    }
+  }, [lessonData]); // Перезагружать медиафайлы при изменении lessonData
 
   // Сохранять активную секцию в localStorage при изменении
   useEffect(() => {
@@ -245,20 +254,24 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
   const videoMaterials = filteredMaterials.filter(m => m.type === 'video');
   const pdfMaterials = filteredMaterials.filter(m => m.type === 'pdf');
 
-  // Загрузка загруженных файлов урока
+  // Загрузка загруженных файлов урока (дополнительные материалы)
+  // ОСНОВНЫЕ МЕДИАФАЙЛЫ (video_file_id, pdf_file_id) ЗАГРУЖАЮТСЯ ПРЯМО В lessonData
+  // Эта функция загружает только дополнительные материалы
   const loadUploadedLessonFiles = async () => {
+    if (!lessonData) return;
+    
     try {
       const token = localStorage.getItem('token');
       
-      // Используем новый endpoint для получения медиа-файлов урока
-      const response = await fetch(`${backendUrl}/api/lessons/media/lesson_numerom_intro`, {
+      // Используем endpoint для получения дополнительных медиа-файлов урока
+      const response = await fetch(`${backendUrl}/api/lessons/media/${lessonId}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
       if (response.ok) {
         const data = await response.json();
         
-        // Получаем первые доступные видео и PDF файлы
+        // Получаем дополнительные видео и PDF файлы
         const firstVideo = data.videos && data.videos.length > 0 ? data.videos[0] : null;
         const firstPDF = data.pdfs && data.pdfs.length > 0 ? data.pdfs[0] : null;
         
@@ -272,15 +285,24 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
             url: `${backendUrl}${firstPDF.pdf_url}`,
             filename: firstPDF.filename,
             id: firstPDF.id
-          } : null
+          } : null,
+          word: null // Word файлы загружаются только через lessonData
         });
       } else {
-        console.log('Медиа-файлы для урока не найдены или не загружены');
-        setUploadedLessonFiles({ video: null, pdf: null });
+        console.log('Дополнительные медиа-файлы для урока не найдены');
+        setUploadedLessonFiles({ 
+          video: null, 
+          pdf: null,
+          word: null
+        });
       }
     } catch (error) {
-      console.error('Ошибка загрузки медиа-файлов урока:', error);
-      setUploadedLessonFiles({ video: null, pdf: null });
+      console.error('Ошибка загрузки дополнительных медиа-файлов урока:', error);
+      setUploadedLessonFiles({ 
+        video: null, 
+        pdf: null,
+        word: null
+      });
     }
   };
 
@@ -351,6 +373,14 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
       }
 
       const data = await response.json();
+      console.log('📚 Урок загружен:', data.lesson?.id);
+      console.log('📖 Content:', data.lesson?.content ? 'есть' : 'нет');
+      console.log('📖 Theory:', data.lesson?.content?.theory ? 'есть' : 'нет');
+      if (data.lesson?.content?.theory) {
+        console.log('📖 Поля theory:', Object.keys(data.lesson.content.theory));
+      }
+      console.log('💪 Exercises:', data.lesson?.exercises?.length || 0);
+      console.log('❓ Quiz:', data.lesson?.quiz ? 'есть' : 'нет');
       setLessonData(data.lesson);
 
       // Загрузить прогресс пользователя если есть (передаем lesson для получения challenge/quiz ID)
@@ -826,6 +856,90 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
       <div className="relative overflow-hidden">
         <Card className="border border-gray-200 bg-white shadow-sm">          
           <CardHeader className="p-6 border-b border-gray-100">
+            {/* Медиафайлы урока - ПЕРЕМЕЩЕНЫ В САМЫЙ ВЕРХ */}
+            {(lessonData?.video_file_id || lessonData?.pdf_file_id || lessonData?.word_file_id || lessonData?.video_url) && (
+              <div className="mb-6 pb-6 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <Video className="w-5 h-5 text-blue-600" />
+                  Медиафайлы урока
+                </h3>
+                <div className="flex flex-wrap gap-3">
+                  {/* Кнопка видео - УНИФИЦИРОВАННАЯ ЛОГИКА КАК В КОНСУЛЬТАЦИЯХ */}
+                  {(lessonData?.video_file_id || lessonData?.video_url) && (
+                    <Button
+                      onClick={() => {
+                        // Приоритет: video_file_id (загруженный файл через consultations endpoint)
+                        const videoUrl = lessonData.video_file_id 
+                          ? `${backendUrl}/api/consultations/video/${lessonData.video_file_id}`
+                          : lessonData.video_url;
+                        setSelectedVideo({
+                          url: videoUrl,
+                          title: lessonData.title,
+                          description: lessonData.description || 'Видео урока'
+                        });
+                      }}
+                      className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-medium px-6 py-3 rounded-lg shadow-md hover:shadow-lg transition-all"
+                    >
+                      <PlayCircle className="w-5 h-5 mr-2" />
+                      Смотреть видео
+                    </Button>
+                  )}
+
+                  {/* Кнопка PDF - ТОЧНО КАК В КОНСУЛЬТАЦИЯХ */}
+                  {lessonData?.pdf_file_id && (
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => {
+                          // Используем consultations endpoint для PDF (как в консультациях)
+                          const pdfUrl = `${backendUrl}/api/consultations/pdf/${lessonData.pdf_file_id}`;
+                          setSelectedPDF({
+                            url: pdfUrl,
+                            title: `${lessonData.title} - PDF материалы`
+                          });
+                        }}
+                        variant="outline"
+                        className="border-red-300 text-red-700 hover:bg-red-50 font-medium px-6 py-3 rounded-lg shadow-md hover:shadow-lg transition-all"
+                      >
+                        <Eye className="w-5 h-5 mr-2" />
+                        Просмотреть
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          const link = document.createElement('a');
+                          link.href = `${backendUrl}/api/consultations/pdf/${lessonData.pdf_file_id}`;
+                          link.download = `lesson-${lessonData.id}.pdf`;
+                          link.click();
+                        }}
+                        variant="outline"
+                        className="border-red-300 text-red-700 hover:bg-red-50 font-medium px-6 py-3 rounded-lg shadow-md hover:shadow-lg transition-all"
+                      >
+                        <Download className="w-5 h-5 mr-2" />
+                        Скачать
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Кнопка Word */}
+                  {lessonData?.word_file_id && (
+                    <Button
+                      onClick={() => {
+                        const wordUrl = `${backendUrl}/api/lessons/word/${lessonData.word_file_id}`;
+                        setSelectedWord({
+                          url: wordUrl,
+                          title: `${lessonData.title} - Word материалы`
+                        });
+                      }}
+                      variant="outline"
+                      className="border-blue-300 text-blue-700 hover:bg-blue-50 font-medium px-6 py-3 rounded-lg shadow-md hover:shadow-lg transition-all"
+                    >
+                      <File className="w-5 h-5 mr-2" />
+                      Открыть Word
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Заголовок урока */}
             <div className="flex items-center gap-4 mb-6">
               <div className="p-3 bg-blue-50 rounded-xl border border-blue-100">
@@ -895,6 +1009,8 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                 </div>
               </div>
             </div>
+
+
           </CardHeader>
         </Card>
       </div>
@@ -930,6 +1046,17 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
         <TabsContent value="theory" className="space-y-6">
           {/* Определяем является ли это первым уроком */}
           {(() => {
+            if (!lessonData || !lessonData.content) {
+              return (
+                <Card>
+                  <CardContent className="text-center py-8 text-muted-foreground">
+                    <Loader className="w-6 h-6 animate-spin mx-auto mb-2" />
+                    <p>Загрузка контента урока...</p>
+                  </CardContent>
+                </Card>
+              );
+            }
+
             const isFirstLesson = lessonId === 'lesson_numerom_intro';
 
             // Получаем список скрытых полей
@@ -999,6 +1126,15 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
               );
             } else {
               // Блоки для других уроков
+              // Отладочная информация
+              if (lessonData && lessonData.content && lessonData.content.theory) {
+                console.log('🔍 Отображение теории для обычного урока:', {
+                  hasTheory: !!lessonData.content.theory,
+                  hasWhatIsTopic: !!lessonData.content.theory.what_is_topic,
+                  hasMainStory: !!lessonData.content.theory.main_story,
+                  theoryKeys: Object.keys(lessonData.content.theory)
+                });
+              }
               return (
                 <>
                   {!hiddenFields.has('what_is_topic') && lessonData.content?.theory?.what_is_topic && (
@@ -2171,6 +2307,16 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
           pdfUrl={selectedPDF.url}
           title={selectedPDF.title}
           onClose={() => setSelectedPDF(null)}
+        />
+      )}
+
+      {/* Word Viewer Modal */}
+      {selectedWord && (
+        <WordViewer
+          wordUrl={selectedWord.url}
+          title={selectedWord.title}
+          backendUrl={backendUrl}
+          onClose={() => setSelectedWord(null)}
         />
       )}
     </div>

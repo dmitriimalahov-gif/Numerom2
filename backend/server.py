@@ -94,6 +94,7 @@ CONSULTATIONS_SUBTITLES_DIR = CONSULTATIONS_DIR / 'subtitles'
 LESSONS_DIR = UPLOAD_ROOT / 'lessons'
 LESSONS_VIDEO_DIR = LESSONS_DIR / 'videos'
 LESSONS_PDF_DIR = LESSONS_DIR / 'pdfs'
+LESSONS_WORD_DIR = LESSONS_DIR / 'word'
 TMP_DIR = UPLOAD_ROOT / 'tmp'
 
 @app.on_event('startup')
@@ -109,6 +110,7 @@ async def on_startup():
         LESSONS_DIR.mkdir(parents=True, exist_ok=True)
         LESSONS_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
         LESSONS_PDF_DIR.mkdir(parents=True, exist_ok=True)
+        LESSONS_WORD_DIR.mkdir(parents=True, exist_ok=True)
         TMP_DIR.mkdir(parents=True, exist_ok=True)
 
         # Инициализируем менеджер push уведомлений
@@ -908,13 +910,18 @@ async def get_all_student_lessons(current_user: dict = Depends(get_current_user)
             lesson_dict['video_url'] = lesson_dict.get('video_url', '')
             lesson_dict['video_file_id'] = lesson_dict.get('video_file_id', '')
             lesson_dict['pdf_file_id'] = lesson_dict.get('pdf_file_id', '')
+            lesson_dict['word_file_id'] = lesson_dict.get('word_file_id', '')
+            lesson_dict['word_filename'] = lesson_dict.get('word_filename', '')
+            lesson_dict['word_url'] = lesson_dict.get('word_url', '')
             all_lessons.append(lesson_dict)
         
-        # Сортируем: первый урок всегда первый, затем по level и order
+        # Исключаем lesson_numerom_intro из списка и сортируем по order
+        all_lessons = [lesson for lesson in all_lessons if lesson.get('id') != 'lesson_numerom_intro']
+        
+        # Сортируем по order (0 для вводного, 1-9 для уроков, 10 для урока 0)
         all_lessons.sort(key=lambda x: (
-            0 if x.get('id') == 'lesson_numerom_intro' else 1,
-            x.get('level', 1),
-            x.get('order', 999)
+            x.get('order', 999),
+            x.get('level', 999)
         ))
         
         return {
@@ -1093,6 +1100,17 @@ async def get_lesson_for_editing(lesson_id: str, current_user: dict = Depends(ge
         lesson_dict = dict(lesson)
         lesson_dict.pop('_id', None)
         
+        # Убеждаемся, что все поля медиафайлов присутствуют (даже если None)
+        lesson_dict.setdefault('video_file_id', None)
+        lesson_dict.setdefault('video_filename', None)
+        lesson_dict.setdefault('pdf_file_id', None)
+        lesson_dict.setdefault('pdf_filename', None)
+        lesson_dict.setdefault('word_file_id', None)
+        lesson_dict.setdefault('word_filename', None)
+        
+        logger.info(f"Loading lesson {lesson_id} for editing")
+        logger.info(f"PDF file_id: {lesson_dict.get('pdf_file_id')}, PDF filename: {lesson_dict.get('pdf_filename')}")
+        
         return {'lesson': lesson_dict}
         
     except Exception as e:
@@ -1243,6 +1261,69 @@ async def upload_lesson_pdf(lesson_id: str, file: UploadFile = File(...), curren
     except Exception as e:
         logger.error(f"Error uploading lesson PDF: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки PDF: {str(e)}")
+
+@api_router.post('/admin/lessons/{lesson_id}/upload-word')
+async def upload_lesson_word(lesson_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """Загрузка Word файла для урока"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+        
+        # Проверяем тип файла (Word форматы)
+        allowed_types = [
+            'application/msword',  # .doc
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'  # .docx
+        ]
+        filename_lower = file.filename.lower() if file.filename else ''
+        is_docx = filename_lower.endswith('.docx')
+        is_doc = filename_lower.endswith('.doc')
+        
+        if file.content_type not in allowed_types and not (is_docx or is_doc):
+            raise HTTPException(status_code=400, detail='Разрешены только Word файлы (.doc, .docx)')
+        
+        # Проверяем размер файла (максимум 50MB)
+        if file.size and file.size > 50 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail='Размер файла превышает 50MB')
+        
+        # Определяем расширение файла
+        file_extension = '.docx' if is_docx else '.doc'
+        
+        # Генерируем уникальное имя файла
+        unique_filename = f"{lesson_id}_word_{uuid.uuid4()}{file_extension}"
+        
+        # Сохраняем файл
+        file_path = LESSONS_WORD_DIR / unique_filename
+        with open(file_path, 'wb') as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # Сохраняем метаданные файла
+        file_id = str(uuid.uuid4())
+        file_record = {
+            'id': file_id,
+            'lesson_id': lesson_id,
+            'original_filename': file.filename,
+            'stored_filename': unique_filename,
+            'file_path': str(file_path),
+            'file_size': len(content),
+            'content_type': file.content_type or ('application/vnd.openxmlformats-officedocument.wordprocessingml.document' if file_extension == '.docx' else 'application/msword'),
+            'file_extension': file_extension,
+            'uploaded_at': datetime.utcnow(),
+            'uploaded_by': current_user['user_id']
+        }
+        
+        await db.lesson_word_files.insert_one(file_record)
+        
+        return {
+            'success': True,
+            'file_id': file_id,
+            'filename': file.filename,
+            'word_url': f'/api/lessons/word/{file_id}',
+            'download_url': f'/api/lessons/word/{file_id}/download'
+        }
+        
+    except Exception as e:
+        logger.error(f"Error uploading lesson Word file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки Word файла: {str(e)}")
 
 # OLD LESSON MANAGEMENT ENDPOINTS (for compatibility)
 @api_router.post('/admin/lessons')
@@ -4454,6 +4535,69 @@ async def upload_lesson_pdf(
         logger.error(f'Lesson PDF upload error: {e}')
         raise HTTPException(status_code=500, detail=f'Ошибка при загрузке PDF урока: {str(e)}')
 
+@app.post("/api/admin/lessons/upload-word")
+async def upload_lesson_word_simple(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Загрузка Word файла для урока (упрощенный endpoint)"""
+    try:
+        admin_user = await check_admin_rights(current_user, require_super_admin=False)
+        
+        # Проверяем тип файла
+        allowed_types = [
+            'application/msword',  # .doc
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'  # .docx
+        ]
+        filename_lower = file.filename.lower() if file.filename else ''
+        is_docx = filename_lower.endswith('.docx')
+        is_doc = filename_lower.endswith('.doc')
+        
+        if file.content_type not in allowed_types and not (is_docx or is_doc):
+            raise HTTPException(status_code=400, detail='Файл должен быть Word документом (.doc или .docx)')
+        
+        # Определяем расширение
+        file_extension = '.docx' if is_docx else '.doc'
+        
+        # Генерируем уникальное имя файла
+        file_id = str(uuid.uuid4())
+        file_path = LESSONS_WORD_DIR / f"{file_id}{file_extension}"
+        
+        # Сохраняем файл
+        with open(file_path, 'wb') as f:
+            content = await file.read()
+            f.write(content)
+        
+        # Сохраняем информацию в базу данных
+        word_record = {
+            'id': file_id,
+            'original_filename': file.filename,
+            'file_path': str(file_path),
+            'content_type': file.content_type or ('application/vnd.openxmlformats-officedocument.wordprocessingml.document' if is_docx else 'application/msword'),
+            'file_size': len(content),
+            'file_extension': file_extension,
+            'uploaded_by': current_user['user_id'],
+            'created_at': datetime.now().isoformat(),
+            'file_type': 'lesson_word'
+        }
+        
+        await db.uploaded_files.insert_one(word_record)
+        
+        return {
+            'success': True,
+            'file_id': file_id,
+            'filename': file.filename,
+            'word_url': f'/api/lessons/word/{file_id}',
+            'download_url': f'/api/lessons/word/{file_id}/download',
+            'message': 'Word файл успешно загружен для урока'
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'Lesson Word upload error: {e}')
+        raise HTTPException(status_code=500, detail=f'Ошибка при загрузке Word файла урока: {str(e)}')
+
 # Endpoints для получения файлов уроков
 @app.api_route("/api/lessons/video/{file_id}", methods=["GET", "HEAD"])
 async def get_lesson_video(file_id: str, request: Request):
@@ -4585,6 +4729,79 @@ async def get_lesson_pdf(file_id: str):
     except Exception as e:
         logger.error(f"Error serving lesson PDF: {str(e)}")
         raise HTTPException(status_code=500, detail="Error serving PDF")
+
+@app.get("/api/lessons/word/{file_id}")
+async def get_lesson_word(file_id: str, request: Request):
+    """Получить Word файл урока по ID для просмотра"""
+    try:
+        file_record = await db.lesson_word_files.find_one({'id': file_id})
+        if not file_record:
+            # Проверяем в старой коллекции uploaded_files
+            file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'lesson_word'})
+        
+        if not file_record:
+            raise HTTPException(status_code=404, detail="Word file not found")
+        
+        file_path = Path(file_record['file_path'])
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Word file not found on disk")
+        
+        # Возвращаем файл с правильным MIME type
+        content_type = file_record.get('content_type', 
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' if file_record.get('file_extension') == '.docx' 
+            else 'application/msword')
+        
+        return FileResponse(
+            path=str(file_path),
+            media_type=content_type,
+            filename=file_record['original_filename'],
+            headers={
+                'Accept-Ranges': 'bytes',
+                'Content-Disposition': 'inline',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving lesson Word file: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error serving Word file")
+
+@app.get("/api/lessons/word/{file_id}/download")
+async def download_lesson_word(file_id: str):
+    """Скачать Word файл урока по ID"""
+    try:
+        file_record = await db.lesson_word_files.find_one({'id': file_id})
+        if not file_record:
+            file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'lesson_word'})
+        
+        if not file_record:
+            raise HTTPException(status_code=404, detail="Word file not found")
+        
+        file_path = Path(file_record['file_path'])
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Word file not found on disk")
+        
+        content_type = file_record.get('content_type',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' if file_record.get('file_extension') == '.docx'
+            else 'application/msword')
+        
+        return FileResponse(
+            path=str(file_path),
+            media_type=content_type,
+            filename=file_record['original_filename'],
+            headers={
+                'Content-Disposition': f'attachment; filename="{file_record["original_filename"]}"',
+                'Access-Control-Allow-Origin': '*',
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading lesson Word file: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error downloading Word file")
 
 # Duplicate endpoints removed - moved to proper location above
 
@@ -5360,7 +5577,17 @@ async def get_lesson_admin(lesson_id: str, current_user: dict = Depends(get_curr
             # Это кастомный урок из MongoDB
             lesson_dict = dict(custom_lesson)
             lesson_dict.pop('_id', None)
+            
+            # Убеждаемся, что все поля медиафайлов присутствуют (даже если None)
+            lesson_dict.setdefault('video_file_id', None)
+            lesson_dict.setdefault('video_filename', None)
+            lesson_dict.setdefault('pdf_file_id', None)
+            lesson_dict.setdefault('pdf_filename', None)
+            lesson_dict.setdefault('word_file_id', None)
+            lesson_dict.setdefault('word_filename', None)
+            
             logger.info(f"Loaded custom lesson {lesson_id} from MongoDB")
+            logger.info(f"PDF file_id: {lesson_dict.get('pdf_file_id')}, PDF filename: {lesson_dict.get('pdf_filename')}")
             return {"lesson": lesson_dict}
 
         # Если не нашли в custom_lessons, ищем в lesson_system
@@ -5536,10 +5763,17 @@ async def create_lesson(
             "points_required": lesson_data.get("points_required", 0),
             "is_active": lesson_data.get("is_active", True),
             "content": lesson_data.get("content", {}),
+            "exercises": lesson_data.get("exercises", []),
+            "quiz": lesson_data.get("quiz"),
+            "challenges": lesson_data.get("challenges", []),
             "video_file_id": lesson_data.get("video_file_id"),
             "video_filename": lesson_data.get("video_filename"),
             "pdf_file_id": lesson_data.get("pdf_file_id"),
             "pdf_filename": lesson_data.get("pdf_filename"),
+            "word_file_id": lesson_data.get("word_file_id"),
+            "word_filename": lesson_data.get("word_filename"),
+            "level": lesson_data.get("level", 1),
+            "order": lesson_data.get("order", 0),
             "created_at": lesson_data.get("created_at"),
             "created_by": admin_user["id"]
         }
@@ -5574,6 +5808,7 @@ async def update_lesson(
 
         if existing_lesson:
             # Обновляем существующий кастомный урок
+            # Явно обновляем все поля, включая медиафайлы, даже если они None
             update_data = {
                 "title": lesson_data.get("title", existing_lesson.get("title")),
                 "module": lesson_data.get("module", existing_lesson.get("module")),
@@ -5581,19 +5816,39 @@ async def update_lesson(
                 "points_required": lesson_data.get("points_required", existing_lesson.get("points_required")),
                 "is_active": lesson_data.get("is_active", existing_lesson.get("is_active")),
                 "content": lesson_data.get("content", existing_lesson.get("content")),
-                "video_file_id": lesson_data.get("video_file_id", existing_lesson.get("video_file_id")),
-                "video_filename": lesson_data.get("video_filename", existing_lesson.get("video_filename")),
-                "pdf_file_id": lesson_data.get("pdf_file_id", existing_lesson.get("pdf_file_id")),
-                "pdf_filename": lesson_data.get("pdf_filename", existing_lesson.get("pdf_filename")),
                 "updated_at": datetime.utcnow().isoformat(),
                 "updated_by": admin_user["id"]
             }
+            
+            # Добавляем exercises, quiz и challenges если они есть в lesson_data
+            if "exercises" in lesson_data:
+                update_data["exercises"] = lesson_data.get("exercises")
+            if "quiz" in lesson_data:
+                update_data["quiz"] = lesson_data.get("quiz")
+            if "challenges" in lesson_data:
+                update_data["challenges"] = lesson_data.get("challenges")
+            
+            # Явно обновляем медиафайлы (даже если они None - это позволит очистить поля)
+            if "video_file_id" in lesson_data:
+                update_data["video_file_id"] = lesson_data.get("video_file_id")
+            if "video_filename" in lesson_data:
+                update_data["video_filename"] = lesson_data.get("video_filename")
+            if "pdf_file_id" in lesson_data:
+                update_data["pdf_file_id"] = lesson_data.get("pdf_file_id")
+            if "pdf_filename" in lesson_data:
+                update_data["pdf_filename"] = lesson_data.get("pdf_filename")
+            if "word_file_id" in lesson_data:
+                update_data["word_file_id"] = lesson_data.get("word_file_id")
+            if "word_filename" in lesson_data:
+                update_data["word_filename"] = lesson_data.get("word_filename")
 
-            await db.custom_lessons.update_one(
+            result = await db.custom_lessons.update_one(
                 {"id": lesson_id},
                 {"$set": update_data}
             )
             logger.info(f"Updated custom lesson {lesson_id} by admin {admin_user['id']}")
+            logger.info(f"Update result - matched: {result.matched_count}, modified: {result.modified_count}")
+            logger.info(f"Update data: pdf_file_id={update_data.get('pdf_file_id')}, pdf_filename={update_data.get('pdf_filename')}")
 
         else:
             # Это системный урок - создаем запись в custom_lessons
@@ -5613,6 +5868,8 @@ async def update_lesson(
                 "video_filename": lesson_data.get("video_filename"),
                 "pdf_file_id": lesson_data.get("pdf_file_id"),
                 "pdf_filename": lesson_data.get("pdf_filename"),
+                "word_file_id": lesson_data.get("word_file_id"),
+                "word_filename": lesson_data.get("word_filename"),
                 "created_at": datetime.utcnow().isoformat(),
                 "created_by": admin_user["id"]
             }
