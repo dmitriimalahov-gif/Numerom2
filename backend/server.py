@@ -1,6 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
-from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -13,6 +12,7 @@ import shutil
 import requests
 import logging
 import tempfile
+import re
 
 from dotenv import load_dotenv
 
@@ -780,7 +780,6 @@ async def monthly_planetary_route(vedic_request: VedicTimeRequest = Depends(), c
         await record_credit_transaction(user_id, CREDIT_COSTS['planetary_monthly'], 'Возврат за ошибку месячного маршрута', 'refund')
         await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': CREDIT_COSTS['planetary_monthly']}})
         raise HTTPException(status_code=400, detail=f'Ошибка расчета месячного маршрута: {str(e)}')
-
 @api_router.get('/vedic-time/planetary-route/quarterly') 
 async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(), current_user: dict = Depends(get_current_user)):
     """Планетарный маршрут на квартал - 10 баллов"""
@@ -1580,7 +1579,6 @@ async def make_user_admin(user_id: str, current_user: dict = Depends(get_current
     await db.admin_users.update_one({'user_id': user_id}, {'$set': admin_user_record.dict()}, upsert=True)
     
     return {'message': f'Права администратора предоставлены пользователю {target_user["email"]}', 'user_email': target_user['email']}
-
 @api_router.delete('/admin/revoke-admin/{user_id}')
 async def revoke_user_admin(user_id: str, current_user: dict = Depends(get_current_user)):
     admin_user = await check_admin_rights(current_user, require_super_admin=False)
@@ -2379,7 +2377,6 @@ async def upload_consultation_video(
     except Exception as e:
         logger.error(f'Video upload error: {e}')
         raise HTTPException(status_code=500, detail=f'Ошибка при загрузке видео: {str(e)}')
-
 @api_router.post('/admin/consultations/upload-pdf')
 async def upload_consultation_pdf(
     file: UploadFile = File(...),
@@ -4364,8 +4361,6 @@ async def get_lesson_additional_pdfs(lesson_id: str):
         logger.error(f"Error getting lesson additional PDFs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting PDFs: {str(e)}")
 
-# Duplicate endpoints removed - using API router versions below
-
 @app.post("/api/admin/lessons/{lesson_id}/add-video")
 async def add_lesson_additional_video(
     lesson_id: str,
@@ -4449,8 +4444,6 @@ async def get_lesson_additional_videos(lesson_id: str):
     except Exception as e:
         logger.error(f"Error getting lesson additional videos: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting videos: {str(e)}")
-
-# Duplicate endpoints removed - using API router versions below
 
 # ==================== SIMPLE LESSON FILE UPLOAD ENDPOINTS ====================
 
@@ -4731,7 +4724,6 @@ async def get_lesson_video(file_id: str, request: Request):
     except Exception as e:
         logger.error(f"Error serving lesson video: {str(e)}")
         raise HTTPException(status_code=500, detail="Error serving video")
-
 @app.get("/api/lessons/pdf/{file_id}")
 async def get_lesson_pdf(file_id: str):
     """Получить PDF урока по ID"""
@@ -4836,7 +4828,7 @@ async def download_lesson_word(file_id: str):
         logger.error(f"Error downloading lesson Word file: {str(e)}")
         raise HTTPException(status_code=500, detail="Error downloading Word file")
 
-# Duplicate endpoints removed - moved to proper location above
+# Obsolete endpoints removed - moved to proper location above
 
 # Обновляем endpoints удаления для работы с консультационной системой
 @api_router.delete('/admin/lessons/video/{file_id}')
@@ -6379,13 +6371,61 @@ except ImportError as e:
     logger.warning(f"Bunny.net endpoints not loaded: {e}. Install httpx to enable Bunny.net integration.")
 except Exception as e:
     logger.error(f"Error loading Bunny.net endpoints: {e}")
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+raw_origins = os.environ.get('CORS_ORIGINS', '')
+allowed_origins = [origin.strip() for origin in raw_origins.split(',') if origin.strip()]
+if not allowed_origins:
+    allowed_origins = ["http://localhost:3000"]
+origin_regex = os.environ.get('CORS_ORIGIN_REGEX') or None
+compiled_origin_regex = re.compile(origin_regex) if origin_regex else None
+print(f"[CORS] allow_origins={allowed_origins}, regex={origin_regex}")
+
+@app.middleware("http")
+async def custom_cors_handler(request, call_next):
+    origin = request.headers.get("origin")
+    access_control_request_method = request.headers.get("access-control-request-method")
+    access_control_request_headers = request.headers.get("access-control-request-headers")
+
+    if request.method == "OPTIONS":
+        print(f"[CORS middleware] OPTIONS origin={origin} method={access_control_request_method} headers={access_control_request_headers}")
+
+    is_allowed_origin = False
+    if origin:
+        if origin in allowed_origins:
+            is_allowed_origin = True
+        elif compiled_origin_regex and compiled_origin_regex.match(origin):
+            is_allowed_origin = True
+
+    if request.method == "OPTIONS" and origin:
+        print(f"[CORS middleware] OPTIONS is_allowed_origin={is_allowed_origin} for {origin}")
+        if not is_allowed_origin:
+            return Response("Disallowed CORS origin", status_code=400)
+
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": access_control_request_method or "GET,POST,PUT,DELETE,OPTIONS,PATCH",
+            "Access-Control-Allow-Headers": access_control_request_headers or "Authorization,Content-Type",
+            "Access-Control-Max-Age": "600",
+            "Vary": "Origin",
+        }
+        return Response(status_code=200, headers=headers)
+
+    response = await call_next(request)
+
+    if origin and is_allowed_origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers.setdefault("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS,PATCH")
+        response.headers.setdefault("Access-Control-Allow-Headers", "Authorization,Content-Type")
+        vary_header = response.headers.get("Vary")
+        if vary_header:
+            if "Origin" not in vary_header:
+                response.headers["Vary"] = f"{vary_header}, Origin"
+        else:
+            response.headers["Vary"] = "Origin"
+
+    return response
 
 if __name__ == "__main__":
     import uvicorn

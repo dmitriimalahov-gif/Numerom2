@@ -123,6 +123,72 @@ const adjustColor = (hex, amount = 0.2) => {
     .join('')}`;
 };
 
+const formatDateInput = (date) => {
+  if (!date) return '';
+  return date.toISOString().split('T')[0];
+};
+
+const parseDateInput = (value) => {
+  if (!value) return null;
+  const [yearStr, monthStr, dayStr] = value.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) return null;
+  const result = new Date(year, month - 1, day);
+  if (Number.isNaN(result.getTime())) return null;
+  return result;
+};
+
+const startOfWeekMonday = (date) => {
+  if (!date) return null;
+  const result = new Date(date);
+  const day = result.getDay();
+  const diff = (day + 6) % 7;
+  result.setDate(result.getDate() - diff);
+  result.setHours(0, 0, 0, 0);
+  return result;
+};
+
+const formatMonthInput = (date) => {
+  if (!date) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const parseMonthInput = (value) => {
+  if (!value) return null;
+  const [yearStr, monthStr] = value.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  if (Number.isNaN(year) || Number.isNaN(month)) return null;
+  return { year, month };
+};
+
+const getDaysInMonth = (year, month) => new Date(year, month, 0).getDate();
+
+const getQuarterFromMonthIndex = (monthIndex) => Math.floor(monthIndex / 3) + 1;
+
+const getQuarterStart = (year, quarter) => {
+  const startMonthIndex = (quarter - 1) * 3;
+  return new Date(year, startMonthIndex, 1);
+};
+
+const getQuarterDays = (year, quarter) => {
+  const startMonthIndex = (quarter - 1) * 3;
+  let days = 0;
+  for (let i = 0; i < 3; i += 1) {
+    days += new Date(year, startMonthIndex + i + 1, 0).getDate();
+  }
+  return days;
+};
+
+const formatRangeLabel = (start, end) => {
+  if (!start || !end) return '';
+  const startLabel = start.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  const endLabel = end.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return `${startLabel} — ${endLabel}`;
+};
+
 const THEME_CONFIG = {
   dark: {
     pageBackground: 'bg-[#111516]',
@@ -554,10 +620,23 @@ const calculateNameNumber = (name = '') => {
   return digitalRoot(total);
 };
 
-const calculateWeeklyPlanetaryEnergy = (birthDate, fullName, referenceDate = new Date()) => {
-  if (!birthDate) return [];
+const calculatePlanetaryEnergySeries = (birthDate, fullName, options = {}) => {
+  const { startDate: rawStartDate = new Date(), days = 7 } = options;
+  if (!birthDate || !days || days <= 0) {
+    return {
+      series: [],
+      startDate: null,
+      endDate: null
+    };
+  }
   const parts = birthDate.split('.');
-  if (parts.length !== 3) return [];
+  if (parts.length !== 3) {
+    return {
+      series: [],
+      startDate: null,
+      endDate: null
+    };
+  }
   const [dayStr, monthStr, yearStr] = parts;
   const birthDay = parseInt(dayStr, 10);
   const birthMonth = parseInt(monthStr, 10);
@@ -569,19 +648,23 @@ const calculateWeeklyPlanetaryEnergy = (birthDate, fullName, referenceDate = new
     birthDay <= 0 ||
     birthMonth <= 0
   ) {
-    return [];
+    return {
+      series: [],
+      startDate: null,
+      endDate: null
+    };
   }
 
   const destinyNumber = digitalRoot(birthDay + birthMonth + birthYear);
   const nameNumberRaw = calculateNameNumber(fullName);
   const nameNumber = nameNumberRaw || destinyNumber;
 
-  const startDate = new Date(referenceDate);
+  const startDate = new Date(rawStartDate);
   startDate.setHours(0, 0, 0, 0);
 
   const series = [];
 
-  for (let i = 0; i < 7; i += 1) {
+  for (let i = 0; i < days; i += 1) {
     const currentDate = new Date(startDate);
     currentDate.setDate(startDate.getDate() + i);
 
@@ -641,7 +724,15 @@ const calculateWeeklyPlanetaryEnergy = (birthDate, fullName, referenceDate = new
     });
   }
 
-  return series;
+  const endDate = series.length
+    ? new Date(series[series.length - 1].date)
+    : null;
+
+  return {
+    series,
+    startDate,
+    endDate
+  };
 };
 
 const personalEnergyPointPlugin = {
@@ -677,12 +768,21 @@ const PythagoreanSquareNew = () => {
   const [detail, setDetail] = useState(DETAIL_INITIAL_STATE);
   const [hoveredNumbers, setHoveredNumbers] = useState([]);
   const [theme, setTheme] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('pythagorean-square-theme');
-      return saved === 'light' ? 'light' : 'dark';
-    }
-    return 'dark';
+    if (typeof window === 'undefined') return 'dark';
+    return localStorage.getItem('pythagorean-square-theme') === 'light' ? 'light' : 'dark';
   });
+  const now = useMemo(() => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }, []);
+  const [energyRangeMode, setEnergyRangeMode] = useState('week');
+  const [selectedWeekDate, setSelectedWeekDate] = useState(() => formatDateInput(startOfWeekMonday(new Date())));
+  const [selectedMonth, setSelectedMonth] = useState(() => formatMonthInput(new Date()));
+  const [selectedQuarter, setSelectedQuarter] = useState(() => ({
+    year: now.getFullYear(),
+    quarter: getQuarterFromMonthIndex(now.getMonth())
+  }));
 
   const themeConfig = useMemo(() => THEME_CONFIG[theme], [theme]);
 
@@ -770,10 +870,144 @@ const bottomPersonal = [
   { key: 'ruling_number', label: 'п/ч', type: 'ruling' }
 ];
 
-  const weeklyEnergy = useMemo(
-    () => calculateWeeklyPlanetaryEnergy(user?.birth_date, user?.full_name || user?.name || ''),
-    [user?.birth_date, user?.full_name, user?.name]
+  const energyRangeConfig = useMemo(() => {
+    if (energyRangeMode === 'month') {
+      const parsed = parseMonthInput(selectedMonth) || {
+        year: now.getFullYear(),
+        month: now.getMonth() + 1
+      };
+      const year = Number.isNaN(parsed.year) ? now.getFullYear() : parsed.year;
+      const month = Number.isNaN(parsed.month) ? now.getMonth() + 1 : parsed.month;
+      const startDate = new Date(year, month - 1, 1);
+      startDate.setHours(0, 0, 0, 0);
+      const days = getDaysInMonth(year, month);
+      const endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + days - 1);
+      return {
+        mode: 'month',
+        startDate,
+        days,
+        month,
+        year,
+        label: startDate.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }),
+        rangeLabel: formatRangeLabel(startDate, endDate)
+      };
+    }
+
+    if (energyRangeMode === 'quarter') {
+      const year = Number(selectedQuarter?.year) || now.getFullYear();
+      const normalizedQuarter = Math.min(4, Math.max(1, Number(selectedQuarter?.quarter) || getQuarterFromMonthIndex(now.getMonth())));
+      const startDate = getQuarterStart(year, normalizedQuarter);
+      startDate.setHours(0, 0, 0, 0);
+      const days = getQuarterDays(year, normalizedQuarter);
+      const endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + days - 1);
+      return {
+        mode: 'quarter',
+        startDate,
+        days,
+        quarter: normalizedQuarter,
+        year,
+        label: `Квартал ${normalizedQuarter} · ${year}`,
+        rangeLabel: formatRangeLabel(startDate, endDate)
+      };
+    }
+
+    const baseDate = parseDateInput(selectedWeekDate) || now;
+    const startDate = startOfWeekMonday(baseDate) || startOfWeekMonday(now) || now;
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + 6);
+    return {
+      mode: 'week',
+      startDate,
+      days: 7,
+      label: 'Неделя',
+      rangeLabel: formatRangeLabel(startDate, endDate)
+    };
+  }, [energyRangeMode, selectedMonth, selectedQuarter, selectedWeekDate, now]);
+
+  const handleShiftWeek = useCallback(
+    (offset) => {
+      const base = parseDateInput(selectedWeekDate) || now;
+      const start = startOfWeekMonday(base) || startOfWeekMonday(now) || now;
+      start.setDate(start.getDate() + offset * 7);
+      setSelectedWeekDate(formatDateInput(start));
+    },
+    [selectedWeekDate, now]
   );
+
+  const handleShiftMonth = useCallback(
+    (offset) => {
+      const parsed = parseMonthInput(selectedMonth);
+      const baseYear = parsed?.year ?? now.getFullYear();
+      const baseMonthIndex = (parsed?.month ?? now.getMonth() + 1) - 1;
+      const target = new Date(baseYear, baseMonthIndex + offset, 1);
+      setSelectedMonth(formatMonthInput(target));
+    },
+    [selectedMonth, now]
+  );
+
+  const handleShiftQuarter = useCallback(
+    (offset) => {
+      const currentYear = Number(selectedQuarter?.year) || now.getFullYear();
+      const currentQuarter = Number(selectedQuarter?.quarter) || getQuarterFromMonthIndex(now.getMonth());
+      const combined = currentQuarter - 1 + offset;
+      const normalizedQuarter = ((combined % 4) + 4) % 4;
+      const newQuarter = normalizedQuarter + 1;
+      const yearDelta = Math.floor((currentQuarter - 1 + offset) / 4);
+      const newYear = currentYear + yearDelta;
+      setSelectedQuarter({ year: newYear, quarter: newQuarter });
+    },
+    [selectedQuarter, now]
+  );
+
+  const rangeInputClass = useMemo(
+    () =>
+      theme === 'dark'
+        ? 'h-10 rounded-xl border border-white/15 bg-black/25 px-3 text-sm text-white placeholder-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400'
+        : 'h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400',
+    [theme]
+  );
+
+  const rangeNavButtonClass = useMemo(
+    () =>
+      theme === 'dark'
+        ? 'h-10 w-10 rounded-xl border border-white/15 text-white/70 hover:text-white hover:border-white/30 transition-colors'
+        : 'h-10 w-10 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300 transition-colors',
+    [theme]
+  );
+
+  const rangeButtonClass = useCallback(
+    (mode) => {
+      const isActive = energyRangeMode === mode;
+      if (isActive) {
+        return 'px-3 py-1.5 rounded-xl border border-transparent bg-emerald-500 text-white shadow-lg shadow-emerald-400/30 transition-all';
+      }
+      if (theme === 'dark') {
+        return 'px-3 py-1.5 rounded-xl border border-white/10 text-white/70 hover:text-white hover:border-white/25 transition-all';
+      }
+      return 'px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300 transition-all';
+    },
+    [energyRangeMode, theme]
+  );
+
+  const energyRangeResult = useMemo(() => {
+    if (!energyRangeConfig?.startDate) {
+      return { series: [], startDate: null, endDate: null };
+    }
+    return calculatePlanetaryEnergySeries(
+      user?.birth_date,
+      user?.full_name || user?.name || '',
+      {
+        startDate: energyRangeConfig.startDate,
+        days: energyRangeConfig.days
+      }
+    );
+  }, [energyRangeConfig, user?.birth_date, user?.full_name, user?.name]);
+
+  const energySeries = energyRangeResult.series || [];
+  const energyRangeStart = energyRangeResult.startDate;
+  const energyRangeEnd = energyRangeResult.endDate;
 
   const planetCounts = useMemo(() => {
     const counts = {};
@@ -804,16 +1038,16 @@ const bottomPersonal = [
   const verticalSums = squareData?.vertical_sums ?? [0, 0, 0];
   const diagonalSums = squareData?.diagonal_sums ?? [0, 0];
   const getPlanetEnergyValue = (energyKey) => {
-    if (!weeklyEnergy.length) return null;
-    const firstDay = weeklyEnergy[0];
+    if (!energySeries.length) return null;
+    const firstDay = energySeries[0];
     if (!firstDay) return null;
     const value = firstDay.energies?.[energyKey];
     return value === undefined || value === null ? null : value;
   };
 
   const energyChartData = useMemo(() => {
-    if (!weeklyEnergy.length) return null;
-    const labels = weeklyEnergy.map((day, index) => {
+    if (!energySeries.length) return null;
+    const labels = energySeries.map((day, index) => {
       if (day.displayDate) return day.displayDate;
       const raw = day.date ? new Date(day.date).toLocaleDateString('ru-RU') : null;
       return raw || `День ${index + 1}`;
@@ -821,7 +1055,7 @@ const bottomPersonal = [
 
     const datasets = PLANET_META.map(({ num, name, vedic, energyKey }) => {
       const color = PLANET_CHART_COLORS[num] || '#38bdf8';
-      const series = weeklyEnergy.map((day) => {
+      const series = energySeries.map((day) => {
         const value = day.energies?.[energyKey];
         return value === undefined || value === null ? null : value;
       });
@@ -843,7 +1077,7 @@ const bottomPersonal = [
 
     if (!datasets.length) return null;
     return { labels, datasets };
-  }, [weeklyEnergy]);
+  }, [energySeries]);
 
   const energyChartOptions = useMemo(() => {
     const axisColor = theme === 'dark' ? 'rgba(226, 232, 240, 0.75)' : 'rgba(71, 85, 105, 0.85)';
@@ -853,11 +1087,7 @@ const bottomPersonal = [
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          display: true,
-          labels: {
-            color: axisColor,
-            font: { size: 12, family: 'Inter, sans-serif' }
-          }
+          display: false
         },
         tooltip: {
           callbacks: {
@@ -1220,6 +1450,7 @@ const bottomPersonal = [
       text: 'Материальная диагональ. Связана с практическим опытом, ремеслом и мастерством. Большой показатель говорит о способности действовать, создавать и заземлять идеи.'
     }
   ];
+
   return (
     <div
       className={`min-h-screen relative overflow-hidden transition-colors duration-500 ${themeConfig.pageBackground} ${textPrimaryClass}`}
@@ -1524,14 +1755,140 @@ const bottomPersonal = [
                 <div
                   className={`rounded-2xl border ${borderClass} ${secondaryCardBackgroundClass} p-6 md:p-8 ${chartShadowClass}`}
                 >
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-                    <h3 className={`text-xl md:text-2xl font-semibold ${textPrimaryClass}`}>
-                      Динамика энергий планет
-                    </h3>
-                    <p className={`text-sm max-w-2xl ${textMutedClass}`}>
-                      Линия показывает изменение энергетики по дням. Чем выше значение, тем активнее проявляется
-                      влияние планеты в расчётах.
-                    </p>
+                  <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between mb-6">
+                    <div className="space-y-2">
+                      <h3 className={`text-xl md:text-2xl font-semibold ${textPrimaryClass}`}>
+                        Динамика энергий планет
+                      </h3>
+                      <p className={`text-sm max-w-2xl ${textMutedClass}`}>
+                        Линия показывает изменение энергетики по дням. Выберите интересующий период, чтобы увидеть,
+                        как меняются силы планет.
+                      </p>
+                      {energyRangeConfig?.rangeLabel && (
+                        <p className={`text-xs ${textMutedClass}`}>
+                          Период: <span className={textPrimaryClass}>{energyRangeConfig.rangeLabel}</span>
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                      <div
+                        className={`flex flex-wrap items-center gap-2 rounded-2xl border ${borderClass} ${
+                          isDark ? 'bg-black/20' : 'bg-white/80'
+                        } px-2 py-1`}
+                      >
+                        <button type="button" onClick={() => setEnergyRangeMode('week')} className={rangeButtonClass('week')}>
+                          Неделя
+                        </button>
+                        <button type="button" onClick={() => setEnergyRangeMode('month')} className={rangeButtonClass('month')}>
+                          Месяц
+                        </button>
+                        <button type="button" onClick={() => setEnergyRangeMode('quarter')} className={rangeButtonClass('quarter')}>
+                          Квартал
+                        </button>
+                      </div>
+                      {energyRangeMode === 'week' && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className={rangeNavButtonClass}
+                            onClick={() => handleShiftWeek(-1)}
+                            aria-label="Предыдущая неделя"
+                          >
+                            ‹
+                          </button>
+                          <input
+                            type="date"
+                            value={selectedWeekDate}
+                            onChange={(event) => setSelectedWeekDate(event.target.value)}
+                            className={rangeInputClass}
+                          />
+                          <button
+                            type="button"
+                            className={rangeNavButtonClass}
+                            onClick={() => handleShiftWeek(1)}
+                            aria-label="Следующая неделя"
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
+                      {energyRangeMode === 'month' && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className={rangeNavButtonClass}
+                            onClick={() => handleShiftMonth(-1)}
+                            aria-label="Предыдущий месяц"
+                          >
+                            ‹
+                          </button>
+                          <input
+                            type="month"
+                            value={selectedMonth}
+                            onChange={(event) => setSelectedMonth(event.target.value)}
+                            className={`${rangeInputClass} w-36`}
+                          />
+                          <button
+                            type="button"
+                            className={rangeNavButtonClass}
+                            onClick={() => handleShiftMonth(1)}
+                            aria-label="Следующий месяц"
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
+                      {energyRangeMode === 'quarter' && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            className={rangeNavButtonClass}
+                            onClick={() => handleShiftQuarter(-1)}
+                            aria-label="Предыдущий квартал"
+                          >
+                            ‹
+                          </button>
+                          <select
+                            value={selectedQuarter.quarter}
+                            onChange={(event) =>
+                              setSelectedQuarter((prev) => ({
+                                year: prev.year,
+                                quarter: Math.min(4, Math.max(1, Number(event.target.value) || 1))
+                              }))
+                            }
+                            className={`${rangeInputClass} w-28 pr-8`}
+                          >
+                            <option value={1}>I квартал</option>
+                            <option value={2}>II квартал</option>
+                            <option value={3}>III квартал</option>
+                            <option value={4}>IV квартал</option>
+                          </select>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min="1900"
+                            max="2100"
+                            value={selectedQuarter.year}
+                            onChange={(event) => {
+                              const yearValue = Number(event.target.value);
+                              setSelectedQuarter((prev) => ({
+                                quarter: prev.quarter,
+                                year: Number.isNaN(yearValue) ? prev.year : yearValue
+                              }));
+                            }}
+                            className={`${rangeInputClass} w-28`}
+                          />
+                          <button
+                            type="button"
+                            className={rangeNavButtonClass}
+                            onClick={() => handleShiftQuarter(1)}
+                            aria-label="Следующий квартал"
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="h-80">
                     <Line data={energyChartData} options={energyChartOptions} />
@@ -1622,28 +1979,30 @@ const bottomPersonal = [
       </div>
 
       <Dialog open={detail.open} onOpenChange={closeDetail}>
-        <DialogContent className={`max-w-xl ${dialogClassName} ${textPrimaryClass}`}>
+        <DialogContent className={`max-w-xl ${dialogClassName} ${textPrimaryClass} max-h-[80vh]`}>
           <DialogHeader>
             <DialogTitle className="text-2xl font-semibold">{detail.title}</DialogTitle>
           </DialogHeader>
-          <div className={`mt-4 whitespace-pre-line text-sm leading-relaxed ${textSecondaryClass}`}>
-            {detail.text}
+          <div
+            className={`mt-4 space-y-4 overflow-y-auto pr-2 text-sm leading-relaxed ${textSecondaryClass}`}
+            style={{ maxHeight: '60vh' }}
+          >
+            <div className="whitespace-pre-line">{detail.text}</div>
+            {detail.energy !== null && (
+              <div>
+                Текущий уровень энергии:{' '}
+                <span className={`font-semibold ${textPrimaryClass}`}>{detail.energy}%</span>
+              </div>
+            )}
+            {detail.loading ? (
+              <div className={`flex items-center gap-2 ${textSecondaryClass}`}>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Подбираем рекомендации…</span>
+              </div>
+            ) : detail.advice ? (
+              <div className={`whitespace-pre-line ${textPrimaryClass}`}>{detail.advice}</div>
+            ) : null}
           </div>
-          {detail.energy !== null && (
-            <div className={`mt-4 text-sm ${textSecondaryClass}`}>
-              Текущий уровень энергии: <span className={`font-semibold ${textPrimaryClass}`}>{detail.energy}%</span>
-            </div>
-          )}
-          {detail.loading ? (
-            <div className={`mt-4 flex items-center gap-2 text-sm ${textSecondaryClass}`}>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Подбираем рекомендации…</span>
-            </div>
-          ) : detail.advice ? (
-            <div className={`mt-4 whitespace-pre-line text-sm leading-relaxed ${textPrimaryClass}`}>
-              {detail.advice}
-            </div>
-          ) : null}
         </DialogContent>
       </Dialog>
     </div>

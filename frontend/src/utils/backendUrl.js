@@ -40,8 +40,38 @@ const normalizeUrl = (rawUrl) => {
 
 export const getBackendUrl = () => {
   const fromEnv = selectEnvValue();
-  const normalized = normalizeUrl(fromEnv);
-  return normalized || 'http://localhost:8000';
+  let normalized = normalizeUrl(fromEnv);
+
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location;
+    const port = window.location.port || (protocol === 'https:' ? '443' : '80');
+    const devPorts = new Set(['3000', '5173', '4173', '4174']);
+    const isLocalDev = devPorts.has(port);
+    const isDockerFrontend = port === '5128' || port === '80';
+    const targetHost = hostname;
+    const targetPort = isLocalDev || isDockerFrontend ? '8001' : port;
+
+    if (normalized) {
+      try {
+        const url = new URL(normalized);
+        if (isLocalDev || isDockerFrontend) {
+          url.hostname = targetHost;
+          url.port = targetPort;
+        }
+        return url.toString();
+      } catch (error) {
+        // fall through to manual string construction
+        if (isLocalDev || isDockerFrontend) {
+          normalized = normalized.replace(/:\d+$/, `:${targetPort}`);
+        }
+        return normalized;
+      }
+    }
+
+    return `${protocol}//${targetHost}:${targetPort}`;
+  }
+
+  return normalized || 'http://192.168.110.178:8001';
 };
 
 export const getApiBaseUrl = () => {

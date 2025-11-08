@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(for file in /home/goodjob/tech_business/malahov/Numerom2/frontend/src/components/lesson-editor/*.jsx)",
+      "Bash(tail:*)",
+      "Bash(done)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker exec:*)",
+      "Bash(mkdir:*)",
+      "Bash(awk:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
