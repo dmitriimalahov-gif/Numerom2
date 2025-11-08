@@ -731,19 +731,30 @@ const VedicTimeCalculations = () => {
               <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {schedule.planetary_hours?.map((hour, index) => {
                   const isActive = activeHourIndex === index;
+                  const planetColor = getPlanetColor(hour.planet);
                   return (
                     <div
                       key={index}
-                      className={`rounded-2xl border ${isActive ? 'border-yellow-400 bg-yellow-400/10' : themeConfig.cardBorder + ' bg-white/5'} p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}
+                      className={`rounded-2xl border p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}
+                      style={{
+                        borderColor: isActive ? '#facc15' : planetColor + '40',
+                        backgroundColor: isActive ? '#facc1520' : planetColor + '10'
+                      }}
                     >
                       <div className="flex items-center justify-between">
                         <span
                           className="text-sm font-semibold"
-                          style={{ color: getPlanetColor(hour.planet) }}
+                          style={{ color: planetColor }}
                         >
                           {hour.planet_sanskrit || hour.planet}
                         </span>
-                        <span className={`rounded-full px-3 py-1 text-xs ${isActive ? 'bg-yellow-400/30 text-yellow-100' : themeConfig.chipBackground}`}>
+                        <span 
+                          className="rounded-full px-3 py-1 text-xs font-medium"
+                          style={{
+                            backgroundColor: planetColor + '30',
+                            color: planetColor
+                          }}
+                        >
                           Час {hour.hour || index + 1}
                         </span>
                       </div>
@@ -781,19 +792,30 @@ const VedicTimeCalculations = () => {
               <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {schedule.night_hours?.map((hour, index) => {
                   const isActive = activeHourIndex === (12 + index);
+                  const planetColor = getPlanetColor(hour.planet);
                   return (
                     <div
                       key={index}
-                      className={`rounded-2xl border ${isActive ? 'border-purple-400 bg-purple-400/10' : themeConfig.cardBorder + ' bg-white/5'} p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}
+                      className={`rounded-2xl border p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}
+                      style={{
+                        borderColor: isActive ? '#c084fc' : planetColor + '40',
+                        backgroundColor: isActive ? '#c084fc20' : planetColor + '10'
+                      }}
                     >
                       <div className="flex items-center justify-between">
                         <span
                           className="text-sm font-semibold"
-                          style={{ color: getPlanetColor(hour.planet) }}
+                          style={{ color: planetColor }}
                         >
                           {hour.planet_sanskrit || hour.planet}
                         </span>
-                        <span className={`rounded-full px-3 py-1 text-xs ${isActive ? 'bg-purple-400/30 text-purple-100' : themeConfig.chipBackground}`}>
+                        <span 
+                          className="rounded-full px-3 py-1 text-xs font-medium"
+                          style={{
+                            backgroundColor: planetColor + '30',
+                            color: planetColor
+                          }}
+                        >
                           Час {hour.hour || (13 + index)}
                         </span>
                       </div>
