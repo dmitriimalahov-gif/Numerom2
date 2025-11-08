@@ -189,7 +189,7 @@ def calculate_abhijit_muhurta(sunrise: datetime, sunset: datetime) -> Tuple[date
 
 def calculate_planetary_hours(sunrise: datetime, sunset: datetime, weekday: int) -> List[Dict[str, Any]]:
     """
-    Рассчитывает планетарные часы дня
+    Рассчитывает планетарные часы дня (12 дневных часов)
     """
     day_duration = sunset - sunrise
     hour_duration = day_duration / 12  # День делится на 12 планетарных часов
@@ -219,10 +219,49 @@ def calculate_planetary_hours(sunrise: datetime, sunset: datetime, weekday: int)
             "planet_sanskrit": get_planet_sanskrit(planet),
             "start_time": hour_start,
             "end_time": hour_end,
-            "is_favorable": is_favorable_time(planet, hour_start)
+            "is_favorable": is_favorable_time(planet, hour_start),
+            "period": "day"
         })
     
     return planetary_hours
+
+
+def calculate_night_planetary_hours(sunset: datetime, next_sunrise: datetime, weekday: int) -> List[Dict[str, Any]]:
+    """
+    Рассчитывает планетарные часы ночи (12 ночных часов)
+    """
+    night_duration = next_sunrise - sunset
+    hour_duration = night_duration / 12  # Ночь делится на 12 планетарных часов
+    
+    # Планеты в порядке по дням недели
+    planets_order = ['Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn', 'Sun']
+    
+    # Ночные часы начинаются с 5-го часа дня (продолжение последовательности)
+    ruling_planet = planets_order[weekday]
+    start_index = planets_order.index(ruling_planet)
+    
+    # Начинаем с 13-го часа (продолжение дневной последовательности)
+    planet_sequence = []
+    for i in range(12, 24):  # Часы с 13 по 24
+        planet_index = (start_index + i) % 7
+        planet_sequence.append(planets_order[planet_index])
+    
+    night_hours = []
+    for i, planet in enumerate(planet_sequence):
+        hour_start = sunset + (i * hour_duration)
+        hour_end = hour_start + hour_duration
+        
+        night_hours.append({
+            "hour": i + 13,  # Нумерация с 13 до 24
+            "planet": planet,
+            "planet_sanskrit": get_planet_sanskrit(planet),
+            "start_time": hour_start,
+            "end_time": hour_end,
+            "is_favorable": is_favorable_time(planet, hour_start),
+            "period": "night"
+        })
+    
+    return night_hours
 
 
 def get_planet_sanskrit(planet: str) -> str:
@@ -278,14 +317,19 @@ def get_vedic_day_schedule(city: str, date: datetime, birth_date: str = None) ->
         sunrise, sunset = get_sunrise_sunset(city, date)
         weekday = date.weekday()
         
+        # Получаем восход следующего дня для расчета ночных часов
+        next_day = date + timedelta(days=1)
+        next_sunrise, _ = get_sunrise_sunset(city, next_day)
+        
         # Рассчитываем все временные периоды
         rahu_start, rahu_end = calculate_rahu_kaal(sunrise, sunset, weekday)
         gulika_start, gulika_end = calculate_gulika_kaal(sunrise, sunset, weekday)
         yama_start, yama_end = calculate_yamaghanta(sunrise, sunset, weekday)
         abhijit_start, abhijit_end = calculate_abhijit_muhurta(sunrise, sunset)
         
-        # Планетарные часы
+        # Планетарные часы дня и ночи
         planetary_hours = calculate_planetary_hours(sunrise, sunset, weekday)
+        night_hours = calculate_night_planetary_hours(sunset, next_sunrise, weekday)
         
         # Названия дней недели на санскрите
         sanskrit_days = [
@@ -344,6 +388,7 @@ def get_vedic_day_schedule(city: str, date: datetime, birth_date: str = None) ->
                 }
             },
             "planetary_hours": planetary_hours,
+            "night_hours": night_hours,
             "recommendations": get_daily_recommendations(weekday, planetary_hours, birth_date)
         }
         

@@ -336,13 +336,30 @@ const VedicTimeCalculations = () => {
 
     const now = new Date();
 
-    return schedule.planetary_hours.findIndex((hour) => {
+    // Проверяем дневные часы
+    const dayHourIndex = schedule.planetary_hours.findIndex((hour) => {
       const start = parsePlanetaryTime(hour.start_time || hour.start);
       const end = parsePlanetaryTime(hour.end_time || hour.end);
       if (!start || !end) return false;
       return now >= start && now < end;
     });
-  }, [parsePlanetaryTime, schedule?.planetary_hours, selectedDate]);
+
+    if (dayHourIndex !== -1) return dayHourIndex;
+
+    // Проверяем ночные часы
+    if (schedule.night_hours?.length) {
+      const nightHourIndex = schedule.night_hours.findIndex((hour) => {
+        const start = parsePlanetaryTime(hour.start_time || hour.start);
+        const end = parsePlanetaryTime(hour.end_time || hour.end);
+        if (!start || !end) return false;
+        return now >= start && now < end;
+      });
+
+      if (nightHourIndex !== -1) return 12 + nightHourIndex;
+    }
+
+    return null;
+  }, [parsePlanetaryTime, schedule?.planetary_hours, schedule?.night_hours, selectedDate]);
 
   useEffect(() => {
     if (!user) return;
@@ -420,6 +437,9 @@ const VedicTimeCalculations = () => {
       </div>
     );
   };
+
+  // Определяем активный час для подсветки
+  const activeHourIndex = currentPlanetaryHourIndex;
 
   return (
     <div className={`relative min-h-screen ${themeConfig.pageBackground}`}>
@@ -697,7 +717,7 @@ const VedicTimeCalculations = () => {
               </div>
             </div>
 
-          {/* Планетарные часы */}
+          {/* Планетарные часы дня */}
             <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
               <div className="flex items-center gap-3">
                 <Clock3 className="h-5 w-5 text-indigo-300" />
@@ -709,39 +729,93 @@ const VedicTimeCalculations = () => {
                 Показано {schedule.planetary_hours?.length || 0} планетарных часов.
               </p>
               <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {schedule.planetary_hours?.map((hour, index) => (
-                  <div
-                    key={index}
-                    className={`rounded-2xl border ${themeConfig.cardBorder} bg-white/5 p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}
-                  >
+                {schedule.planetary_hours?.map((hour, index) => {
+                  const isActive = activeHourIndex === index;
+                  return (
+                    <div
+                      key={index}
+                      className={`rounded-2xl border ${isActive ? 'border-yellow-400 bg-yellow-400/10' : themeConfig.cardBorder + ' bg-white/5'} p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}
+                    >
                       <div className="flex items-center justify-between">
-                      <span
-                        className="text-sm font-semibold"
-                        style={{ color: getPlanetColor(hour.planet) }}
-                      >
+                        <span
+                          className="text-sm font-semibold"
+                          style={{ color: getPlanetColor(hour.planet) }}
+                        >
                           {hour.planet_sanskrit || hour.planet}
-                      </span>
-                      <span className={`rounded-full px-3 py-1 text-xs ${themeConfig.chipBackground}`}>
-                        Час {hour.hour || index + 1}
-                      </span>
-                        </div>
-                    <div className={`mt-3 text-sm ${themeConfig.mutedText}`}>
-                      {hour.start_time?.slice(11, 16) || hour.start} —{' '}
-                      {hour.end_time?.slice(11, 16) || hour.end}
+                        </span>
+                        <span className={`rounded-full px-3 py-1 text-xs ${isActive ? 'bg-yellow-400/30 text-yellow-100' : themeConfig.chipBackground}`}>
+                          Час {hour.hour || index + 1}
+                        </span>
+                      </div>
+                      <div className={`mt-3 text-sm ${themeConfig.mutedText}`}>
+                        {hour.start_time?.slice(11, 16) || hour.start} —{' '}
+                        {hour.end_time?.slice(11, 16) || hour.end}
                       </div>
                       {hour.is_favorable && (
-                      <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-400/20 px-3 py-1 text-xs font-semibold text-emerald-600">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-400/20 px-3 py-1 text-xs font-semibold text-emerald-600">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
                           Благоприятно
                         </div>
                       )}
-                    {hour.focus && (
-                      <p className="mt-3 text-xs leading-relaxed text-emerald-200">{hour.focus}</p>
-                    )}
-                  </div>
-                ))}
+                      {hour.focus && (
+                        <p className="mt-3 text-xs leading-relaxed text-emerald-200">{hour.focus}</p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
+
+          {/* Планетарные часы ночи */}
+          {schedule.night_hours && schedule.night_hours.length > 0 && (
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <div className="flex items-center gap-3">
+                <Clock3 className="h-5 w-5 text-purple-300" />
+                <h2 className="text-sm font-semibold uppercase tracking-[0.35em] text-purple-200">
+                  Планетарные часы ночи
+                </h2>
+              </div>
+              <p className="mt-3 text-sm leading-relaxed text-purple-100">
+                Показано {schedule.night_hours?.length || 0} планетарных часов.
+              </p>
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {schedule.night_hours?.map((hour, index) => {
+                  const isActive = activeHourIndex === (12 + index);
+                  return (
+                    <div
+                      key={index}
+                      className={`rounded-2xl border ${isActive ? 'border-purple-400 bg-purple-400/10' : themeConfig.cardBorder + ' bg-white/5'} p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span
+                          className="text-sm font-semibold"
+                          style={{ color: getPlanetColor(hour.planet) }}
+                        >
+                          {hour.planet_sanskrit || hour.planet}
+                        </span>
+                        <span className={`rounded-full px-3 py-1 text-xs ${isActive ? 'bg-purple-400/30 text-purple-100' : themeConfig.chipBackground}`}>
+                          Час {hour.hour || (13 + index)}
+                        </span>
+                      </div>
+                      <div className={`mt-3 text-sm ${themeConfig.mutedText}`}>
+                        {hour.start_time?.slice(11, 16) || hour.start} —{' '}
+                        {hour.end_time?.slice(11, 16) || hour.end}
+                      </div>
+                      {hour.is_favorable && (
+                        <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-400/20 px-3 py-1 text-xs font-semibold text-emerald-600">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Благоприятно
+                        </div>
+                      )}
+                      {hour.focus && (
+                        <p className="mt-3 text-xs leading-relaxed text-emerald-200">{hour.focus}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           </div>
       )}
       </div>
