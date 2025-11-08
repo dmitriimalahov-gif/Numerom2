@@ -78,7 +78,7 @@ const UserDashboard = () => {
     { id: 'home', label: 'Главная', icon: <Sparkles className="w-4 h-4" /> },
     { id: 'personal-data', label: 'Личные данные', icon: <User className="w-4 h-4" /> },
     { id: 'credit-history', label: 'История баллов', icon: <BarChart3 className="w-4 h-4" /> },
-    { id: 'numerology', label: 'Нумерология', icon: <Calculator className="w-4 h-4" /> },
+    { id: 'numerology-design', label: 'Нумерология', icon: <Calculator className="w-4 h-4" /> },
     { id: 'name-numerology', label: 'Нумерология имени', icon: <User className="w-4 h-4" /> },
     { id: 'vedic-time', label: 'Ведические времена', icon: <Clock className="w-4 h-4" /> },
     { id: 'planetary-route', label: 'Планетарный маршрут', icon: <MapPin className="w-4 h-4" /> },

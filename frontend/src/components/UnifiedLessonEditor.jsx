@@ -10,6 +10,7 @@ import {
   BookOpen, Brain, Target, Star, Zap, Trash2, Eye
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
+import { getBackendUrl } from '../utils/backendUrl';
 
 // Импорт подкомпонентов
 import LessonTheoryEditor from './lesson-editor/LessonTheoryEditor';
@@ -32,7 +33,7 @@ const UnifiedLessonEditor = ({
   initialLessonId = null
 }) => {
   const { user } = useAuth();
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+  const backendUrl = getBackendUrl();
 
   // ==================== СОСТОЯНИЯ ====================
 
@@ -792,13 +793,8 @@ const UnifiedLessonEditor = ({
   // ==================== ЗАГРУЗКА МЕДИА ====================
 
   const handleVideoUpload = async (event) => {
-    const file = event.target.files[0];
-    if (!file || !editingLesson) return;
-
-    // Проверка размера файла (500MB)
-    const maxSize = 500 * 1024 * 1024;
-    if (file.size > maxSize) {
-      alert(`Файл слишком большой (${(file.size / (1024 * 1024)).toFixed(1)}MB). Максимум: 500MB`);
+    const file = event.target.files?.[0];
+    if (!file || !editingLesson) {
       return;
     }
 
@@ -809,38 +805,38 @@ const UnifiedLessonEditor = ({
       setUploadingVideo(true);
       const token = localStorage.getItem('token');
 
-      // УНИФИКАЦИЯ: используем тот же endpoint что и для консультаций - РАБОТАЮЩИЙ!
-      const endpoint = `${backendUrl}/api/admin/consultations/upload-video`;
-
-      const response = await fetch(endpoint, {
+      const response = await fetch(`${backendUrl}/api/admin/consultations/upload-video`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`
+          Authorization: `Bearer ${token}`
         },
         body: formData
       });
 
-      if (response.ok) {
-        const result = await response.json();
-        console.log('Видео загружено успешно, результат:', result);
-        
-        // ТОЧНО КАК В КОНСУЛЬТАЦИЯХ: только обновляем состояние, НЕ сохраняем автоматически
-        setEditingLesson(prev => ({
-          ...prev,
-          video_file_id: result.file_id,
-          video_filename: result.filename
-        }));
-        
-        alert(`Видео успешно загружено: ${result.filename}. Не забудьте сохранить урок!`);
-      } else {
+      if (!response.ok) {
         const errorData = await response.json();
         alert(errorData.detail || 'Ошибка загрузки видео');
+        return;
       }
+
+      const result = await response.json();
+      console.log('Видео загружено успешно, результат:', result);
+
+      setEditingLesson((prev) => ({
+        ...prev,
+        video_file_id: result.file_id,
+        video_filename: result.filename,
+        video_status: result.status || prev?.video_status,
+        video_url: result.url || prev?.video_url
+      }));
+
+      alert(`Видео успешно загружено: ${result.filename}. Не забудьте сохранить урок!`);
     } catch (err) {
       console.error('Ошибка загрузки видео:', err);
       alert('Ошибка загрузки видео: ' + err.message);
     } finally {
       setUploadingVideo(false);
+      event.target.value = '';
     }
   };
 
@@ -887,6 +883,7 @@ const UnifiedLessonEditor = ({
       alert('Ошибка загрузки PDF');
     } finally {
       setUploadingPDF(false);
+      event.target.value = '';
     }
   };
 
@@ -940,6 +937,7 @@ const UnifiedLessonEditor = ({
       alert('Ошибка загрузки Word файла');
     } finally {
       setUploadingWord(false);
+      event.target.value = '';
     }
   };
 

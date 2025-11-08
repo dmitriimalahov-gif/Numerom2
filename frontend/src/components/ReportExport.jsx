@@ -5,6 +5,7 @@ import { Alert, AlertDescription } from './ui/alert';
 import { Checkbox } from './ui/checkbox';
 import { useAuth } from './AuthContext';
 import { Globe, Download, Palette, FileText, CheckSquare } from 'lucide-react';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const ReportExport = () => {
   const { user } = useAuth();
@@ -19,7 +20,7 @@ const ReportExport = () => {
   const [previewMode, setPreviewMode] = useState(false);
   const [htmlPreview, setHtmlPreview] = useState('');
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   // Загрузка доступных расчётов
   useEffect(() => {

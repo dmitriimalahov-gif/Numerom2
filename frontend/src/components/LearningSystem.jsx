@@ -29,6 +29,7 @@ import ConsultationPDFViewer from './ConsultationPDFViewer';
 import WordViewer from './WordViewer';
 import Quiz from './Quiz';
 import UniversalLessonViewer from './UniversalLessonViewer';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const LearningSystem = () => {
   const { user } = useAuth();
@@ -44,7 +45,7 @@ const LearningSystem = () => {
   
   // Убрано: showFirstLesson больше не используется, все уроки отображаются в одном списке
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   useEffect(() => {
     loadLearningData();
@@ -511,7 +512,7 @@ const LearningSystem = () => {
     const isVimeo = lesson.video_url && lesson.video_url.includes('vimeo.com');
     
     // Создаем полный URL для backend видео (ТОЧНО КАК В PERSONALCONSULTATIONS)
-    const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+    const backendUrl = getBackendUrl();
     let videoUrl = lesson.video_url || 
       (lesson.video_file_id ? `${backendUrl}/api/consultations/video/${lesson.video_file_id}` : null);
     

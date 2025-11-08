@@ -6,6 +6,7 @@ import { Bell, BellOff, Check, Clock, Smartphone, X } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from './AuthContext';
 import * as serviceWorkerRegistration from '../serviceWorkerRegistration';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const PushNotificationSettings = ({ lessonId, onSubscribed }) => {
   const { user } = useAuth();
@@ -16,7 +17,7 @@ const PushNotificationSettings = ({ lessonId, onSubscribed }) => {
   const [success, setSuccess] = useState('');
   const [notificationTime, setNotificationTime] = useState('10:00');
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   useEffect(() => {
     checkNotificationSupport();

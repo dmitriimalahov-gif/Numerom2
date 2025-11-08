@@ -10,7 +10,9 @@ const urlsToCache = [
   '/index.html',
   '/static/css/main.css',
   '/static/js/main.js',
-  '/manifest.json'
+  '/manifest.json',
+  '/icon-192x192.svg',
+  '/icon-512x512.svg'
 ];
 
 // Установка Service Worker
@@ -51,21 +53,27 @@ self.addEventListener('activate', (event) => {
 
 // Стратегия кэширования: Network First, падаем на Cache
 self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  if (request.method !== 'GET') {
+    return;
+  }
+
   event.respondWith(
-    fetch(event.request)
+    fetch(request)
       .then((response) => {
-        // Клонируем ответ для сохранения в кэш
         const responseToCache = response.clone();
-        caches.open(CACHE_NAME)
-          .then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(request, responseToCache);
+        });
         return response;
       })
-      .catch(() => {
-        // Если сеть недоступна, используем кэш
-        return caches.match(event.request);
-      })
+      .catch(() => caches.match(request))
   );
 });
 
@@ -76,8 +84,8 @@ self.addEventListener('push', (event) => {
   let notificationData = {
     title: 'NumerOM',
     body: 'Новое уведомление',
-    icon: '/icon-192x192.png',
-    badge: '/icon-192x192.png',
+    icon: '/icon-192x192.svg',
+    badge: '/icon-192x192.svg',
     tag: 'numerom-notification',
     requireInteraction: false,
     data: {

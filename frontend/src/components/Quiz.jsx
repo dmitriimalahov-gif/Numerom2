@@ -7,6 +7,7 @@ import { Progress } from './ui/progress';
 import { Loader, HelpCircle, CheckCircle, Star, Lightbulb } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const Quiz = () => {
   const { user } = useAuth();
@@ -18,7 +19,7 @@ const Quiz = () => {
   const [error, setError] = useState('');
   const [quizStarted, setQuizStarted] = useState(false);
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   useEffect(() => {
     loadRandomizedQuiz();

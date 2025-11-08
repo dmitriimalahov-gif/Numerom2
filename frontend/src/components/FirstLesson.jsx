@@ -1,23 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
-import { Badge } from './ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Checkbox } from './ui/checkbox';
-import {
-  BookOpen, PlayCircle, CheckCircle, Clock, Target, Zap,
-  Star, Calendar, Award, ArrowRight, ArrowLeft,
-  Sparkles, Sun, Moon, Loader, Trophy, Heart,
-  Brain, Lightbulb, FileText, Timer, Rocket, Eye, Download, Video, Lock
-} from 'lucide-react';
+import { Alert, AlertDescription } from './ui/alert';
+import { ScrollArea } from './ui/scroll-area';
+import { Badge } from './ui/badge';
+import { Loader2, PlayCircle, CheckCircle, Target, Flame, Award, Download, Link } from 'lucide-react';
 import { useAuth } from './AuthContext';
+import BunnyVideoPlayer from './BunnyVideoPlayer';
+import { format } from 'date-fns';
+import { ru } from 'date-fns/locale';
+import Quiz from './Quiz';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
-import PushNotificationSettings from './PushNotificationSettings';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const FirstLesson = () => {
   const { user } = useAuth();
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+  const backendUrl = getBackendUrl();
   
   // Состояния для управления уроком
   const [lessonData, setLessonData] = useState(null);
@@ -745,7 +745,7 @@ const FirstLesson = () => {
     return (
       <Card>
         <CardContent className="flex items-center justify-center py-12">
-          <Loader className="w-6 h-6 animate-spin mr-2" />
+          <Loader2 className="w-6 h-6 animate-spin mr-2" />
           <span>Загружаем первое занятие NumerOM...</span>
         </CardContent>
       </Card>
@@ -772,7 +772,7 @@ const FirstLesson = () => {
     return (
       <Card>
         <CardContent className="text-center py-8">
-          <BookOpen className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+          <Link className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <p>Урок не найден</p>
         </CardContent>
       </Card>
@@ -780,11 +780,11 @@ const FirstLesson = () => {
   }
 
   const sectionProgress = [
-    { id: 'theory', title: 'Теория', icon: <BookOpen className="w-4 h-4" />, completed: completedSections.has('theory') },
-    { id: 'exercises', title: 'Упражнения', icon: <Brain className="w-4 h-4" />, completed: completedSections.has('exercises') },
+    { id: 'theory', title: 'Теория', icon: <Link className="w-4 h-4" />, completed: completedSections.has('theory') },
+    { id: 'exercises', title: 'Упражнения', icon: <Flame className="w-4 h-4" />, completed: completedSections.has('exercises') },
     { id: 'quiz', title: 'Тест', icon: <Target className="w-4 h-4" />, completed: completedSections.has('quiz') },
-    { id: 'challenge', title: 'Челлендж', icon: <Zap className="w-4 h-4" />, completed: challengeStarted },
-    { id: 'habits', title: 'Привычки', icon: <Star className="w-4 h-4" />, completed: habitTracker !== null }
+    { id: 'challenge', title: 'Челлендж', icon: <Flame className="w-4 h-4" />, completed: challengeStarted },
+    { id: 'habits', title: 'Привычки', icon: <Award className="w-4 h-4" />, completed: habitTracker !== null }
   ];
 
   return (
@@ -797,7 +797,7 @@ const FirstLesson = () => {
               <div className="flex-1">
                 <div className="flex items-center gap-4 mb-4">
                   <div className="p-3 bg-blue-50 rounded-xl border border-blue-100">
-                    <Rocket className="w-8 h-8 text-blue-600" />
+                    <Link className="w-8 h-8 text-blue-600" />
                   </div>
                   <div>
                     <CardTitle className="text-2xl sm:text-3xl font-semibold text-gray-900 mb-2">
@@ -873,11 +873,11 @@ const FirstLesson = () => {
         <div className="sticky top-4 z-40 bg-white/95 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 p-2">
           <TabsList className="grid w-full grid-cols-5 bg-transparent gap-1">
             {[
-              { id: 'theory', label: 'Теория', icon: BookOpen, color: 'blue' },
-              { id: 'exercises', label: 'Упражнения', icon: Brain, color: 'green' },
+              { id: 'theory', label: 'Теория', icon: Link, color: 'blue' },
+              { id: 'exercises', label: 'Упражнения', icon: Flame, color: 'green' },
               { id: 'quiz', label: 'Тест', icon: Target, color: 'orange' },
-              { id: 'challenge', label: 'Челлендж', icon: Zap, color: 'purple' },
-              { id: 'habits', label: 'Привычки', icon: Star, color: 'pink' }
+              { id: 'challenge', label: 'Челлендж', icon: Flame, color: 'purple' },
+              { id: 'habits', label: 'Привычки', icon: Award, color: 'pink' }
             ].map((tab) => (
               <TabsTrigger 
                 key={tab.id}
@@ -900,7 +900,7 @@ const FirstLesson = () => {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center">
-                <BookOpen className="w-5 h-5 mr-2" />
+                <Link className="w-5 h-5 mr-2" />
                 Что такое нумерология?
               </CardTitle>
             </CardHeader>
@@ -914,7 +914,7 @@ const FirstLesson = () => {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center">
-                <Rocket className="w-5 h-5 mr-2" />
+                <Link className="w-5 h-5 mr-2" />
                 История космического корабля
               </CardTitle>
               <CardDescription>
@@ -1055,7 +1055,7 @@ const FirstLesson = () => {
                   {/* Заголовок секции */}
                   <div className="text-center mb-6">
                     <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-600 rounded-full mb-4 shadow-lg">
-                      <Video className="w-8 h-8 text-white" />
+                      <Link className="w-8 h-8 text-white" />
                     </div>
                     <h3 className="text-2xl font-bold text-gray-900 mb-2">Учебные материалы</h3>
                     <p className="text-gray-600 max-w-md mx-auto">
@@ -1103,7 +1103,7 @@ const FirstLesson = () => {
                                   : 'text-gray-600 hover:bg-purple-50'
                               }`}
                             >
-                              <FileText className="w-4 h-4 inline mr-1" />
+                              <Link className="w-4 h-4 inline mr-1" />
                               PDF ({additionalPdfs.length})
                             </button>
                           </div>
@@ -1267,7 +1267,7 @@ const FirstLesson = () => {
                             <div className="flex items-center justify-between mb-4">
                               <div className="flex items-center">
                                 <div className="flex items-center justify-center w-10 h-10 bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg mr-3">
-                                  <FileText className="w-5 h-5 text-white" />
+                                  <Link className="w-5 h-5 text-white" />
                                 </div>
                                 <div>
                                   <h4 className="text-lg font-semibold text-gray-900">Справочные материалы</h4>
@@ -1296,7 +1296,7 @@ const FirstLesson = () => {
                                 <div key={pdf.file_id} className="group bg-white rounded-xl border border-green-200/50 shadow-sm hover:shadow-md transition-all duration-200 p-4">
                                   <div className="flex items-start mb-3">
                                     <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg mr-3 flex-shrink-0 relative">
-                                      <FileText className="w-6 h-6 text-white" />
+                                      <Link className="w-6 h-6 text-white" />
                                       <div className="absolute -top-1 -right-1 bg-green-700 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
                                         {index + 1}
                                       </div>
@@ -1356,7 +1356,7 @@ const FirstLesson = () => {
                             {videoMaterials.length} видео
                           </div>
                           <div className="flex items-center">
-                            <FileText className="w-3 h-3 mr-1 text-green-600" />
+                            <Link className="w-3 h-3 mr-1 text-green-600" />
                             {pdfMaterials.length} PDF
                           </div>
                           <div className="flex items-center">
@@ -1404,7 +1404,7 @@ const FirstLesson = () => {
                     </>
                   ) : (
                     <>
-                      <ArrowRight className="w-4 h-4 mr-2" />
+                      <Link className="w-4 h-4 mr-2" />
                       Завершить изучение теории
                     </>
                   )}
@@ -1421,7 +1421,7 @@ const FirstLesson = () => {
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
                   <div className="flex items-center">
-                    <Brain className="w-5 h-5 mr-2" />
+                    <Flame className="w-5 h-5 mr-2" />
                     Упражнение {index + 1}: {exercise.title}
                   </div>
                   <div className="flex items-center space-x-2">
@@ -1508,7 +1508,7 @@ const FirstLesson = () => {
                       variant="outline"
                       className="flex-1 sm:flex-none"
                     >
-                      <FileText className="w-4 h-4 mr-2" />
+                      <Link className="w-4 h-4 mr-2" />
                       Сохранить ответ
                     </Button>
                     
@@ -1613,7 +1613,7 @@ const FirstLesson = () => {
                   >
                     {quizSubmitting ? (
                       <>
-                        <Loader className="w-4 h-4 animate-spin mr-2" />
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
                         Проверяем ответы...
                       </>
                     ) : (
@@ -1993,7 +1993,7 @@ const FirstLesson = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
-                  <Star className="w-5 h-5 mr-2" />
+                  <Award className="w-5 h-5 mr-2" />
                   Трекер привычек энергии Солнца
                 </CardTitle>
                 <CardDescription>
@@ -2020,7 +2020,7 @@ const FirstLesson = () => {
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between">
                     <div className="flex items-center">
-                      <Star className="w-5 h-5 mr-2 text-yellow-600" />
+                      <Award className="w-5 h-5 mr-2 text-yellow-600" />
                       Прогресс привычек
                     </div>
                     <Badge className={`${habitProgress === 100 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>

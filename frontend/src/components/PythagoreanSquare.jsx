@@ -7,6 +7,7 @@ import { Loader, Grid3X3, Info } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { PLANET_COLORS, NUMBER_COLORS, withAlpha } from './constants/colors';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const PythagoreanSquare = ({ fullScreen = false }) => {
   const { user } = useAuth();
@@ -20,7 +21,7 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
   const [detailTitle, setDetailTitle] = useState('');
   const [detailText, setDetailText] = useState('');
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   useEffect(() => { if (user?.birth_date) calculateSquare(); }, [user?.birth_date]);
 

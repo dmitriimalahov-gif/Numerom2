@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import uuid
@@ -21,6 +21,21 @@ class UserProfileUpdate(BaseModel):
     house_number: Optional[str] = None
     apartment_number: Optional[str] = None
     postal_code: Optional[str] = None
+    birth_date: Optional[str] = None
+
+    @field_validator('birth_date')
+    @classmethod
+    def validate_birth_date(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError('Дата рождения не может быть пустой')
+        try:
+            datetime.strptime(value, '%d.%m.%Y')
+        except ValueError as exc:
+            raise ValueError('Дата рождения должна быть в формате ДД.ММ.ГГГГ') from exc
+        return value
 
 class UserResponse(BaseModel):
     id: str
@@ -138,6 +153,13 @@ class PersonalNumbersResult(BaseModel):
     individual_year: int
     individual_month: int
     individual_day: int
+
+class PlanetaryAdviceResponse(BaseModel):
+    planet_number: int
+    score: int
+    advice: str
+    min_percent: Optional[int] = None
+    max_percent: Optional[int] = None
 
 class PythagoreanSquareResult(BaseModel):
     square: List[List[str]]

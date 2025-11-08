@@ -6,6 +6,7 @@ import { Badge } from './ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Calendar, CalendarDays, Clock, TrendingUp, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useAuth } from './AuthContext';
+import { getApiBaseUrl } from '../utils/backendUrl';
 
 const PlanetaryDailyRoute = () => {
   const [routeData, setRouteData] = useState({});
@@ -15,6 +16,7 @@ const PlanetaryDailyRoute = () => {
   const [activeTab, setActiveTab] = useState('daily');
   const [currentTime, setCurrentTime] = useState(new Date());
   const { user } = useAuth();
+  const apiBaseUrl = getApiBaseUrl();
 
   const fetchRouteData = async (period = 'daily', date = selectedDate) => {
     if (!user) return;
@@ -27,7 +29,7 @@ const PlanetaryDailyRoute = () => {
       if (date) params.append('date', date);
       if (user.city) params.append('city', user.city);
 
-      let endpoint = `${process.env.REACT_APP_BACKEND_URL}/api/vedic-time/planetary-route`;
+      let endpoint = `${apiBaseUrl}/vedic-time/planetary-route`;
       if (period === 'monthly') {
         endpoint += '/monthly';
       } else if (period === 'quarterly') {

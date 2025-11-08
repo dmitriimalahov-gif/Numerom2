@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -15,10 +15,12 @@ import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
 import WordViewer from './WordViewer';
 import PushNotificationSettings from './PushNotificationSettings';
+import BunnyVideoPlayer from './BunnyVideoPlayer';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
   const { user } = useAuth();
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+  const backendUrl = getBackendUrl();
   
   // Состояния для управления уроком
   const [lessonData, setLessonData] = useState(null);

@@ -8,7 +8,6 @@ import PaymentSuccess from "./components/PaymentSuccess";
 import PaymentCancelled from "./components/PaymentCancelled";
 
 // Импорты для всех разделов
-import NumerologyDashboard from './components/NumerologyDashboard';
 import NameNumerology from './components/NameNumerology';
 import Compatibility from './components/Compatibility';
 import Quiz from './components/Quiz';
@@ -22,6 +21,7 @@ import PersonalDataForm from './components/PersonalDataForm';
 import PersonalConsultations from './components/PersonalConsultations';
 import CreditHistory from './components/CreditHistory';
 import HomeContent from './components/HomeContent';
+import PythagoreanSquareNew from './components/PythagoreanSquareNew';
 
 function App() {
   return (
@@ -38,7 +38,7 @@ function App() {
               <Route path="home" element={<HomeContent />} />
               <Route path="personal-data" element={<PersonalDataForm />} />
               <Route path="credit-history" element={<CreditHistory />} />
-              <Route path="numerology" element={<NumerologyDashboard />} />
+              <Route path="numerology" element={<Navigate to="/dashboard/numerology-design" replace />} />
               <Route path="name-numerology" element={<NameNumerology />} />
               <Route path="vedic-time" element={<VedicTimeCalculations />} />
               <Route path="planetary-route" element={<PlanetaryDailyRoute />} />
@@ -50,6 +50,7 @@ function App() {
               <Route path="report-export" element={<ReportExport />} />
               <Route path="materials" element={<Materials />} />
               <Route path="admin" element={<AdminPanel />} />
+              <Route path="numerology-design" element={<PythagoreanSquareNew />} />
             </Route>
 
             {/* Платежи */}

@@ -7,6 +7,7 @@ import { Loader, Calculator, Menu, X, Info } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { PLANET_COLORS } from './constants/colors';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const PersonalNumbers = ({ fullScreen = false, onBack }) => {
   const { user } = useAuth();
@@ -20,7 +21,7 @@ const PersonalNumbers = ({ fullScreen = false, onBack }) => {
   const [detailText, setDetailText] = useState('');
   const [showFormula, setShowFormula] = useState(null);
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   useEffect(() => {
     if (user?.birth_date) calculate();

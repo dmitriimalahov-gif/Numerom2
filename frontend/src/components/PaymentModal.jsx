@@ -1,12 +1,18 @@
-import React, { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import React, { useEffect, useState } from 'react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Badge } from './ui/badge';
+import { Alert, AlertDescription } from './ui/alert';
+import { CreditCard, Sparkles, ShieldCheck, Timer, Gift, Award, Zap, Heart, Star } from 'lucide-react';
+import { loadStripe } from '@stripe/stripe-js';
 import { useAuth } from './AuthContext';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const PaymentModal = ({ isOpen, onClose }) => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+  const backendUrl = getBackendUrl();
 
   const startCheckout = async (packageType) => {
     setLoading(true);

@@ -4,9 +4,10 @@ import { Button } from './ui/button';
 import { FileText, Eye, DownloadCloud, Loader2, Play, Video } from 'lucide-react';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const Materials = () => {
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
   const [materials, setMaterials] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { useAuth } from './AuthContext';
 import { X, Info } from 'lucide-react';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const EnhancedPythagoreanSquare = () => {
   const [analysis, setAnalysis] = useState(null);
@@ -385,7 +386,7 @@ const EnhancedPythagoreanSquare = () => {
     setError('');
 
     try {
-      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/numerology/enhanced/full-analysis`, {
+      const response = await fetch(`${getBackendUrl()}/api/numerology/enhanced/full-analysis`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

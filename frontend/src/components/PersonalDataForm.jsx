@@ -5,12 +5,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
 import { useAuth } from './AuthContext';
-import { User, Phone, MapPin, Car, Home, Edit3 } from 'lucide-react';
+import { User, Phone, MapPin, Car, Home, Edit3, Calendar } from 'lucide-react';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const PersonalDataForm = () => {
   const { user, updateUser } = useAuth();
   const [formData, setFormData] = useState({
     full_name: '',
+    birth_date: '',
     phone_number: '',
     city: '',
     car_number: '',
@@ -23,12 +25,13 @@ const PersonalDataForm = () => {
   const [message, setMessage] = useState('');
   const [isEditing, setIsEditing] = useState(false);
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   useEffect(() => {
     if (user) {
       setFormData({
         full_name: user.full_name || '',
+        birth_date: user.birth_date || '',
         phone_number: user.phone_number || '',
         city: user.city || '',
         car_number: user.car_number || '',
@@ -52,6 +55,53 @@ const PersonalDataForm = () => {
     setIsLoading(true);
     setMessage('');
 
+    const payload = { ...formData };
+
+    if (typeof payload.birth_date === 'string') {
+      const trimmedDate = payload.birth_date.trim();
+      if (!trimmedDate) {
+        delete payload.birth_date;
+      } else {
+        const dateRegex = /^\d{2}\.\d{2}\.\d{4}$/;
+        if (!dateRegex.test(trimmedDate)) {
+          setMessage('Введите дату рождения в формате ДД.ММ.ГГГГ');
+          setIsLoading(false);
+          return;
+        }
+        const [day, month, year] = trimmedDate.split('.').map(Number);
+        const candidateDate = new Date(year, month - 1, day);
+        const isValidDate =
+          candidateDate.getFullYear() === year &&
+          candidateDate.getMonth() === month - 1 &&
+          candidateDate.getDate() === day;
+
+        if (!isValidDate) {
+          setMessage('Указанная дата рождения не существует');
+          setIsLoading(false);
+          return;
+        }
+
+        payload.birth_date = trimmedDate;
+      }
+    }
+
+    Object.keys(payload).forEach((key) => {
+      if (typeof payload[key] === 'string') {
+        const trimmed = payload[key].trim();
+        if (trimmed) {
+          payload[key] = trimmed;
+        } else {
+          delete payload[key];
+        }
+      }
+    });
+
+    if (Object.keys(payload).length === 0) {
+      setMessage('Заполните хотя бы одно поле для сохранения изменений');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch(`${backendUrl}/api/user/profile`, {
         method: 'PATCH',
@@ -59,7 +109,7 @@ const PersonalDataForm = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
       if (response.ok) {
@@ -109,6 +159,14 @@ const PersonalDataForm = () => {
                 <div>
                   <p className="text-sm text-muted-foreground">Полное имя</p>
                   <p className="font-medium">{user?.full_name || 'Не указано'}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <Calendar className="w-4 h-4 text-indigo-600" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Дата рождения</p>
+                  <p className="font-medium">{user?.birth_date || 'Не указана'}</p>
                 </div>
               </div>
 
@@ -190,6 +248,21 @@ const PersonalDataForm = () => {
                 onChange={handleChange}
                 placeholder="Ваше полное имя"
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="birth_date">Дата рождения</Label>
+              <Input
+                id="birth_date"
+                name="birth_date"
+                type="text"
+                value={formData.birth_date}
+                onChange={handleChange}
+                placeholder="ДД.ММ.ГГГГ"
+              />
+              <p className="text-xs text-muted-foreground">
+                Используется во всех расчётах платформы
+              </p>
             </div>
 
             <div className="space-y-2">

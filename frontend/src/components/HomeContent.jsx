@@ -197,7 +197,7 @@ const HomeContent = () => {
         {/* Быстрые действия - улучшенные для мобильных */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <Card className="p-3 sm:p-4 text-center hover:shadow-md transition-all cursor-pointer active:scale-95"
-                onClick={() => handleSectionChange('numerology')}>
+                  onClick={() => handleSectionChange('numerology-design')}>
             <Calculator className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600 mx-auto mb-2" />
             <h3 className="font-medium text-sm sm:text-base">Нумерология</h3>
             <p className="text-xs text-muted-foreground hidden sm:block">Расчеты чисел</p>

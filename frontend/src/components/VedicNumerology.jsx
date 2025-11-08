@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Loader, Sparkles, Star, Crown, Calculator, Gem, Zap, Grid3X3 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const VedicNumerology = () => {
   const { user } = useAuth();
@@ -18,7 +19,7 @@ const VedicNumerology = () => {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('numbers');
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   const calculateVedicNumbers = async () => {
     setLoading(true);

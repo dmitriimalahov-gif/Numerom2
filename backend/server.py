@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -25,7 +25,8 @@ from models import (
     VideoLesson, AdminUser, QuizResult,
     VedicTimeRequest, PDFReportRequest, HTMLReportRequest,
     UserProfileUpdate, GroupCompatibilityRequest, GroupCompatibilityPerson,
-    PersonalConsultation, ConsultationPurchase, CreditTransaction, CREDIT_COSTS
+    PersonalConsultation, ConsultationPurchase, CreditTransaction, CREDIT_COSTS,
+    PlanetaryAdviceResponse
 )
 from lesson_system import lesson_system
 from auth import (
@@ -466,6 +467,38 @@ async def personal_numbers(birth_date: str = None, current_user: dict = Depends(
     calc = NumerologyCalculation(user_id=user_id, birth_date=birth_date, calculation_type='personal_numbers', results=results)
     await db.numerology_calculations.insert_one(calc.dict())
     return results
+
+@api_router.get('/numerology/planetary-advice/{planet_number}', response_model=PlanetaryAdviceResponse)
+async def planetary_advice_endpoint(
+    planet_number: int,
+    score: int = Query(..., ge=0, le=100),
+    current_user: dict = Depends(get_current_user)
+):
+    """Получение рекомендаций по усилению энергии планеты из базы данных"""
+    if planet_number < 1 or planet_number > 9:
+        raise HTTPException(status_code=422, detail='Номер планеты должен быть в диапазоне от 1 до 9')
+
+    advice_doc = await db.planetary_advice.find_one({
+        'planet_number': planet_number,
+        'min_percent': {'$lte': score},
+        'max_percent': {'$gte': score}
+    })
+
+    if not advice_doc:
+        advice_doc = await db.planetary_advice.find_one(
+            {'planet_number': planet_number},
+            sort=[('min_percent', 1)]
+        )
+
+    advice_text = advice_doc.get('advice') if advice_doc else None
+
+    return PlanetaryAdviceResponse(
+        planet_number=planet_number,
+        score=score,
+        advice=advice_text or 'Совет пока не сформирован. Обратитесь к мастеру или попробуйте позже.',
+        min_percent=advice_doc.get('min_percent') if advice_doc else None,
+        max_percent=advice_doc.get('max_percent') if advice_doc else None
+    )
 
 @api_router.post('/numerology/pythagorean-square')
 async def pythagorean_square(birth_date: str = None, current_user: dict = Depends(get_current_user)):

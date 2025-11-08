@@ -37,6 +37,7 @@ import { useAuth } from './AuthContext';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
 import UnifiedLessonEditor from './UnifiedLessonEditor';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const AdminPanel = () => {
   const { user } = useAuth();
@@ -130,7 +131,7 @@ const AdminPanel = () => {
     user.full_name?.toLowerCase().includes(consultationUserSearchTerm.toLowerCase())
   );
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   // Загрузка пользователей
   const fetchUsers = async () => {

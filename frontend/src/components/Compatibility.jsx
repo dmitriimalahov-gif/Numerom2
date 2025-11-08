@@ -11,6 +11,7 @@ import { useAuth } from './AuthContext';
 import { validateBirthDate } from '../lib/utils';
 import axios from 'axios';
 import GroupCompatibilityChart from './GroupCompatibilityChart';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const Compatibility = () => {
   const { user } = useAuth();
@@ -40,7 +41,7 @@ const Compatibility = () => {
   const [groupError, setGroupError] = useState('');
   const [showFormula, setShowFormula] = useState(null);
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   const handleChange = (e) => {
     setFormData({

@@ -79,6 +79,11 @@ def get_sunrise_sunset(city: str, date: datetime) -> Tuple[datetime, datetime]:
         s = sun(city_info.observer, date=date.date())
         sunrise = s['sunrise']
         sunset = s['sunset']
+
+        # Переводим в локальный часовой пояс города (astral возвращает UTC)
+        timezone = pytz.timezone(timezone_str)
+        sunrise = sunrise.astimezone(timezone)
+        sunset = sunset.astimezone(timezone)
         
         return sunrise, sunset
     except:
@@ -189,9 +194,8 @@ def calculate_planetary_hours(sunrise: datetime, sunset: datetime, weekday: int)
     day_duration = sunset - sunrise
     hour_duration = day_duration / 12  # День делится на 12 планетарных часов
     
-    # Планеты в порядке по дням недели
-    # Первый час дня управляется планетой дня
-    planets_order = ['Sun', 'Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn']
+    # Планеты в порядке по дням недели (понедельник -> Луна, вторник -> Марс, ..., воскресенье -> Солнце)
+    planets_order = ['Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn', 'Sun']
     
     # Определяем планету дня
     ruling_planet = planets_order[weekday]
@@ -300,7 +304,7 @@ def get_vedic_day_schedule(city: str, date: datetime, birth_date: str = None) ->
             "date": date.strftime("%Y-%m-%d"),
             "weekday": {
                 "name": sanskrit_days[weekday],
-                "ruling_planet": get_planet_sanskrit(['Sun', 'Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn'][weekday])
+                "ruling_planet": get_planet_sanskrit(['Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn', 'Sun'][weekday])
             },
             "sun_times": {
                 "sunrise": sunrise.strftime("%H:%M"),
@@ -355,7 +359,7 @@ def get_daily_recommendations(weekday: int, planetary_hours: List[Dict], birth_d
     """
     Генерирует персональные рекомендации на день
     """
-    day_planets = ['Sun', 'Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn']
+    day_planets = ['Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn', 'Sun']
     ruling_planet = day_planets[weekday]
     
     # Общие рекомендации по дню недели

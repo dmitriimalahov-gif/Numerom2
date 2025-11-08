@@ -33,11 +33,57 @@ export const isChandraPlanet = (planetKey) => {
 };
 
 export const withAlpha = (hex, alpha = 0.12) => {
-  if (!hex || !hex.startsWith('#') || (hex.length !== 7)) return `rgba(0,0,0,${alpha})`;
-  const r = parseInt(hex.slice(1,3), 16);
-  const g = parseInt(hex.slice(3,5), 16);
-  const b = parseInt(hex.slice(5,7), 16);
+  const norm = normaliseHex(hex);
+  if (!norm) return `rgba(0,0,0,${alpha})`;
+  const r = parseInt(norm.slice(1,3), 16);
+  const g = parseInt(norm.slice(3,5), 16);
+  const b = parseInt(norm.slice(5,7), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const clampChannel = (value) => Math.min(255, Math.max(0, value));
+const channelToHex = (value) => clampChannel(value).toString(16).padStart(2, '0');
+
+const normaliseHex = (hex) => {
+  if (!hex || typeof hex !== 'string') return null;
+  const trimmed = hex.trim();
+  if (!trimmed.startsWith('#')) return null;
+  if (trimmed.length === 4) {
+    const [h, r, g, b] = trimmed;
+    return `#${r}${r}${g}${g}${b}${b}`.toUpperCase();
+  }
+  if (trimmed.length === 7) {
+    return trimmed.toUpperCase();
+  }
+  return null;
+};
+
+export const tintHex = (hex, amount = 0.3) => {
+  const norm = normaliseHex(hex);
+  if (!norm) return hex;
+  const r = parseInt(norm.slice(1,3), 16);
+  const g = parseInt(norm.slice(3,5), 16);
+  const b = parseInt(norm.slice(5,7), 16);
+
+  const nr = Math.round(r + (255 - r) * amount);
+  const ng = Math.round(g + (255 - g) * amount);
+  const nb = Math.round(b + (255 - b) * amount);
+
+  return `#${channelToHex(nr)}${channelToHex(ng)}${channelToHex(nb)}`;
+};
+
+export const shadeHex = (hex, amount = 0.2) => {
+  const norm = normaliseHex(hex);
+  if (!norm) return hex;
+  const r = parseInt(norm.slice(1,3), 16);
+  const g = parseInt(norm.slice(3,5), 16);
+  const b = parseInt(norm.slice(5,7), 16);
+
+  const nr = Math.round(r * (1 - amount));
+  const ng = Math.round(g * (1 - amount));
+  const nb = Math.round(b * (1 - amount));
+
+  return `#${channelToHex(nr)}${channelToHex(ng)}${channelToHex(nb)}`;
 };
 
 // Универсальная функция, красит планету по имени (RU/EN/Sanskrit)

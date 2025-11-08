@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import { getBackendUrl, getApiBaseUrl } from '../utils/backendUrl';
 
 const AuthContext = createContext();
 
@@ -32,7 +33,14 @@ export const AuthProvider = ({ children }) => {
     });
   }, [user, token, loading, isInitialized]);
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+  const backendUrl = getBackendUrl();
+  const apiBaseUrl = getApiBaseUrl();
+
+  // Гарантируем единый baseURL для axios
+  useEffect(() => {
+    axios.defaults.baseURL = apiBaseUrl;
+    console.log('[AuthContext] axios.defaults.baseURL установлено в:', axios.defaults.baseURL);
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     let mounted = true;
@@ -50,7 +58,7 @@ export const AuthProvider = ({ children }) => {
           // НЕ пытаемся загрузить профиль автоматически - это может сбрасывать пользователя
           // Вместо этого делаем простую проверку токена
           try {
-            const response = await axios.get(`${backendUrl}/api/user/profile`, {
+            const response = await axios.get('/user/profile', {
               timeout: 5000,
               headers: {
                 'Authorization': `Bearer ${token}`
@@ -85,7 +93,7 @@ export const AuthProvider = ({ children }) => {
     return () => {
       mounted = false;
     };
-  }, [token, backendUrl]);
+  }, [token, apiBaseUrl]);
 
   const fetchUserProfileWithRetry = async () => {
     if (profileFetchAttempts.current >= maxProfileFetchAttempts) {
@@ -105,7 +113,7 @@ export const AuthProvider = ({ children }) => {
         return;
       }
 
-      const response = await axios.get(`${backendUrl}/api/user/profile`, {
+      const response = await axios.get('/user/profile', {
         timeout: 10000,
         headers: {
           'Authorization': `Bearer ${currentToken}` // Явно указываем токен
@@ -149,7 +157,7 @@ export const AuthProvider = ({ children }) => {
     
     try {
       console.log('Отправляем запрос на сервер...');
-      const response = await axios.post(`${backendUrl}/api/auth/login`, {
+      const response = await axios.post('/auth/login', {
         email,
         password
       }, {
@@ -213,6 +221,11 @@ export const AuthProvider = ({ children }) => {
       return { success: true };
     } catch (error) {
       console.error('ОШИБКА ВХОДА:', error);
+      console.error('Текущий axios.defaults.baseURL:', axios.defaults.baseURL);
+      if (error.config) {
+        console.error('config.url:', error.config.url);
+        console.error('config.baseURL:', error.config.baseURL);
+      }
       return {
         success: false,
         error: error.message || 'Ошибка входа в систему'
@@ -222,7 +235,7 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (userData) => {
     try {
-      const response = await axios.post(`${backendUrl}/api/auth/register`, userData, {
+      const response = await axios.post('/auth/register', userData, {
         timeout: 15000
       });
       

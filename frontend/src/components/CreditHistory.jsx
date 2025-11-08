@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const CreditHistory = ({ onNavigate }) => {
   const { user } = useAuth();
@@ -34,7 +35,7 @@ const CreditHistory = ({ onNavigate }) => {
   const [totalTransactions, setTotalTransactions] = useState(0);
   const [hasMore, setHasMore] = useState(true);
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
   const limit = 20;
 
   const categoryIcons = {

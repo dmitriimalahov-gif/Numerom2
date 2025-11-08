@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Loader, BarChart3 } from 'lucide-react';
-import { getPlanetColor } from './constants/colors';
+import { PLANET_COLORS, PLANET_SHORT_NAMES } from '../constants/colors';
+import { useAuth } from '../AuthContext';
+import clsx from 'clsx';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const PlanetaryEnergyChart = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   const loadData = async () => {
     setLoading(true); setError('');
@@ -39,7 +42,7 @@ const PlanetaryEnergyChart = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {entries.map(([planet, value]) => (
               <div key={planet} className="p-3 rounded-lg bg-white shadow flex items-center justify-between">
-                <div className="text-sm font-medium" style={{ color: getPlanetColor(planet) }}>{planet}</div>
+                <div className="text-sm font-medium" style={{ color: PLANET_COLORS[PLANET_SHORT_NAMES[planet]] }}>{planet}</div>
                 <div className="text-xl font-bold">{value}</div>
               </div>
             ))}

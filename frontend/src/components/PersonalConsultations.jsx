@@ -22,6 +22,7 @@ import { useAuth } from './AuthContext';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
 import axios from 'axios';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const PersonalConsultations = () => {
   const [consultations, setConsultations] = useState([]);
@@ -32,7 +33,7 @@ const PersonalConsultations = () => {
   const [purchasing, setPurchasing] = useState(null);
   const { user } = useAuth();
   
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || import.meta.env.REACT_APP_BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   useEffect(() => {
     fetchConsultations();

@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { useAuth } from './AuthContext';
 import { FileText, Download, AlertCircle } from 'lucide-react';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const PDFExport = () => {
   const [loading, setLoading] = useState(false);
@@ -16,7 +17,7 @@ const PDFExport = () => {
     setError('');
 
     try {
-      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/reports/pdf/numerology`, {
+      const response = await fetch(`${getBackendUrl()}/api/reports/pdf/numerology`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -9,6 +9,7 @@ passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.3.0
 PyJWT==2.8.0
 timezonefinder>=6.4.0
+astral==3.2
 matplotlib==3.8.2
 Pillow==10.0.1
 requests==2.31.0

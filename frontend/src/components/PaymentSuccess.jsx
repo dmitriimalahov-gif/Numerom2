@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import { CheckCircle, Loader, Crown, ArrowRight } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const PaymentSuccess = () => {
   const [searchParams] = useSearchParams();
@@ -14,7 +15,7 @@ const PaymentSuccess = () => {
   const [paymentDetails, setPaymentDetails] = useState(null);
 
   const sessionId = searchParams.get('session_id');
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+  const backendUrl = getBackendUrl();
 
   useEffect(() => {
     if (sessionId) {

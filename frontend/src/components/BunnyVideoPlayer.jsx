@@ -3,6 +3,7 @@ import { Alert, AlertDescription } from './ui/alert';
 import { Card, CardContent } from './ui/card';
 import { Loader, Play, AlertCircle, RefreshCw } from 'lucide-react';
 import { Button } from './ui/button';
+import { getBackendUrl } from '../utils/backendUrl';
 
 /**
  * BUNNY VIDEO PLAYER
@@ -35,7 +36,7 @@ const BunnyVideoPlayer = ({
   const [thumbnail, setThumbnail] = useState(null);
   const [retryCount, setRetryCount] = useState(0);
 
-  const apiUrl = backendUrl || process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+  const apiUrl = backendUrl || getBackendUrl();
 
   useEffect(() => {
     loadVideoUrl();
