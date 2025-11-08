@@ -735,34 +735,44 @@ const VedicTimeCalculations = () => {
                   return (
                     <div
                       key={index}
-                      className={`rounded-2xl border p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}
+                      className={`rounded-2xl border p-5 transition-all duration-300 hover:-translate-y-1 ${
+                        isActive ? 'shadow-2xl scale-105 ring-2' : 'shadow-sm hover:shadow-lg'
+                      }`}
                       style={{
-                        borderColor: isActive ? '#facc15' : planetColor + '40',
-                        backgroundColor: isActive ? '#facc1520' : planetColor + '10'
+                        borderColor: isActive ? planetColor : planetColor + '40',
+                        backgroundColor: isActive ? planetColor + '30' : planetColor + '10',
+                        boxShadow: isActive ? `0 20px 60px ${planetColor}60, 0 0 40px ${planetColor}40` : undefined,
+                        ringColor: isActive ? planetColor : undefined
                       }}
                     >
                       <div className="flex items-center justify-between">
                         <span
-                          className="text-sm font-semibold"
-                          style={{ color: planetColor }}
+                          className={`text-sm font-semibold ${isActive ? 'text-lg' : ''}`}
+                          style={{ color: isActive ? planetColor : planetColor }}
                         >
                           {hour.planet_sanskrit || hour.planet}
                         </span>
                         <span 
-                          className="rounded-full px-3 py-1 text-xs font-medium"
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${isActive ? 'animate-pulse' : ''}`}
                           style={{
-                            backgroundColor: planetColor + '30',
-                            color: planetColor
+                            backgroundColor: isActive ? planetColor : planetColor + '30',
+                            color: isActive ? '#ffffff' : planetColor
                           }}
                         >
                           Час {hour.hour || index + 1}
                         </span>
                       </div>
-                      <div className={`mt-3 text-sm ${themeConfig.mutedText}`}>
+                      <div className={`mt-3 text-sm ${isActive ? 'font-semibold text-white' : themeConfig.mutedText}`}>
                         {hour.start_time?.slice(11, 16) || hour.start} —{' '}
                         {hour.end_time?.slice(11, 16) || hour.end}
                       </div>
-                      {hour.is_favorable && (
+                      {isActive && (
+                        <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold text-white animate-pulse">
+                          <Clock3 className="h-3.5 w-3.5" />
+                          Сейчас активно
+                        </div>
+                      )}
+                      {hour.is_favorable && !isActive && (
                         <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-400/20 px-3 py-1 text-xs font-semibold text-emerald-600">
                           <CheckCircle2 className="h-3.5 w-3.5" />
                           Благоприятно
@@ -796,34 +806,44 @@ const VedicTimeCalculations = () => {
                   return (
                     <div
                       key={index}
-                      className={`rounded-2xl border p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}
+                      className={`rounded-2xl border p-5 transition-all duration-300 hover:-translate-y-1 ${
+                        isActive ? 'shadow-2xl scale-105 ring-2' : 'shadow-sm hover:shadow-lg'
+                      }`}
                       style={{
-                        borderColor: isActive ? '#c084fc' : planetColor + '40',
-                        backgroundColor: isActive ? '#c084fc20' : planetColor + '10'
+                        borderColor: isActive ? planetColor : planetColor + '40',
+                        backgroundColor: isActive ? planetColor + '30' : planetColor + '10',
+                        boxShadow: isActive ? `0 20px 60px ${planetColor}60, 0 0 40px ${planetColor}40` : undefined,
+                        ringColor: isActive ? planetColor : undefined
                       }}
                     >
                       <div className="flex items-center justify-between">
                         <span
-                          className="text-sm font-semibold"
-                          style={{ color: planetColor }}
+                          className={`text-sm font-semibold ${isActive ? 'text-lg' : ''}`}
+                          style={{ color: isActive ? planetColor : planetColor }}
                         >
                           {hour.planet_sanskrit || hour.planet}
                         </span>
                         <span 
-                          className="rounded-full px-3 py-1 text-xs font-medium"
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${isActive ? 'animate-pulse' : ''}`}
                           style={{
-                            backgroundColor: planetColor + '30',
-                            color: planetColor
+                            backgroundColor: isActive ? planetColor : planetColor + '30',
+                            color: isActive ? '#ffffff' : planetColor
                           }}
                         >
                           Час {hour.hour || (13 + index)}
                         </span>
                       </div>
-                      <div className={`mt-3 text-sm ${themeConfig.mutedText}`}>
+                      <div className={`mt-3 text-sm ${isActive ? 'font-semibold text-white' : themeConfig.mutedText}`}>
                         {hour.start_time?.slice(11, 16) || hour.start} —{' '}
                         {hour.end_time?.slice(11, 16) || hour.end}
                       </div>
-                      {hour.is_favorable && (
+                      {isActive && (
+                        <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold text-white animate-pulse">
+                          <Clock3 className="h-3.5 w-3.5" />
+                          Сейчас активно
+                        </div>
+                      )}
+                      {hour.is_favorable && !isActive && (
                         <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-400/20 px-3 py-1 text-xs font-semibold text-emerald-600">
                           <CheckCircle2 className="h-3.5 w-3.5" />
                           Благоприятно
