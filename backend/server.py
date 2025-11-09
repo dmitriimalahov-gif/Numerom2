@@ -536,7 +536,7 @@ async def pythagorean_square(birth_date: str = None, current_user: dict = Depend
     destiny_number = reduce_to_single_digit_always(d + m + y)
     helping_mind_number = reduce_to_single_digit_always(m + y)
     wisdom_number = reduce_to_single_digit_always(d + m)
-    ruling_number = reduce_for_ruling_number(d + m)  # Только здесь сохраняем 11 и 22
+    ruling_number = reduce_for_ruling_number(d + m + y)  # Сумма всех чисел даты рождения, сохраняем 11 и 22
     
     # Добавляем личные циклы (текущие) - все сводим к однозначному
     from datetime import datetime
