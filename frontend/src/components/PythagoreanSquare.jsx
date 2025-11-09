@@ -1,9 +1,9 @@
-// Updated: 2025-11-09 - Added Personal Cycles
+// Updated: 2025-11-09 10:24 - Added Personal Cycles (Year, Month, Day, Hour, Challenge)
 import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Alert, AlertDescription } from './ui/alert';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Loader, Grid3X3, Info } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
@@ -16,6 +16,7 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
   const [planetaryEnergies, setPlanetaryEnergies] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const BUILD_VERSION = '2025-11-09-10-30'; // Force rebuild
 
   // Detail modal state
   const [detailOpen, setDetailOpen] = useState(false);
@@ -1107,6 +1108,9 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
         <DialogContent className="max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="text-xl">{detailTitle}</DialogTitle>
+            <DialogDescription className="sr-only">
+              Подробная информация о нумерологическом значении
+            </DialogDescription>
           </DialogHeader>
           <div className="text-base whitespace-pre-line leading-relaxed mt-2 font-medium text-gray-900 overflow-y-auto flex-1">{detailText}</div>
         </DialogContent>
