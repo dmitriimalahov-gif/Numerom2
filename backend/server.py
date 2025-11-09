@@ -1302,15 +1302,76 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
         color_class = "orange"
         influence_dynamic = "Испытание"
     
-    # Генерируем описание
+    # Генерируем детальное описание с учётом всех факторов
     overall_description = f"Сегодня {schedule.get('weekday', {}).get('name_ru', 'день')}, управляемый планетой {ruling_planet}. "
     
-    if compatibility_score >= 70:
-        overall_description += f"Энергии дня прекрасно резонируют с вашими личными числами. Это благоприятное время для важных дел и начинаний."
-    elif compatibility_score >= 50:
-        overall_description += f"Энергии дня находятся в балансе с вашими личными числами. Действуйте обдуманно и используйте свои сильные стороны."
+    # Анализ взаимодействия планет
+    user_main_planet = number_to_planet.get(soul_number)
+    planet_relation = "нейтральна"
+    if user_main_planet and ruling_planet in planet_relationships.get(user_main_planet, {}).get('friends', []):
+        planet_relation = "дружественна"
+    elif user_main_planet and ruling_planet in planet_relationships.get(user_main_planet, {}).get('enemies', []):
+        planet_relation = "враждебна"
+    
+    overall_description += f"Планета дня {planet_relation} к вашей планете души {user_main_planet}. "
+    
+    # Добавляем информацию о силе планеты в карте
+    if planet_count >= 4:
+        overall_description += f"У вас очень сильная энергия {ruling_planet} ({planet_count} цифр), что даёт вам преимущество. "
+    elif planet_count >= 2:
+        overall_description += f"У вас сбалансированная энергия {ruling_planet} ({planet_count} цифры). "
+    elif planet_count == 1:
+        overall_description += f"Энергия {ruling_planet} слабая в вашей карте ({planet_count} цифра), будьте осторожны. "
     else:
-        overall_description += f"Энергии дня требуют от вас адаптации. Это время для развития новых качеств и преодоления ограничений."
+        overall_description += f"Энергия {ruling_planet} отсутствует в вашей карте - это ваша зона роста. "
+    
+    # Добавляем рекомендации по времени
+    if compatibility_score >= 70:
+        overall_description += f"Энергии дня прекрасно резонируют с вашими личными числами (баллы: {compatibility_score}/100). Это благоприятное время для важных дел, начинаний, подписания договоров и принятия решений. "
+        
+        # Находим лучшие часы
+        best_hours = []
+        if user_main_planet:
+            best_hours.append(f"часы {user_main_planet}")
+        if soul_number != mind_number:
+            mind_planet = number_to_planet.get(mind_number)
+            if mind_planet:
+                best_hours.append(f"часы {mind_planet}")
+        
+        if best_hours:
+            overall_description += f"Особенно благоприятны: {', '.join(best_hours)}. "
+            
+    elif compatibility_score >= 50:
+        overall_description += f"Энергии дня находятся в балансе с вашими личными числами (баллы: {compatibility_score}/100). Действуйте обдуманно и используйте свои сильные стороны. "
+        
+        # Рекомендации по времени
+        if user_main_planet:
+            overall_description += f"Планируйте важные дела на часы {user_main_planet} для максимальной эффективности. "
+            
+    else:
+        overall_description += f"Энергии дня создают напряжение (баллы: {compatibility_score}/100). Это время для осторожности, завершения старых дел и развития новых качеств. "
+        
+        # Предупреждения
+        if planet_count == 0:
+            overall_description += f"ИЗБЕГАЙТЕ важных начинаний - у вас нет энергии {ruling_planet}. "
+        
+        if planet_relation == "враждебна":
+            overall_description += f"Планета дня враждебна вашей душе - минимизируйте риски. "
+        
+        # Рекомендации по безопасному времени
+        safe_hours = []
+        for p, count in planet_counts.items():
+            if count > 0 and p in planet_relationships.get(ruling_planet, {}).get('friends', []):
+                safe_hours.append(p)
+        
+        if safe_hours:
+            overall_description += f"Безопасные часы для дел: {', '.join(safe_hours[:3])}. "
+        elif user_main_planet:
+            overall_description += f"Используйте часы {user_main_planet} для защиты. "
+    
+    # Добавляем информацию о Rahu Kaal
+    if rahu_kaal:
+        overall_description += f"⚠️ ВНИМАНИЕ: Rahu Kaal с {rahu_kaal.get('start', '')} до {rahu_kaal.get('end', '')} - избегайте любых начинаний в это время!"
     
     # Если нет позитивных аспектов, добавляем общие
     if not positive_aspects:
@@ -1320,6 +1381,87 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     # Если нет вызовов, добавляем общие
     if not challenges:
         challenges.append("Будьте внимательны к деталям и не спешите с решениями.")
+    
+    # Создаём конкретный план действий на день
+    action_plan = {
+        'morning': [],
+        'afternoon': [],
+        'evening': [],
+        'avoid': [],
+        'best_hours': [],
+        'protective_practices': []
+    }
+    
+    # Утро
+    if compatibility_score >= 70:
+        action_plan['morning'].append("Начните день с планирования важных дел")
+        action_plan['morning'].append(f"Медитация на энергию {ruling_planet} для усиления резонанса")
+        action_plan['morning'].append("Идеальное время для начала новых проектов")
+    elif compatibility_score >= 50:
+        action_plan['morning'].append("Начните с рутинных дел для разогрева")
+        action_plan['morning'].append("Оцените свои ресурсы перед важными решениями")
+    else:
+        action_plan['morning'].append("Начните день с защитных практик")
+        action_plan['morning'].append(f"Медитация на {user_main_planet} для защиты от негативных влияний")
+        action_plan['morning'].append("Избегайте важных решений до обеда")
+    
+    # День
+    if compatibility_score >= 70:
+        action_plan['afternoon'].append("Проводите важные встречи и переговоры")
+        action_plan['afternoon'].append("Подписывайте договоры и соглашения")
+        action_plan['afternoon'].append("Принимайте стратегические решения")
+    elif compatibility_score >= 50:
+        action_plan['afternoon'].append("Работайте над текущими проектами")
+        action_plan['afternoon'].append("Консультируйтесь перед важными решениями")
+    else:
+        action_plan['afternoon'].append("Занимайтесь рутинными делами")
+        action_plan['afternoon'].append("Избегайте конфликтов и споров")
+        action_plan['afternoon'].append("Отложите важные решения на другой день")
+    
+    # Вечер
+    if compatibility_score >= 70:
+        action_plan['evening'].append("Подведите итоги успешного дня")
+        action_plan['evening'].append("Планируйте следующие шаги")
+        action_plan['evening'].append(f"Благодарственная медитация {ruling_planet}")
+    elif compatibility_score >= 50:
+        action_plan['evening'].append("Проанализируйте результаты дня")
+        action_plan['evening'].append("Завершите начатые дела")
+    else:
+        action_plan['evening'].append("Отдохните и восстановите силы")
+        action_plan['evening'].append("Защитные практики перед сном")
+        action_plan['evening'].append("Не принимайте решений в усталом состоянии")
+    
+    # Что избегать
+    if planet_count == 0:
+        action_plan['avoid'].append(f"Дела, требующие качеств {ruling_planet}")
+    if planet_relation == "враждебна":
+        action_plan['avoid'].append("Конфликты и противостояния")
+        action_plan['avoid'].append("Рискованные начинания")
+    if enemy_count > friendly_count:
+        action_plan['avoid'].append("Важные финансовые решения")
+        action_plan['avoid'].append("Начало долгосрочных проектов")
+    if rahu_kaal:
+        action_plan['avoid'].append(f"Любые начинания с {rahu_kaal.get('start', '')} до {rahu_kaal.get('end', '')}")
+    
+    # Лучшие часы
+    if user_main_planet:
+        action_plan['best_hours'].append(f"Часы {user_main_planet} - ваша максимальная сила")
+    if soul_number != mind_number:
+        mind_planet = number_to_planet.get(mind_number)
+        if mind_planet:
+            action_plan['best_hours'].append(f"Часы {mind_planet} - для интеллектуальной работы")
+    if destiny_number and destiny_number != soul_number:
+        destiny_planet = number_to_planet.get(destiny_number)
+        if destiny_planet:
+            action_plan['best_hours'].append(f"Часы {destiny_planet} - для движения к целям")
+    
+    # Защитные практики
+    if compatibility_score < 50:
+        action_plan['protective_practices'].append(f"Мантра {user_main_planet} - 108 раз утром")
+        action_plan['protective_practices'].append(f"Носите камни/цвета {user_main_planet}")
+        action_plan['protective_practices'].append("Избегайте негативных людей и ситуаций")
+        if planet_count == 0:
+            action_plan['protective_practices'].append(f"Изучайте качества {ruling_planet} для будущего развития")
     
     return {
         'overall_score': compatibility_score,
@@ -1336,7 +1478,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
         'global_harmony': {
             'friendly_count': friendly_count,
             'enemy_count': enemy_count
-        }
+        },
+        'action_plan': action_plan
     }
 
 @api_router.get('/vedic-time/planetary-route')

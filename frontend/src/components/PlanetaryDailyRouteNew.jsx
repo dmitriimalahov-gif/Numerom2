@@ -437,6 +437,140 @@ const PlanetaryDailyRouteNew = () => {
           </div>
         </div>
 
+        {/* План действий на день */}
+        {dayAnalysis.action_plan && (
+          <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+            <div className="flex items-center gap-3 mb-6">
+              <Activity className="h-6 w-6 text-purple-500 drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]" />
+              <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                План действий на день
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {/* Утро */}
+              {dayAnalysis.action_plan.morning && dayAnalysis.action_plan.morning.length > 0 && (
+                <div className={`p-5 rounded-2xl border ${themeConfig.surface}`} style={{
+                  borderColor: '#fbbf2440',
+                  backgroundColor: themeConfig.isDark ? '#fbbf2410' : '#fbbf2408'
+                }}>
+                  <h3 className="font-bold text-lg mb-3 flex items-center gap-2" style={{ color: '#fbbf24' }}>
+                    🌅 Утро
+                  </h3>
+                  <ul className="space-y-2">
+                    {dayAnalysis.action_plan.morning.map((item, idx) => (
+                      <li key={idx} className={`text-sm flex items-start gap-2 ${themeConfig.text}`}>
+                        <span className="text-yellow-500 mt-0.5">▸</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* День */}
+              {dayAnalysis.action_plan.afternoon && dayAnalysis.action_plan.afternoon.length > 0 && (
+                <div className={`p-5 rounded-2xl border ${themeConfig.surface}`} style={{
+                  borderColor: '#f9731640',
+                  backgroundColor: themeConfig.isDark ? '#f9731610' : '#f9731608'
+                }}>
+                  <h3 className="font-bold text-lg mb-3 flex items-center gap-2" style={{ color: '#f97316' }}>
+                    ☀️ День
+                  </h3>
+                  <ul className="space-y-2">
+                    {dayAnalysis.action_plan.afternoon.map((item, idx) => (
+                      <li key={idx} className={`text-sm flex items-start gap-2 ${themeConfig.text}`}>
+                        <span className="text-orange-500 mt-0.5">▸</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Вечер */}
+              {dayAnalysis.action_plan.evening && dayAnalysis.action_plan.evening.length > 0 && (
+                <div className={`p-5 rounded-2xl border ${themeConfig.surface}`} style={{
+                  borderColor: '#8b5cf640',
+                  backgroundColor: themeConfig.isDark ? '#8b5cf610' : '#8b5cf608'
+                }}>
+                  <h3 className="font-bold text-lg mb-3 flex items-center gap-2" style={{ color: '#8b5cf6' }}>
+                    🌙 Вечер
+                  </h3>
+                  <ul className="space-y-2">
+                    {dayAnalysis.action_plan.evening.map((item, idx) => (
+                      <li key={idx} className={`text-sm flex items-start gap-2 ${themeConfig.text}`}>
+                        <span className="text-purple-500 mt-0.5">▸</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Что избегать */}
+              {dayAnalysis.action_plan.avoid && dayAnalysis.action_plan.avoid.length > 0 && (
+                <div className={`p-5 rounded-2xl border ${themeConfig.surface}`} style={{
+                  borderColor: '#ef444440',
+                  backgroundColor: themeConfig.isDark ? '#ef444410' : '#ef444408'
+                }}>
+                  <h3 className="font-bold text-lg mb-3 flex items-center gap-2" style={{ color: '#ef4444' }}>
+                    ⛔ Избегайте
+                  </h3>
+                  <ul className="space-y-2">
+                    {dayAnalysis.action_plan.avoid.map((item, idx) => (
+                      <li key={idx} className={`text-sm flex items-start gap-2 ${themeConfig.text}`}>
+                        <span className="text-red-500 mt-0.5">✕</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Лучшие часы */}
+              {dayAnalysis.action_plan.best_hours && dayAnalysis.action_plan.best_hours.length > 0 && (
+                <div className={`p-5 rounded-2xl border ${themeConfig.surface}`} style={{
+                  borderColor: '#10b98140',
+                  backgroundColor: themeConfig.isDark ? '#10b98110' : '#10b98108'
+                }}>
+                  <h3 className="font-bold text-lg mb-3 flex items-center gap-2" style={{ color: '#10b981' }}>
+                    ⏰ Лучшие часы
+                  </h3>
+                  <ul className="space-y-2">
+                    {dayAnalysis.action_plan.best_hours.map((item, idx) => (
+                      <li key={idx} className={`text-sm flex items-start gap-2 ${themeConfig.text}`}>
+                        <span className="text-green-500 mt-0.5">⭐</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Защитные практики */}
+              {dayAnalysis.action_plan.protective_practices && dayAnalysis.action_plan.protective_practices.length > 0 && (
+                <div className={`p-5 rounded-2xl border ${themeConfig.surface}`} style={{
+                  borderColor: '#6366f140',
+                  backgroundColor: themeConfig.isDark ? '#6366f110' : '#6366f108'
+                }}>
+                  <h3 className="font-bold text-lg mb-3 flex items-center gap-2" style={{ color: '#6366f1' }}>
+                    🛡️ Защитные практики
+                  </h3>
+                  <ul className="space-y-2">
+                    {dayAnalysis.action_plan.protective_practices.map((item, idx) => (
+                      <li key={idx} className={`text-sm flex items-start gap-2 ${themeConfig.text}`}>
+                        <span className="text-indigo-500 mt-0.5">◆</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Планетарные часы дня */}
         <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
           <div className="flex items-center gap-3">
