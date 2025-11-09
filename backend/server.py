@@ -2547,6 +2547,80 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
         else:
             detailed_analysis['challenge_day'] = False
     
+    # 12. НОВОЕ: Анализ Раху Кала (неблагоприятное время)
+    rahu_kaal = schedule.get('rahu_kaal', {})
+    is_rahu_kaal_active = False
+    if rahu_kaal:
+        try:
+            now = datetime.now()
+            rahu_start = rahu_kaal.get('start', '')
+            rahu_end = rahu_kaal.get('end', '')
+            if rahu_start and rahu_end:
+                # Простая проверка: если текущее время в Раху Кала
+                current_time = now.strftime('%H:%M')
+                if rahu_start <= current_time <= rahu_end:
+                    is_rahu_kaal_active = True
+                    compatibility_score -= 15
+                    challenges.append(f"⚠️ РАХУ КАЛА ({rahu_start} - {rahu_end}): Неблагоприятное время для новых начинаний. Лучше заниматься рутинными делами или медитацией.")
+                    detailed_analysis['rahu_kaal_active'] = True
+                else:
+                    detailed_analysis['rahu_kaal_active'] = False
+                    positive_aspects.append(f"✅ Сейчас не Раху Кала. Раху Кала сегодня: {rahu_start} - {rahu_end}")
+        except Exception as e:
+            print(f"Ошибка анализа Раху Кала: {e}")
+            detailed_analysis['rahu_kaal_active'] = False
+    
+    # 13. НОВОЕ: Глобальный анализ дружественности ВСЕХ планет в карте
+    global_planet_harmony = 0
+    friendly_planets_count = 0
+    enemy_planets_count = 0
+    
+    for planet, count in planet_counts.items():
+        if count > 0 and planet != ruling_planet:
+            if planet in planet_friendships.get(ruling_planet, {}).get('friends', []):
+                global_planet_harmony += count * 3  # Каждая дружественная планета добавляет
+                friendly_planets_count += 1
+            elif planet in planet_friendships.get(ruling_planet, {}).get('enemies', []):
+                global_planet_harmony -= count * 2  # Каждая враждебная планета вычитает
+                enemy_planets_count += 1
+    
+    # Добавляем глобальную гармонию к оценке
+    compatibility_score += global_planet_harmony
+    
+    if friendly_planets_count > enemy_planets_count:
+        positive_aspects.append(f"🌈 Глобальная гармония: У вас {friendly_planets_count} дружественных планет к {ruling_planet} в карте - день будет гармоничным!")
+        detailed_analysis['global_harmony'] = 'positive'
+    elif enemy_planets_count > friendly_planets_count:
+        challenges.append(f"⚡ У вас {enemy_planets_count} враждебных планет к {ruling_planet} - день требует осознанности и работы над собой")
+        detailed_analysis['global_harmony'] = 'challenging'
+    else:
+        detailed_analysis['global_harmony'] = 'balanced'
+    
+    # 14. НОВОЕ: Динамика влияния (хорошо/плохо для человека)
+    positive_factors = len(positive_aspects)
+    negative_factors = len(challenges)
+    
+    if positive_factors > negative_factors * 2:
+        influence_dynamic = "Очень благоприятное"
+        influence_description = "Сегодня энергии работают НА ВАС. Максимально используйте этот день!"
+    elif positive_factors > negative_factors:
+        influence_dynamic = "Благоприятное"
+        influence_description = "Позитивные аспекты преобладают. День благоприятствует вашим начинаниям."
+    elif positive_factors == negative_factors:
+        influence_dynamic = "Сбалансированное"
+        influence_description = "Баланс позитива и вызовов. Будьте внимательны и действуйте осознанно."
+    elif negative_factors > positive_factors:
+        influence_dynamic = "Развивающее"
+        influence_description = "День с вызовами, но каждый вызов - это возможность роста."
+    else:
+        influence_dynamic = "Трансформирующее"
+        influence_description = "Сложный день для глубокой внутренней работы. Сосредоточьтесь на саморазвитии."
+    
+    detailed_analysis['influence_dynamic'] = influence_dynamic
+    detailed_analysis['influence_description'] = influence_description
+    detailed_analysis['positive_factors_count'] = positive_factors
+    detailed_analysis['negative_factors_count'] = negative_factors
+    
     # Объединяем все заметки
     compatibility_notes = positive_aspects + challenges
     
@@ -2620,7 +2694,29 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
             'month': {'number': personal_month, 'planet': personal_month_planet},
             'day': {'number': personal_day, 'planet': personal_day_planet},
             'challenge': {'number': challenge_number, 'planet': number_to_planet.get(challenge_number)}
-        }
+        },
+        # НОВОЕ: Раху Кала и глобальная гармония
+        'rahu_kaal_info': {
+            'active': is_rahu_kaal_active,
+            'start': rahu_kaal.get('start', ''),
+            'end': rahu_kaal.get('end', ''),
+            'duration': rahu_kaal.get('duration', '')
+        },
+        'global_harmony': {
+            'score': global_planet_harmony,
+            'friendly_count': friendly_planets_count,
+            'enemy_count': enemy_planets_count,
+            'status': detailed_analysis.get('global_harmony', 'balanced')
+        },
+        # НОВОЕ: Динамика влияния
+        'influence': {
+            'dynamic': influence_dynamic,
+            'description': influence_description,
+            'positive_count': positive_factors,
+            'negative_count': negative_factors
+        },
+        # Все планеты в карте пользователя
+        'all_planet_counts': planet_counts
     }
 
 def find_best_hours_for_activities(hourly_guide: list, user_data: dict) -> dict:
