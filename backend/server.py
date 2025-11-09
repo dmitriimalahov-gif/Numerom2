@@ -4104,6 +4104,8 @@ async def update_scoring_config(
     current_user: dict = Depends(get_current_user)
 ):
     """Обновить конфигурацию системы баллов"""
+    global _scoring_config_cache, _scoring_config_cache_time
+    
     admin_user = await check_admin_rights(current_user, require_super_admin=True)
     
     # Получаем текущую активную конфигурацию
@@ -4116,7 +4118,6 @@ async def update_scoring_config(
         await db.scoring_config.insert_one(new_config.dict())
         
         # Инвалидируем кэш
-        global _scoring_config_cache, _scoring_config_cache_time
         _scoring_config_cache = None
         _scoring_config_cache_time = None
         
@@ -4133,7 +4134,6 @@ async def update_scoring_config(
     )
     
     # Инвалидируем кэш
-    global _scoring_config_cache, _scoring_config_cache_time
     _scoring_config_cache = None
     _scoring_config_cache_time = None
     
@@ -4150,6 +4150,8 @@ async def update_scoring_config(
 @api_router.post('/admin/scoring-config/reset')
 async def reset_scoring_config(current_user: dict = Depends(get_current_user)):
     """Сбросить конфигурацию к дефолтным значениям"""
+    global _scoring_config_cache, _scoring_config_cache_time
+    
     admin_user = await check_admin_rights(current_user, require_super_admin=True)
     
     # Деактивируем все существующие конфигурации
@@ -4161,7 +4163,6 @@ async def reset_scoring_config(current_user: dict = Depends(get_current_user)):
     await db.scoring_config.insert_one(default_config.dict())
     
     # Инвалидируем кэш
-    global _scoring_config_cache, _scoring_config_cache_time
     _scoring_config_cache = None
     _scoring_config_cache_time = None
     
