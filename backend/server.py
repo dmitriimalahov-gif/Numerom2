@@ -2375,7 +2375,7 @@ async def calculate_hourly_planetary_energy(planetary_hours: list, user_data: di
         
         # Получаем детальные советы из базы данных
         advice_doc = None
-        if db:
+        if db is not None:
             try:
                 advice_doc = await db.planetary_advice.find_one({"planet": planet})
             except Exception as e:
