@@ -335,29 +335,53 @@ const VedicTimeCalculations = () => {
     if (selectedDate !== todayISO) return null;
 
     const now = new Date();
+    console.log('🕐 Текущее время:', now.toLocaleString('ru-RU'));
 
     // Проверяем дневные часы
-    const dayHourIndex = schedule.planetary_hours.findIndex((hour) => {
+    const dayHourIndex = schedule.planetary_hours.findIndex((hour, index) => {
       const start = parsePlanetaryTime(hour.start_time || hour.start);
       const end = parsePlanetaryTime(hour.end_time || hour.end);
+      
+      console.log(`☀️ Дневной час ${index + 1} (${hour.planet}):`, {
+        start: start?.toLocaleString('ru-RU'),
+        end: end?.toLocaleString('ru-RU'),
+        now: now.toLocaleString('ru-RU'),
+        isActive: start && end && now >= start && now < end
+      });
+      
       if (!start || !end) return false;
       return now >= start && now < end;
     });
 
-    if (dayHourIndex !== -1) return dayHourIndex;
+    if (dayHourIndex !== -1) {
+      console.log('✅ Активный дневной час:', dayHourIndex);
+      return dayHourIndex;
+    }
 
     // Проверяем ночные часы
     if (schedule.night_hours?.length) {
-      const nightHourIndex = schedule.night_hours.findIndex((hour) => {
+      const nightHourIndex = schedule.night_hours.findIndex((hour, index) => {
         const start = parsePlanetaryTime(hour.start_time || hour.start);
         const end = parsePlanetaryTime(hour.end_time || hour.end);
+        
+        console.log(`🌙 Ночной час ${index + 13} (${hour.planet}):`, {
+          start: start?.toLocaleString('ru-RU'),
+          end: end?.toLocaleString('ru-RU'),
+          now: now.toLocaleString('ru-RU'),
+          isActive: start && end && now >= start && now < end
+        });
+        
         if (!start || !end) return false;
         return now >= start && now < end;
       });
 
-      if (nightHourIndex !== -1) return 12 + nightHourIndex;
+      if (nightHourIndex !== -1) {
+        console.log('✅ Активный ночной час:', 12 + nightHourIndex);
+        return 12 + nightHourIndex;
+      }
     }
 
+    console.log('❌ Активный час не найден');
     return null;
   }, [parsePlanetaryTime, schedule?.planetary_hours, schedule?.night_hours, selectedDate]);
 
