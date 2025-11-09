@@ -5,7 +5,8 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
-import { Calendar, Clock, TrendingUp, AlertTriangle, CheckCircle, CheckCircle2, Sparkles, Activity, Target, Info, Loader2, Star, Zap, Shield } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { Calendar, Clock, TrendingUp, AlertTriangle, CheckCircle, CheckCircle2, Sparkles, Activity, Target, Info, Loader2, Star, Zap, Shield, CalendarDays, CalendarRange } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { getApiBaseUrl } from '../utils/backendUrl';
 import { useTheme } from '../hooks/useTheme';
@@ -21,6 +22,7 @@ const PlanetaryDailyRouteNew = () => {
   const [selectedHour, setSelectedHour] = useState(null);
   const [isHourDialogOpen, setIsHourDialogOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [activeTab, setActiveTab] = useState('day'); // day, week, month, quarter
   const { user } = useAuth();
   const apiBaseUrl = getApiBaseUrl();
 
@@ -213,10 +215,10 @@ const PlanetaryDailyRouteNew = () => {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className={`text-3xl font-bold ${themeConfig.text} drop-shadow-lg`}>
-              Планетарный маршрут на день
+              Планетарный маршрут
             </h1>
             <p className={`mt-2 ${themeConfig.mutedText}`}>
-              Подробный анализ дня с персональными рекомендациями
+              Детальный анализ с персональными рекомендациями
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -233,6 +235,57 @@ const PlanetaryDailyRouteNew = () => {
           </div>
         </div>
 
+        {/* Табы для разных периодов */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className={`grid w-full grid-cols-4 ${themeConfig.surface} backdrop-blur-xl p-1 rounded-2xl`}>
+            <TabsTrigger 
+              value="day" 
+              className={`rounded-xl transition-all duration-300 ${
+                activeTab === 'day' 
+                  ? 'bg-gradient-to-r from-purple-500/20 to-blue-500/20 text-white shadow-lg' 
+                  : themeConfig.mutedText
+              }`}
+            >
+              <Calendar className="h-4 w-4 mr-2" />
+              День
+            </TabsTrigger>
+            <TabsTrigger 
+              value="week" 
+              className={`rounded-xl transition-all duration-300 ${
+                activeTab === 'week' 
+                  ? 'bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-white shadow-lg' 
+                  : themeConfig.mutedText
+              }`}
+            >
+              <CalendarDays className="h-4 w-4 mr-2" />
+              Неделя
+            </TabsTrigger>
+            <TabsTrigger 
+              value="month" 
+              className={`rounded-xl transition-all duration-300 ${
+                activeTab === 'month' 
+                  ? 'bg-gradient-to-r from-cyan-500/20 to-teal-500/20 text-white shadow-lg' 
+                  : themeConfig.mutedText
+              }`}
+            >
+              <CalendarRange className="h-4 w-4 mr-2" />
+              Месяц
+            </TabsTrigger>
+            <TabsTrigger 
+              value="quarter" 
+              className={`rounded-xl transition-all duration-300 ${
+                activeTab === 'quarter' 
+                  ? 'bg-gradient-to-r from-teal-500/20 to-green-500/20 text-white shadow-lg' 
+                  : themeConfig.mutedText
+              }`}
+            >
+              <CalendarRange className="h-4 w-4 mr-2" />
+              Квартал
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Контент для дня */}
+          <TabsContent value="day" className="mt-6 space-y-6">
         {/* Общая оценка дня */}
         <div 
           className={`rounded-3xl border p-8 transition-all duration-500 hover:-translate-y-1 ${themeConfig.glass}`}
@@ -821,6 +874,194 @@ const PlanetaryDailyRouteNew = () => {
           </div>
           </div>
         )}
+          </TabsContent>
+
+          {/* Контент для недели */}
+          <TabsContent value="week" className="mt-6">
+            <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+              <div className="text-center py-12">
+                <CalendarDays className={`h-16 w-16 mx-auto mb-4 ${themeConfig.mutedText}`} />
+                <h3 className={`text-2xl font-bold mb-2 ${themeConfig.text}`}>
+                  Планетарный маршрут на неделю
+                </h3>
+                <p className={`${themeConfig.mutedText} mb-6`}>
+                  Детальный анализ недели с рекомендациями на каждый день
+                </p>
+                
+                {/* Предварительная структура */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8 text-left">
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>📊 Обзор недели</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• Общая энергетика недели</li>
+                      <li>• Благоприятные и сложные дни</li>
+                      <li>• Ключевые планетарные влияния</li>
+                      <li>• Рекомендации по планированию</li>
+                    </ul>
+                  </div>
+                  
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>📅 Календарь недели</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• 7 дней с детальным анализом</li>
+                      <li>• Цветовая индикация дней</li>
+                      <li>• Планетарные часы каждого дня</li>
+                      <li>• Персональные советы</li>
+                    </ul>
+                  </div>
+                  
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>🎯 Цели недели</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• Оптимальное время для важных дел</li>
+                      <li>• Дни для отдыха и восстановления</li>
+                      <li>• Периоды максимальной продуктивности</li>
+                      <li>• Защита в сложные периоды</li>
+                    </ul>
+                  </div>
+                  
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>⚡ Энергетический график</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• Визуализация энергий недели</li>
+                      <li>• Пики и спады активности</li>
+                      <li>• Планетарные транзиты</li>
+                      <li>• Рекомендации по балансу</li>
+                    </ul>
+                  </div>
+                </div>
+                
+                <Badge className="mt-6 bg-blue-500/20 text-blue-400 border-blue-500/40">
+                  В разработке
+                </Badge>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Контент для месяца */}
+          <TabsContent value="month" className="mt-6">
+            <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+              <div className="text-center py-12">
+                <CalendarRange className={`h-16 w-16 mx-auto mb-4 ${themeConfig.mutedText}`} />
+                <h3 className={`text-2xl font-bold mb-2 ${themeConfig.text}`}>
+                  Планетарный маршрут на месяц
+                </h3>
+                <p className={`${themeConfig.mutedText} mb-6`}>
+                  Полный анализ месяца с недельными и дневными прогнозами
+                </p>
+                
+                {/* Предварительная структура */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8 text-left">
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>🌙 Обзор месяца</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• Общая тематика месяца</li>
+                      <li>• Ключевые планетарные периоды</li>
+                      <li>• Благоприятные недели</li>
+                      <li>• Критические точки</li>
+                    </ul>
+                  </div>
+                  
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>📆 Календарь месяца</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• 4-5 недель с анализом</li>
+                      <li>• Важные даты и события</li>
+                      <li>• Лунные фазы и влияния</li>
+                      <li>• Планетарные транзиты</li>
+                    </ul>
+                  </div>
+                  
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>💼 Сферы жизни</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• Карьера и финансы</li>
+                      <li>• Отношения и семья</li>
+                      <li>• Здоровье и энергия</li>
+                      <li>• Духовное развитие</li>
+                    </ul>
+                  </div>
+                  
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>📈 Тренды и прогнозы</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• Графики энергий месяца</li>
+                      <li>• Оптимальное время для начинаний</li>
+                      <li>• Периоды завершения проектов</li>
+                      <li>• Рекомендации по планированию</li>
+                    </ul>
+                  </div>
+                </div>
+                
+                <Badge className="mt-6 bg-cyan-500/20 text-cyan-400 border-cyan-500/40">
+                  В разработке
+                </Badge>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Контент для квартала */}
+          <TabsContent value="quarter" className="mt-6">
+            <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+              <div className="text-center py-12">
+                <CalendarRange className={`h-16 w-16 mx-auto mb-4 ${themeConfig.mutedText}`} />
+                <h3 className={`text-2xl font-bold mb-2 ${themeConfig.text}`}>
+                  Планетарный маршрут на квартал
+                </h3>
+                <p className={`${themeConfig.mutedText} mb-6`}>
+                  Стратегический анализ на 3 месяца с долгосрочными прогнозами
+                </p>
+                
+                {/* Предварительная структура */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8 text-left">
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>🎯 Обзор квартала</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• Главные темы 3 месяцев</li>
+                      <li>• Ключевые планетарные циклы</li>
+                      <li>• Благоприятные месяцы</li>
+                      <li>• Периоды трансформации</li>
+                    </ul>
+                  </div>
+                  
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>📊 Помесячный анализ</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• 3 месяца с детальными прогнозами</li>
+                      <li>• Ключевые события каждого месяца</li>
+                      <li>• Планетарные влияния</li>
+                      <li>• Рекомендации по планированию</li>
+                    </ul>
+                  </div>
+                  
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>🌟 Долгосрочные цели</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• Оптимальное время для больших проектов</li>
+                      <li>• Периоды роста и развития</li>
+                      <li>• Время для обучения</li>
+                      <li>• Карьерные возможности</li>
+                    </ul>
+                  </div>
+                  
+                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>🔮 Стратегический прогноз</h4>
+                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
+                      <li>• Долгосрочные тренды</li>
+                      <li>• Важные решения и выборы</li>
+                      <li>• Периоды отдыха и восстановления</li>
+                      <li>• Рекомендации по балансу жизни</li>
+                    </ul>
+                  </div>
+                </div>
+                
+                <Badge className="mt-6 bg-teal-500/20 text-teal-400 border-teal-500/40">
+                  В разработке
+                </Badge>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Модальное окно с советами для планетарного часа */}
