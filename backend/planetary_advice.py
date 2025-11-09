@@ -758,8 +758,14 @@ async def init_planetary_advice_collection(db: AsyncIOMotorDatabase):
     ]
     
     # Вставляем данные
-    result = await collection.insert_many(base_advice)
-    print(f"✓ Добавлено {len(result.inserted_ids)} планет в коллекцию planetary_advice")
+    try:
+        print(f"📝 Попытка добавить {len(base_advice)} планет в коллекцию...")
+        result = await collection.insert_many(base_advice)
+        print(f"✅ Успешно добавлено {len(result.inserted_ids)} планет в коллекцию planetary_advice")
+    except Exception as e:
+        print(f"❌ Ошибка при добавлении планет: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 async def get_personalized_planetary_advice(
@@ -783,10 +789,21 @@ async def get_personalized_planetary_advice(
     collection = db["planetary_advice"]
     
     # Получаем базовые советы для планеты
+    print(f"🔎 Ищем базовые советы для планеты: {planet}")
     base_advice = await collection.find_one({"planet": planet})
     
     if not base_advice:
+        print(f"❌ Базовые советы для {planet} не найдены в БД!")
+        # Проверим, сколько вообще записей в коллекции
+        count = await collection.count_documents({})
+        print(f"   Всего записей в planetary_advice: {count}")
+        if count > 0:
+            # Выведем список доступных планет
+            all_planets = await collection.find({}, {"planet": 1}).to_list(length=10)
+            print(f"   Доступные планеты: {[p['planet'] for p in all_planets]}")
         return None
+    
+    print(f"✅ Найдены базовые советы для {planet}")
     
     # Формируем персонализированный ответ
     response = {
