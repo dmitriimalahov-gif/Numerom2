@@ -126,7 +126,11 @@ const UnifiedLessonEditor = ({
         
         setIsCreatingNew(false);
         setEditingLesson(data.lesson);
-        setLessonContent(data.lesson.content || {});
+        // Объединяем content с упражнениями для совместимости с редакторами
+        setLessonContent({
+          ...(data.lesson.content || {}),
+          exercises: data.lesson.exercises || []
+        });
         setActiveTab('lesson-editor');
       } else {
         alert('Ошибка загрузки урока');
@@ -191,7 +195,11 @@ const UnifiedLessonEditor = ({
       setIsCreatingNew(true);
       setIsFirstLesson(false);
       setEditingLesson(newLessonTemplate);
-      setLessonContent(newLessonTemplate.content || {});
+      // Объединяем content с упражнениями для совместимости с редакторами
+      setLessonContent({
+        ...(newLessonTemplate.content || {}),
+        exercises: newLessonTemplate.exercises || []
+      });
       setActiveTab('lesson-editor');
     } catch (err) {
       console.error('Ошибка загрузки первого урока:', err);
