@@ -683,7 +683,7 @@ async def vedic_daily_schedule(vedic_request: VedicTimeRequest = Depends(), curr
 
 @api_router.get('/vedic-time/planetary-route')
 async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_user: dict = Depends(get_current_user)):
-    """Планетарный маршрут на день - 1 балл"""
+    """Детальный планетарный маршрут на день с полным анализом - 1 балл"""
     user_id = current_user['user_id']
     
     # Получаем данные пользователя для города и даты рождения
@@ -721,23 +721,56 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
         await record_credit_transaction(user_id, CREDIT_COSTS['planetary_daily'], 'Возврат за ошибку планетарного маршрута', 'refund')
         await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': CREDIT_COSTS['planetary_daily']}})
         raise HTTPException(status_code=400, detail=schedule['error'])
-        
-    # Build simple route from schedule
+    
+    # Получаем нумерологические данные пользователя
+    user_data = await get_user_numerology_data(user_id)
+    
+    # Анализируем день с учётом личных чисел
+    day_analysis = analyze_day_compatibility(date_obj, user_data, schedule)
+    
+    # Получаем почасовую энергию планет
+    hourly_energy = calculate_hourly_planetary_energy(schedule.get('planetary_hours', []), user_data)
+    
+    # Build detailed route from schedule
     rec = schedule.get('recommendations', {})
     route = {
         'date': date_obj.strftime('%Y-%m-%d'),
         'city': city,
         'personal_birth_date': user.birth_date,
         'daily_ruling_planet': schedule.get('weekday', {}).get('ruling_planet', ''),
+        
+        # Нумерологический анализ дня
+        'day_analysis': day_analysis,
+        
+        # Почасовая энергия
+        'hourly_energy': hourly_energy,
+        
+        # Лучшие часы с персонализированными советами
         'best_activity_hours': rec.get('best_hours', []),
+        
+        # Периоды, которых стоит избегать
         'avoid_periods': {
             'rahu_kaal': schedule.get('inauspicious_periods', {}).get('rahu_kaal', {}),
             'gulika_kaal': schedule.get('inauspicious_periods', {}).get('gulika_kaal', {}),
             'yamaghanta': schedule.get('inauspicious_periods', {}).get('yamaghanta', {})
         },
+        
+        # Благоприятный период
         'favorable_period': schedule.get('auspicious_periods', {}).get('abhijit_muhurta', {}),
-        'hourly_guide': schedule.get('planetary_hours', [])[:8],
-        'daily_recommendations': rec
+        
+        # Полный почасовой гид (24 часа)
+        'hourly_guide': schedule.get('planetary_hours', []),
+        
+        # Общие рекомендации
+        'daily_recommendations': rec,
+        
+        # Совместимость с личными числами
+        'personal_compatibility': {
+            'soul_number': user_data.get('soul_number'),
+            'destiny_number': user_data.get('destiny_number'),
+            'mind_number': user_data.get('mind_number'),
+            'compatibility_score': day_analysis.get('overall_score', 0)
+        }
     }
     return route
 
@@ -1903,6 +1936,209 @@ async def delete_material(material_id: str, current_user: dict = Depends(get_cur
             logger.warning(f'Failed to delete file: {e}')
     await db.materials.delete_one({'id': material_id})
     return {'deleted': True}
+
+# ========== Вспомогательные функции для планетарного маршрута ==========
+
+async def get_user_numerology_data(user_id: str) -> dict:
+    """Получает все нумерологические данные пользователя"""
+    user_dict = await db.users.find_one({'id': user_id})
+    if not user_dict:
+        return {}
+    
+    user = User(**user_dict)
+    
+    # Парсим дату рождения
+    birth_date_obj = None
+    if user.birth_date:
+        try:
+            if '.' in user.birth_date:
+                birth_date_obj = datetime.strptime(user.birth_date, "%d.%m.%Y")
+            elif '-' in user.birth_date and len(user.birth_date) == 10:
+                birth_date_obj = datetime.strptime(user.birth_date, "%Y-%m-%d")
+            elif 'T' in user.birth_date:
+                birth_date_obj = datetime.fromisoformat(user.birth_date.replace('Z', '+00:00'))
+        except Exception as e:
+            print(f"Ошибка парсинга даты рождения: {e}")
+    
+    if not birth_date_obj:
+        return {}
+    
+    # Вычисляем основные числа
+    day = birth_date_obj.day
+    month = birth_date_obj.month
+    year = birth_date_obj.year
+    
+    soul_number = reduce_to_single(day)
+    destiny_number = reduce_to_single(day + month + year)
+    mind_number = reduce_to_single(month)
+    
+    # Вычисляем рабочие числа (метод Александрова)
+    birth_date_str = birth_date_obj.strftime("%d%m%Y")
+    birth_digits = [int(d) for d in birth_date_str if d != '0']
+    first_working = sum(birth_digits)
+    second_working = reduce_to_single(first_working)
+    first_digit = int(birth_date_str[0])
+    third_working = first_working - (2 * first_digit)
+    fourth_working = reduce_to_single(abs(third_working))
+    
+    # Подсчитываем силу планет
+    all_digits = (
+        birth_digits +
+        [int(d) for d in str(first_working)] +
+        [int(d) for d in str(second_working)] +
+        [int(d) for d in str(abs(third_working))] +
+        [int(d) for d in str(fourth_working)]
+    )
+    
+    planet_counts = {}
+    planet_digit_map = {
+        "Surya": 1, "Chandra": 2, "Guru": 3, "Rahu": 4,
+        "Budh": 5, "Shukra": 6, "Ketu": 7, "Shani": 8, "Mangal": 9
+    }
+    
+    for planet, digit in planet_digit_map.items():
+        planet_counts[planet] = all_digits.count(digit)
+    
+    return {
+        'soul_number': soul_number,
+        'destiny_number': destiny_number,
+        'mind_number': mind_number,
+        'helping_mind_number': second_working,
+        'wisdom_number': fourth_working,
+        'ruling_number': reduce_to_single(soul_number + destiny_number),
+        'planet_counts': planet_counts,
+        'birth_date': birth_date_obj
+    }
+
+def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dict) -> dict:
+    """Анализирует совместимость дня с личными числами пользователя"""
+    
+    # Число дня
+    day_number = reduce_to_single(date_obj.day)
+    
+    # Управляющая планета дня
+    ruling_planet = schedule.get('weekday', {}).get('ruling_planet', '')
+    
+    # Получаем личные числа
+    soul_number = user_data.get('soul_number', 0)
+    destiny_number = user_data.get('destiny_number', 0)
+    mind_number = user_data.get('mind_number', 0)
+    
+    # Маппинг планет на числа
+    planet_to_number = {
+        'Surya': 1, 'Chandra': 2, 'Guru': 3, 'Rahu': 4,
+        'Budh': 5, 'Shukra': 6, 'Ketu': 7, 'Shani': 8, 'Mangal': 9
+    }
+    
+    ruling_number = planet_to_number.get(ruling_planet, 0)
+    
+    # Анализ совместимости
+    compatibility_score = 0
+    compatibility_notes = []
+    
+    # Совместимость с числом души
+    if soul_number == ruling_number:
+        compatibility_score += 30
+        compatibility_notes.append(f"Планета дня ({ruling_planet}) резонирует с вашим числом души ({soul_number})")
+    elif soul_number == day_number:
+        compatibility_score += 20
+        compatibility_notes.append(f"Число дня ({day_number}) совпадает с вашим числом души")
+    
+    # Совместимость с числом судьбы
+    if destiny_number == ruling_number:
+        compatibility_score += 25
+        compatibility_notes.append(f"Планета дня поддерживает ваше число судьбы ({destiny_number})")
+    elif destiny_number == day_number:
+        compatibility_score += 15
+        compatibility_notes.append(f"Число дня гармонирует с вашим числом судьбы")
+    
+    # Совместимость с числом ума
+    if mind_number == ruling_number:
+        compatibility_score += 15
+        compatibility_notes.append(f"Планета дня усиливает ваше число ума ({mind_number})")
+    
+    # Сила планеты в личной карте
+    planet_counts = user_data.get('planet_counts', {})
+    planet_strength = planet_counts.get(ruling_planet, 0)
+    
+    if planet_strength > 3:
+        compatibility_score += 20
+        compatibility_notes.append(f"У вас сильная {ruling_planet} в карте ({planet_strength})")
+    elif planet_strength == 0:
+        compatibility_score -= 10
+        compatibility_notes.append(f"У вас отсутствует {ruling_planet} в карте - день может быть вызовом")
+    
+    # Определяем общую оценку дня
+    if compatibility_score >= 60:
+        overall_rating = "Отличный"
+        overall_description = "Этот день очень благоприятен для вас! Используйте его энергию по максимуму."
+    elif compatibility_score >= 40:
+        overall_rating = "Хороший"
+        overall_description = "День обещает быть продуктивным. Следуйте рекомендациям для лучших результатов."
+    elif compatibility_score >= 20:
+        overall_rating = "Нейтральный"
+        overall_description = "Обычный день. Будьте внимательны к деталям и избегайте рискованных решений."
+    else:
+        overall_rating = "Сложный"
+        overall_description = "День может быть непростым. Сосредоточьтесь на рутинных задачах и отдыхе."
+    
+    return {
+        'overall_score': compatibility_score,
+        'overall_rating': overall_rating,
+        'overall_description': overall_description,
+        'day_number': day_number,
+        'ruling_planet': ruling_planet,
+        'ruling_number': ruling_number,
+        'compatibility_notes': compatibility_notes,
+        'planet_strength': planet_strength
+    }
+
+def calculate_hourly_planetary_energy(planetary_hours: list, user_data: dict) -> list:
+    """Вычисляет энергию каждого планетарного часа с учётом личной карты"""
+    
+    hourly_data = []
+    planet_counts = user_data.get('planet_counts', {})
+    
+    for hour in planetary_hours:
+        planet = hour.get('planet', '')
+        start_time = hour.get('start_time', '')
+        end_time = hour.get('end_time', '')
+        
+        # Сила планеты в личной карте
+        personal_strength = planet_counts.get(planet, 0)
+        
+        # Базовая энергия часа (от 1 до 10)
+        base_energy = 5
+        
+        # Модификаторы
+        if personal_strength > 3:
+            base_energy += 3
+        elif personal_strength > 1:
+            base_energy += 1
+        elif personal_strength == 0:
+            base_energy -= 2
+        
+        # Определяем тип активности
+        if base_energy >= 7:
+            activity_type = "Высокая энергия"
+            recommendation = f"Отличное время для активности, связанной с {planet}"
+        elif base_energy >= 5:
+            activity_type = "Умеренная энергия"
+            recommendation = f"Подходящее время для повседневных дел"
+        else:
+            activity_type = "Низкая энергия"
+            recommendation = f"Время для отдыха или работы над слабыми сторонами"
+        
+        hourly_data.append({
+            'time': f"{start_time} - {end_time}",
+            'planet': planet,
+            'energy_level': min(10, max(1, base_energy)),
+            'personal_strength': personal_strength,
+            'activity_type': activity_type,
+            'recommendation': recommendation
+        })
+    
+    return hourly_data
 
 # IP Geolocation function
 def get_city_from_ip(client_ip: str = None) -> str:
