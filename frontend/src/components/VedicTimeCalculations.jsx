@@ -31,6 +31,7 @@ const THEME_CONFIG = {
       'radial-gradient(1400px at 50% -5%, rgba(56,189,248,0.18), transparent 65%), radial-gradient(900px at 80% 0%, rgba(94,234,212,0.12), transparent 70%)',
     cardBorder: 'border-white/10',
     divider: 'border-white/10',
+    text: 'text-white',
     mutedText: 'text-slate-300',
     subtleText: 'text-slate-400',
     chipBackground: 'bg-white/10 text-slate-100',
@@ -40,7 +41,9 @@ const THEME_CONFIG = {
     highlightBrown: 'bg-amber-400/20 text-amber-100 border-amber-500/40',
     highlightGray: 'bg-slate-400/20 text-slate-100 border-slate-500/40',
     glass: 'bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_20px_60px_rgba(15,23,42,0.45)]',
-    surface: 'bg-white/4 border border-white/10'
+    surface: 'bg-white/4 border border-white/10',
+    card: 'bg-slate-800/90 border-slate-700',
+    isDark: true
   },
   light: {
     pageBackground: 'bg-[#f6f9fc] text-slate-900',
@@ -48,6 +51,7 @@ const THEME_CONFIG = {
       'radial-gradient(1200px at 50% -5%, rgba(129,140,248,0.18), transparent 70%), radial-gradient(900px at 85% 5%, rgba(45,212,191,0.14), transparent 75%)',
     cardBorder: 'border-white/70',
     divider: 'border-slate-200',
+    text: 'text-gray-900',
     mutedText: 'text-slate-600',
     subtleText: 'text-slate-500',
     chipBackground: 'bg-slate-100 text-slate-700',
@@ -57,7 +61,9 @@ const THEME_CONFIG = {
     highlightBrown: 'bg-amber-100 text-amber-700 border-amber-200',
     highlightGray: 'bg-slate-100 text-slate-700 border-slate-200',
     glass: 'bg-white/70 backdrop-blur-xl border border-white/80 shadow-[0_20px_55px_rgba(148,163,184,0.25)]',
-    surface: 'bg-white border border-slate-200'
+    surface: 'bg-white border border-slate-200',
+    card: 'bg-white border-gray-200',
+    isDark: false
   }
 };
 
@@ -1259,6 +1265,25 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
   }
 
   const planetColor = getPlanetColor(advice.planet);
+  
+  // Функция для получения правильного фона в зависимости от темы
+  const getBackgroundStyle = (opacity = '20') => {
+    if (themeConfig.isDark) {
+      return { backgroundColor: planetColor + opacity };
+    } else {
+      // Для светлой темы используем более насыщенные цвета
+      return { backgroundColor: planetColor + '30' };
+    }
+  };
+  
+  const getBorderStyle = (opacity = '60') => {
+    if (themeConfig.isDark) {
+      return { borderColor: planetColor + opacity };
+    } else {
+      // Для светлой темы используем более насыщенные границы
+      return { borderColor: planetColor + '80' };
+    }
+  };
 
   return (
     <>
@@ -1300,8 +1325,8 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
                 key={idx}
                 className={`p-4 rounded-lg border-2 ${themeConfig.text}`}
                 style={{
-                  backgroundColor: planetColor + '20',
-                  borderColor: planetColor + '60'
+                  ...getBackgroundStyle('20'),
+                  ...getBorderStyle('60')
                 }}
               >
                 <p className="font-bold text-sm mb-1">{note.title}</p>
@@ -1356,7 +1381,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
         <div 
           className={`p-4 rounded-lg ${themeConfig.text}`}
           style={{
-            backgroundColor: planetColor + '15',
+            ...getBackgroundStyle('15'),
             borderLeft: `4px solid ${planetColor}`
           }}
         >
@@ -1369,8 +1394,8 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
           <div 
             className={`p-4 rounded-lg text-center ${themeConfig.text}`}
             style={{
-              backgroundColor: planetColor + '20',
-              border: `2px solid ${planetColor}60`
+              ...getBackgroundStyle('20'),
+              border: `2px solid ${planetColor}${themeConfig.isDark ? '60' : '80'}`
             }}
           >
             <h3 className="font-bold text-lg mb-2">🕉️ Мантра</h3>
@@ -1380,7 +1405,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
 
         {/* Совет для времени суток */}
         {advice.time_advice && (
-          <div className={`p-4 rounded-lg bg-blue-500/10 border border-blue-500/30 ${themeConfig.text}`}>
+          <div className={`p-4 rounded-lg border ${themeConfig.text} ${themeConfig.isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-100 border-blue-300'}`}>
             <p className="text-sm italic">{advice.time_advice}</p>
           </div>
         )}
