@@ -1765,6 +1765,43 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
             day['influence'] = day_analysis.get('influence', {})
             day['color_class'] = day_analysis.get('color_class', 'blue')
             
+            # Добавляем информацию о личной энергии планеты дня (DDMM × YYYY)
+            from numerology import calculate_planetary_strength
+            ruling_planet = day.get('ruling_planet', 'Surya')
+            
+            try:
+                birth_date_obj = datetime.strptime(user.birth_date, '%d.%m.%Y')
+                planetary_strength_data = calculate_planetary_strength(
+                    birth_date_obj.day, 
+                    birth_date_obj.month, 
+                    birth_date_obj.year
+                )
+                
+                # Конвертируем русские названия в ведические
+                russian_to_vedic = {
+                    'Солнце': 'Surya',
+                    'Луна': 'Chandra',
+                    'Марс': 'Mangal',
+                    'Меркурий': 'Budh',
+                    'Юпитер': 'Guru',
+                    'Венера': 'Shukra',
+                    'Сатурн': 'Shani'
+                }
+                
+                personal_weekday_energy = {
+                    russian_to_vedic.get(k, k): v 
+                    for k, v in planetary_strength_data.get('strength', {}).items()
+                }
+                
+                # Добавляем энергию планеты дня
+                day['personal_planet_energy'] = personal_weekday_energy.get(ruling_planet, -1)
+                day['all_weekday_energies'] = personal_weekday_energy
+                
+            except Exception as e:
+                print(f"⚠️ Ошибка расчёта энергии для дня {day['date']}: {e}")
+                day['personal_planet_energy'] = -1
+                day['all_weekday_energies'] = {}
+            
             # Добавляем информацию о пользователе для отображения
             day['user_soul_number'] = soul_number
             day['user_mind_number'] = mind_number

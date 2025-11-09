@@ -1397,6 +1397,102 @@ const PlanetaryDailyRouteNew = () => {
                 )}
 
                 {/* Вызовы */}
+                {/* Личная энергия планеты дня */}
+                {selectedDay.personal_planet_energy !== undefined && selectedDay.personal_planet_energy >= 0 && (
+                  <div 
+                    className={`p-4 rounded-lg border-2 ${themeConfig.text}`}
+                    style={{
+                      borderColor: selectedDay.personal_planet_energy === 0 ? '#ef4444' : 
+                                   selectedDay.personal_planet_energy <= 3 ? '#f97316' :
+                                   selectedDay.personal_planet_energy >= 7 ? '#10b981' : '#3b82f6',
+                      backgroundColor: themeConfig.isDark 
+                        ? (selectedDay.personal_planet_energy === 0 ? '#ef444420' : 
+                           selectedDay.personal_planet_energy <= 3 ? '#f9731620' :
+                           selectedDay.personal_planet_energy >= 7 ? '#10b98120' : '#3b82f620')
+                        : (selectedDay.personal_planet_energy === 0 ? '#ef444410' : 
+                           selectedDay.personal_planet_energy <= 3 ? '#f9731610' :
+                           selectedDay.personal_planet_energy >= 7 ? '#10b98110' : '#3b82f610')
+                    }}
+                  >
+                    <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
+                      {selectedDay.personal_planet_energy === 0 && <span className="text-2xl">🚨</span>}
+                      {selectedDay.personal_planet_energy > 0 && selectedDay.personal_planet_energy <= 3 && <span className="text-2xl">⚡</span>}
+                      {selectedDay.personal_planet_energy >= 7 && <span className="text-2xl">✨</span>}
+                      {selectedDay.personal_planet_energy > 3 && selectedDay.personal_planet_energy < 7 && <span className="text-2xl">📊</span>}
+                      <span style={{
+                        color: selectedDay.personal_planet_energy === 0 ? '#ef4444' : 
+                               selectedDay.personal_planet_energy <= 3 ? '#f97316' :
+                               selectedDay.personal_planet_energy >= 7 ? '#10b981' : '#3b82f6'
+                      }}>
+                        Ваша личная энергия {selectedDay.planet_sanskrit || selectedDay.ruling_planet}
+                      </span>
+                    </h3>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className={`text-sm ${themeConfig.mutedText}`}>Энергия дня (DDMM × YYYY):</span>
+                        <span className="text-2xl font-bold" style={{
+                          color: selectedDay.personal_planet_energy === 0 ? '#ef4444' : 
+                                 selectedDay.personal_planet_energy <= 3 ? '#f97316' :
+                                 selectedDay.personal_planet_energy >= 7 ? '#10b981' : '#3b82f6'
+                        }}>
+                          {selectedDay.personal_planet_energy}/9
+                        </span>
+                      </div>
+                      
+                      {selectedDay.personal_planet_energy === 0 && (
+                        <div className="mt-3">
+                          <p className="text-sm font-bold text-red-500 mb-2">
+                            ⚠️ КРИТИЧЕСКИЙ ДЕНЬ: НУЛЕВАЯ ЭНЕРГИЯ!
+                          </p>
+                          <p className={`text-xs ${themeConfig.mutedText}`}>
+                            У вас полное отсутствие резонанса с энергией этого дня недели. 
+                            Это один из самых сложных дней для вас. Избегайте важных начинаний, 
+                            отдохните и восстановите силы.
+                          </p>
+                        </div>
+                      )}
+                      
+                      {selectedDay.personal_planet_energy > 0 && selectedDay.personal_planet_energy <= 3 && (
+                        <div className="mt-3">
+                          <p className="text-sm font-bold text-orange-500 mb-2">
+                            ⚡ Низкая энергия дня
+                          </p>
+                          <p className={`text-xs ${themeConfig.mutedText}`}>
+                            Ваша личная энергия в этот день недели низкая. 
+                            Планируйте меньше дел, делайте больше перерывов, 
+                            избегайте энергозатратных задач.
+                          </p>
+                        </div>
+                      )}
+                      
+                      {selectedDay.personal_planet_energy >= 7 && (
+                        <div className="mt-3">
+                          <p className="text-sm font-bold text-emerald-500 mb-2">
+                            ✨ ВЫСОКАЯ ЭНЕРГИЯ ДНЯ!
+                          </p>
+                          <p className={`text-xs ${themeConfig.mutedText}`}>
+                            Ваша личная энергия в этот день недели на пике! 
+                            Планируйте самые важные дела, начинайте новые проекты, 
+                            проводите важные встречи и переговоры.
+                          </p>
+                        </div>
+                      )}
+                      
+                      {selectedDay.personal_planet_energy > 3 && selectedDay.personal_planet_energy < 7 && (
+                        <div className="mt-3">
+                          <p className="text-sm font-bold text-blue-500 mb-2">
+                            📊 Средняя энергия дня
+                          </p>
+                          <p className={`text-xs ${themeConfig.mutedText}`}>
+                            Ваша личная энергия в этот день недели на среднем уровне. 
+                            Подходит для рутинных дел и текущих проектов.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {selectedDay.challenges && selectedDay.challenges.length > 0 && (
                   <div>
                     <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
