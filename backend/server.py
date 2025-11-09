@@ -1635,25 +1635,24 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
         # Получаем нумерологические данные пользователя
         from numerology import parse_birth_date, reduce_to_single_digit_always, reduce_for_ruling_number
         
-        # Рассчитываем личные числа если их нет
-        if not hasattr(user, 'soul_number') or user.soul_number is None:
-            d, m, y = parse_birth_date(user.birth_date)
-            user.soul_number = reduce_to_single_digit_always(d)
-            user.mind_number = reduce_to_single_digit_always(m)
-            user.destiny_number = reduce_to_single_digit_always(d + m + y)
-            user.ruling_number = reduce_for_ruling_number(d + m + y)
+        # Рассчитываем личные числа
+        d, m, y = parse_birth_date(user.birth_date)
+        soul_number = reduce_to_single_digit_always(d)
+        mind_number = reduce_to_single_digit_always(m)
+        destiny_number = reduce_to_single_digit_always(d + m + y)
+        ruling_number = reduce_for_ruling_number(d + m + y)
         
         # Добавляем персонализированный анализ для каждого дня
         user_data = {
-            'soul_number': user.soul_number,
-            'mind_number': user.mind_number,
-            'destiny_number': user.destiny_number,
-            'ruling_number': user.ruling_number,
-            'pythagorean_square': user.pythagorean_square if hasattr(user, 'pythagorean_square') else {},
+            'soul_number': soul_number,
+            'mind_number': mind_number,
+            'destiny_number': destiny_number,
+            'ruling_number': ruling_number,
+            'pythagorean_square': user_dict.get('pythagorean_square', {}),
             'birth_date': user.birth_date,
-            'full_name': user.full_name if hasattr(user, 'full_name') else '',
-            'address': user.address if hasattr(user, 'address') else '',
-            'car_number': user.car_number if hasattr(user, 'car_number') else ''
+            'full_name': user_dict.get('full_name', ''),
+            'address': user_dict.get('address', ''),
+            'car_number': user_dict.get('car_number', '')
         }
         
         # Анализируем каждый день недели
@@ -1676,13 +1675,18 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
             day['color_class'] = day_analysis.get('color_class', 'blue')
             
             # Добавляем информацию о пользователе для отображения
-            day['user_soul_number'] = user.soul_number
-            day['user_mind_number'] = user.mind_number
-            day['user_destiny_number'] = user.destiny_number
+            day['user_soul_number'] = soul_number
+            day['user_mind_number'] = mind_number
+            day['user_destiny_number'] = destiny_number
         
         return weekly_route
         
     except Exception as e:
+        # Логируем ошибку для отладки
+        import traceback
+        print(f"❌ ОШИБКА в weekly_planetary_route: {str(e)}")
+        print(f"❌ Traceback: {traceback.format_exc()}")
+        
         # Возвращаем баллы в случае ошибки
         await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': 2}})
         await record_credit_transaction(user_id, 2, 'Возврат за ошибку недельного маршрута', 'refund')
