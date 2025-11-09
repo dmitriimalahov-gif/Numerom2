@@ -2027,6 +2027,13 @@ async def get_user_numerology_data(user_id: str) -> dict:
     for planet, digit in planet_digit_map.items():
         planet_counts[planet] = all_digits.count(digit)
     
+    # Отладочный вывод
+    print(f"🔢 DEBUG: Дата рождения: {birth_date_str}")
+    print(f"🔢 DEBUG: Цифры даты (без 0): {birth_digits}")
+    print(f"🔢 DEBUG: Рабочие числа: {first_working}, {second_working}, {third_working}, {fourth_working}")
+    print(f"🔢 DEBUG: Все цифры для подсчёта: {all_digits}")
+    print(f"🔢 DEBUG: Сила планет: {planet_counts}")
+    
     # Вычисляем числа из имени, адреса и автомобиля
     name_number = calculate_string_number(user.full_name)
     
