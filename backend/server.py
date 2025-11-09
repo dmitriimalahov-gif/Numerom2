@@ -47,6 +47,7 @@ from vedic_numerology import (
 from vedic_time_calculations import get_vedic_day_schedule, get_monthly_planetary_route, get_quarterly_planetary_route
 from html_generator import create_numerology_report_html
 from pdf_generator import create_numerology_report_pdf, create_compatibility_pdf
+from planetary_advice import init_planetary_advice_collection, get_personalized_planetary_advice
 import stripe
 
 # Load env
@@ -103,6 +104,7 @@ async def on_startup():
     global push_manager
     try:
         await ensure_super_admin_exists(db)
+        await init_planetary_advice_collection(db)
         MATERIALS_DIR.mkdir(parents=True, exist_ok=True)
         CONSULTATIONS_DIR.mkdir(parents=True, exist_ok=True)
         CONSULTATIONS_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
@@ -821,30 +823,91 @@ async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(),
         await record_credit_transaction(user_id, CREDIT_COSTS['planetary_quarterly'], 'Возврат за ошибку квартального маршрута', 'refund')
         await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': CREDIT_COSTS['planetary_quarterly']}})
         raise HTTPException(status_code=400, detail=f'Ошибка расчета квартального маршрута: {str(e)}')
-        raise HTTPException(status_code=402, detail='Недостаточно кредитов. Требуется подписка или дополнительные кредиты.')
-    if not user.is_premium:
-        await db.users.update_one({'id': user.id}, {'$inc': {'credits_remaining': -1}})
-    
-    if vedic_request.date:
-        try:
-            date_obj = datetime.strptime(vedic_request.date, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-    else:
-        # Используем UTC время с timezone для корректной конвертации в локальное время города
-        date_obj = datetime.now(pytz.UTC)
 
-    city = vedic_request.city or user.city
-    if not city:
-        raise HTTPException(status_code=422, detail="Город не указан. Укажите город в запросе или обновите профиль пользователя.")
+@api_router.get('/vedic-time/planetary-advice/{planet}')
+async def get_planetary_hour_advice(
+    planet: str,
+    is_night: bool = Query(False, description="Ночной час или дневной"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Получить персонализированные советы для планетарного часа
+    Бесплатно - не списываются баллы
+    """
+    user_id = current_user['user_id']
     
-    try:
-        quarterly_route = get_quarterly_planetary_route(city=city, start_date=date_obj, birth_date=user.birth_date)
-        return quarterly_route
-    except Exception as e:
-        if not user.is_premium:
-            await db.users.update_one({'id': user.id}, {'$inc': {'credits_remaining': 1}})
-        raise HTTPException(status_code=400, detail=f'Ошибка расчета квартального маршрута: {str(e)}')
+    # Получаем данные пользователя
+    user_dict = await db.users.find_one({'id': user_id})
+    if not user_dict:
+        raise HTTPException(status_code=404, detail='Пользователь не найден')
+    
+    user = User(**user_dict)
+    
+    # Подготавливаем данные пользователя для персонализации
+    user_data = {
+        "birth_date": user.birth_date,
+        "soul_number": None,
+        "destiny_number": None,
+        "mind_number": None,
+        "ruling_number": None,
+        "planet_counts": {}
+    }
+    
+    # Если есть дата рождения, вычисляем числа
+    if user.birth_date:
+        try:
+            birth_date_obj = datetime.fromisoformat(str(user.birth_date))
+            day, month, year = birth_date_obj.day, birth_date_obj.month, birth_date_obj.year
+            
+            # Вычисляем основные числа
+            def reduce_to_single(num):
+                while num > 9:
+                    num = sum(int(d) for d in str(num))
+                return num
+            
+            user_data["soul_number"] = reduce_to_single(day)
+            user_data["destiny_number"] = reduce_to_single(day + month + year)
+            user_data["mind_number"] = reduce_to_single(month)
+            
+            # Вычисляем правящее число (сумма числа души и числа судьбы)
+            ruling = user_data["soul_number"] + user_data["destiny_number"]
+            user_data["ruling_number"] = reduce_to_single(ruling)
+            
+            # Создаем квадрат Пифагора для подсчета силы планет
+            birth_date_str = birth_date_obj.strftime("%d%m%Y")
+            all_digits = birth_date_str
+            
+            # Подсчитываем количество каждой цифры
+            digit_counts = {}
+            for digit in all_digits:
+                digit_counts[digit] = digit_counts.get(digit, 0) + 1
+            
+            # Маппинг цифр на планеты
+            planet_digit_map = {
+                "Sun": "1",
+                "Moon": "2",
+                "Jupiter": "3",
+                "Rahu": "4",
+                "Mercury": "5",
+                "Venus": "6",
+                "Ketu": "7",
+                "Saturn": "8",
+                "Mars": "9"
+            }
+            
+            for planet_name, digit in planet_digit_map.items():
+                user_data["planet_counts"][planet_name] = digit_counts.get(digit, 0)
+                
+        except Exception as e:
+            print(f"Ошибка при вычислении чисел: {e}")
+    
+    # Получаем персонализированные советы
+    advice = await get_personalized_planetary_advice(db, planet, user_data, is_night)
+    
+    if not advice:
+        raise HTTPException(status_code=404, detail=f'Советы для планеты {planet} не найдены')
+    
+    return advice
 
 # ----------------- CHARTS -----------------
 @api_router.get('/charts/planetary-energy/{days}')
