@@ -3211,9 +3211,17 @@ async def calculate_hourly_planetary_energy(planetary_hours: list, user_data: di
         # Определяем благоприятность часа
         is_favorable = hour.get('is_favorable', False)
         
+        # Извлекаем время в формате HH:MM
+        start_formatted = start_time.split('T')[1][:5] if 'T' in start_time else start_time
+        end_formatted = end_time.split('T')[1][:5] if 'T' in end_time else end_time
+        
         hourly_data.append({
             'hour': hour_number,
-            'time': f"{start_time.split('T')[1][:5] if 'T' in start_time else start_time} - {end_time.split('T')[1][:5] if 'T' in end_time else end_time}",
+            'time': f"{start_formatted} - {end_formatted}",
+            'start': start_formatted,  # Добавляем отдельно для фронтенда
+            'end': end_formatted,      # Добавляем отдельно для фронтенда
+            'start_time': start_time,  # Полное время для совместимости
+            'end_time': end_time,      # Полное время для совместимости
             'planet': planet,
             'planet_sanskrit': hour.get('planet_sanskrit', planet),
             'period': period,
