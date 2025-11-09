@@ -20,8 +20,6 @@ const PlanetaryDailyRouteNew = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedHour, setSelectedHour] = useState(null);
   const [isHourDialogOpen, setIsHourDialogOpen] = useState(false);
-  const [selectedAspect, setSelectedAspect] = useState(null);
-  const [isAspectDialogOpen, setIsAspectDialogOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const { user } = useAuth();
   const apiBaseUrl = getApiBaseUrl();
@@ -323,15 +321,7 @@ const PlanetaryDailyRouteNew = () => {
               return (
                 <div 
                   key={idx} 
-                  onClick={() => {
-                    if (isDetailedAspect) {
-                      setSelectedAspect(aspect);
-                      setIsAspectDialogOpen(true);
-                    }
-                  }}
-                  className={`p-5 rounded-2xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${
-                    isDetailedAspect ? 'cursor-pointer hover:border-green-500/60' : ''
-                  } ${themeConfig.surface}`}
+                  className={`p-5 rounded-2xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${themeConfig.surface}`}
                   style={{
                     borderColor: '#10b98140',
                     backgroundColor: themeConfig.isDark ? '#10b98110' : '#10b98108'
@@ -375,15 +365,7 @@ const PlanetaryDailyRouteNew = () => {
                 return (
                   <div 
                     key={idx}
-                    onClick={() => {
-                      if (isDetailedChallenge) {
-                        setSelectedAspect(challenge);
-                        setIsAspectDialogOpen(true);
-                      }
-                    }}
-                    className={`p-5 rounded-2xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${
-                      isDetailedChallenge ? 'cursor-pointer hover:border-orange-500/60' : ''
-                    } ${themeConfig.surface}`}
+                    className={`p-5 rounded-2xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${themeConfig.surface}`}
                     style={{
                       borderColor: '#f9731640',
                       backgroundColor: themeConfig.isDark ? '#f9731610' : '#f9731608'
@@ -1123,159 +1105,8 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
           </div>
         )}
       </div>
-
-      {/* Модальное окно для детальной информации об аспекте */}
-      <Dialog open={isAspectDialogOpen} onOpenChange={setIsAspectDialogOpen}>
-        <DialogContent 
-          className={`max-w-2xl max-h-[80vh] overflow-y-auto ${themeConfig.surface} ${themeConfig.text}`}
-          style={{
-            backgroundColor: themeConfig.isDark ? '#1a1a2e' : '#ffffff',
-            borderColor: selectedAspect?.icon ? getPlanetColor(route?.schedule?.weekday?.ruling_planet) + '40' : undefined
-          }}
-        >
-          {selectedAspect ? (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-3 text-2xl">
-                  {selectedAspect.icon && <span className="text-3xl">{selectedAspect.icon}</span>}
-                  <span style={{ color: getPlanetColor(route?.schedule?.weekday?.ruling_planet) }}>
-                    {selectedAspect.title}
-                  </span>
-                </DialogTitle>
-                <DialogDescription className={themeConfig.mutedText}>
-                  Детальная информация о вашем преимуществе
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-6 mt-6">
-                {/* Краткое описание */}
-                <div 
-                  className="p-4 rounded-lg border"
-                  style={{
-                    backgroundColor: themeConfig.isDark ? '#10b98115' : '#10b98108',
-                    borderColor: '#10b98140'
-                  }}
-                >
-                  <p className={`text-base leading-relaxed ${themeConfig.text}`}>
-                    {selectedAspect.short_text}
-                  </p>
-                </div>
-
-                {/* Детальная информация */}
-                {selectedAspect.detailed_info && (
-                  <div className="space-y-2">
-                    <h3 className="font-bold text-lg flex items-center gap-2">
-                      <Info className="h-5 w-5 text-blue-500" />
-                      Подробнее
-                    </h3>
-                    <p className={`text-sm leading-relaxed ${themeConfig.mutedText}`}>
-                      {selectedAspect.detailed_info}
-                    </p>
-                  </div>
-                )}
-
-                {/* Информация о планетах */}
-                {selectedAspect.planet_info && (
-                  <div 
-                    className="p-4 rounded-lg"
-                    style={{
-                      backgroundColor: themeConfig.isDark 
-                        ? `${getPlanetColor(route?.schedule?.weekday?.ruling_planet)}15`
-                        : `${getPlanetColor(route?.schedule?.weekday?.ruling_planet)}08`,
-                      borderLeft: `4px solid ${getPlanetColor(route?.schedule?.weekday?.ruling_planet)}`
-                    }}
-                  >
-                    <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
-                      <Sparkles className="h-5 w-5" style={{ color: getPlanetColor(route?.schedule?.weekday?.ruling_planet) }} />
-                      Планетарная информация
-                    </h3>
-                    <p className={themeConfig.text}>{selectedAspect.planet_info}</p>
-                  </div>
-                )}
-
-                {/* Советы */}
-                {selectedAspect.advice && selectedAspect.advice.length > 0 && (
-                  <div className="space-y-2">
-                    <h3 className="font-bold text-lg flex items-center gap-2">
-                      {selectedAspect.type?.includes('conflict') || selectedAspect.type?.includes('dissonance') || selectedAspect.type?.includes('absence') || selectedAspect.type?.includes('weakness') || selectedAspect.type?.includes('enemy') || selectedAspect.type?.includes('disharmony') || selectedAspect.type === 'rahu_kaal' ? (
-                        <>
-                          <AlertTriangle className="h-5 w-5 text-orange-500" />
-                          Как справиться
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="h-5 w-5 text-green-500" />
-                          Рекомендации
-                        </>
-                      )}
-                    </h3>
-                    <div className="space-y-2">
-                      {selectedAspect.advice.map((tip, idx) => (
-                        <div 
-                          key={idx}
-                          className={`p-3 rounded-lg border transition-all duration-300 hover:-translate-y-0.5 ${themeConfig.surface}`}
-                          style={{
-                            borderColor: selectedAspect.type?.includes('conflict') || selectedAspect.type?.includes('dissonance') || selectedAspect.type?.includes('absence') || selectedAspect.type?.includes('weakness') || selectedAspect.type?.includes('enemy') || selectedAspect.type?.includes('disharmony') || selectedAspect.type === 'rahu_kaal' ? '#f9731630' : '#10b98130',
-                            backgroundColor: selectedAspect.type?.includes('conflict') || selectedAspect.type?.includes('dissonance') || selectedAspect.type?.includes('absence') || selectedAspect.type?.includes('weakness') || selectedAspect.type?.includes('enemy') || selectedAspect.type?.includes('disharmony') || selectedAspect.type === 'rahu_kaal' ? (themeConfig.isDark ? '#f9731608' : '#f9731605') : (themeConfig.isDark ? '#10b98108' : '#10b98105')
-                          }}
-                        >
-                          <div className="flex items-start gap-2">
-                            <span className={selectedAspect.type?.includes('conflict') || selectedAspect.type?.includes('dissonance') || selectedAspect.type?.includes('absence') || selectedAspect.type?.includes('weakness') || selectedAspect.type?.includes('enemy') || selectedAspect.type?.includes('disharmony') || selectedAspect.type === 'rahu_kaal' ? 'text-orange-500 mt-0.5' : 'text-green-500 mt-0.5'}>
-                              {selectedAspect.type?.includes('conflict') || selectedAspect.type?.includes('dissonance') || selectedAspect.type?.includes('absence') || selectedAspect.type?.includes('weakness') || selectedAspect.type?.includes('enemy') || selectedAspect.type?.includes('disharmony') || selectedAspect.type === 'rahu_kaal' ? '!' : '✓'}
-                            </span>
-                            <p className={`text-sm ${themeConfig.text}`}>{tip}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Решение (для challenges) */}
-                {selectedAspect.solution && (
-                  <div 
-                    className="p-4 rounded-lg border-2"
-                    style={{
-                      backgroundColor: themeConfig.isDark ? '#10b98120' : '#10b98115',
-                      borderColor: '#10b981'
-                    }}
-                  >
-                    <h3 className="font-bold text-lg mb-2 flex items-center gap-2 text-green-500">
-                      <Zap className="h-5 w-5" />
-                      Решение
-                    </h3>
-                    <p className={`text-sm font-semibold ${themeConfig.text}`}>{selectedAspect.solution}</p>
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-6 flex justify-end">
-                <Button 
-                  onClick={() => setIsAspectDialogOpen(false)}
-                  className="backdrop-blur-xl"
-                  style={{
-                    backgroundColor: getPlanetColor(route?.schedule?.weekday?.ruling_planet) + '20',
-                    color: getPlanetColor(route?.schedule?.weekday?.ruling_planet),
-                    borderColor: getPlanetColor(route?.schedule?.weekday?.ruling_planet) + '40'
-                  }}
-                >
-                  Закрыть
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <DialogHeader>
-                <DialogTitle>Информация</DialogTitle>
-                <DialogDescription>Загрузка...</DialogDescription>
-              </DialogHeader>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
     </>
   );
 };
 
 export default PlanetaryDailyRouteNew;
-
