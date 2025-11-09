@@ -2624,6 +2624,168 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
     # Объединяем все заметки
     compatibility_notes = positive_aspects + challenges
     
+    # DEBUG: Выводим все оценки в терминал
+    print("\n" + "="*80)
+    print("🎯 СИСТЕМА ОЦЕНКИ ДНЯ - ДЕТАЛЬНЫЙ РАЗБОР")
+    print("="*80)
+    print(f"📅 Дата: {date_obj.strftime('%d.%m.%Y')}")
+    print(f"🌍 День недели: {schedule.get('weekday', {}).get('name_ru', '')}")
+    print(f"🪐 Правящая планета: {ruling_planet} (число {ruling_number})")
+    print("\n" + "-"*80)
+    print("👤 ЛИЧНЫЕ ЧИСЛА ПОЛЬЗОВАТЕЛЯ:")
+    print("-"*80)
+    print(f"   Число Души: {soul_number} (планета: {soul_planet})")
+    print(f"   Число Ума: {mind_number} (планета: {mind_planet})")
+    print(f"   Число Судьбы: {destiny_number} (планета: {destiny_planet})")
+    print(f"   Личный Год: {personal_year} (планета: {personal_year_planet})")
+    print(f"   Личный Месяц: {personal_month} (планета: {personal_month_planet})")
+    print(f"   Личный День: {personal_day} (планета: {personal_day_planet})")
+    print(f"   Число Проблемы: {challenge_number}")
+    print("\n" + "-"*80)
+    print("🌟 СИЛА ПЛАНЕТ В КАРТЕ (Квадрат Пифагора):")
+    print("-"*80)
+    for planet, count in sorted(planet_counts.items(), key=lambda x: x[1], reverse=True):
+        if count > 0:
+            stars = "⭐" * count
+            print(f"   {planet}: {count} раз {stars}")
+    print(f"\n   🎯 Сила планеты дня ({ruling_planet}): {planet_strength} раз")
+    print("\n" + "-"*80)
+    print("💯 НАЧИСЛЕНИЕ БАЛЛОВ:")
+    print("-"*80)
+    print(f"   Базовый балл: +60")
+    
+    # Выводим детальный разбор по каждому критерию
+    score_breakdown = []
+    
+    # 1. Душа
+    if soul_number == ruling_number:
+        score_breakdown.append(("1. Число Души = Планета дня (ИДЕАЛЬНЫЙ РЕЗОНАНС)", +30))
+    elif soul_planet and ruling_planet in planet_friendships.get(soul_planet, {}).get('friends', []):
+        score_breakdown.append(("1. Число Души дружественно планете дня", +18))
+    elif soul_planet and ruling_planet in planet_friendships.get(soul_planet, {}).get('enemies', []):
+        score_breakdown.append(("1. Число Души враждебно планете дня", -8))
+    else:
+        score_breakdown.append(("1. Число Души нейтрально к планете дня", +5))
+    
+    # 2. Судьба
+    if destiny_number == ruling_number:
+        score_breakdown.append(("2. Число Судьбы = Планета дня", +22))
+    elif destiny_planet and ruling_planet in planet_friendships.get(destiny_planet, {}).get('friends', []):
+        score_breakdown.append(("2. Число Судьбы дружественно планете дня", +13))
+    elif destiny_planet and ruling_planet in planet_friendships.get(destiny_planet, {}).get('enemies', []):
+        score_breakdown.append(("2. Число Судьбы враждебно планете дня", -5))
+    else:
+        score_breakdown.append(("2. Число Судьбы нейтрально к планете дня", +3))
+    
+    # 3. Ум
+    if mind_number == ruling_number:
+        score_breakdown.append(("3. Число Ума = Планета дня", +18))
+    elif mind_planet and ruling_planet in planet_friendships.get(mind_planet, {}).get('friends', []):
+        score_breakdown.append(("3. Число Ума дружественно планете дня", +10))
+    else:
+        score_breakdown.append(("3. Число Ума нейтрально к планете дня", +2))
+    
+    # 4. Сила планеты в карте
+    if planet_strength >= 4:
+        score_breakdown.append(("4. Планета дня очень сильная в карте (4+ раз)", +22))
+    elif planet_strength >= 2:
+        score_breakdown.append(("4. Планета дня присутствует в карте (2-3 раз)", +14))
+    elif planet_strength == 1:
+        score_breakdown.append(("4. Планета дня слабая в карте (1 раз)", +7))
+    else:
+        score_breakdown.append(("4. Планета дня отсутствует в карте", 0))
+    
+    # 5. Имя
+    if name_planet == ruling_planet:
+        score_breakdown.append(("5. Имя = Планета дня", +12))
+    elif name_planet and ruling_planet in planet_friendships.get(name_planet, {}).get('friends', []):
+        score_breakdown.append(("5. Имя дружественно планете дня", +7))
+    elif name_planet and ruling_planet in planet_friendships.get(name_planet, {}).get('enemies', []):
+        score_breakdown.append(("5. Имя враждебно планете дня", -3))
+    else:
+        score_breakdown.append(("5. Имя нейтрально к планете дня", +2))
+    
+    # 6. Адрес
+    if address_planet and address_planet == ruling_planet:
+        score_breakdown.append(("6. Адрес = Планета дня", +8))
+    elif address_planet and ruling_planet in planet_friendships.get(address_planet, {}).get('friends', []):
+        score_breakdown.append(("6. Адрес дружественно планете дня", +4))
+    elif address_planet and ruling_planet in planet_friendships.get(address_planet, {}).get('enemies', []):
+        score_breakdown.append(("6. Адрес враждебно планете дня", -2))
+    else:
+        score_breakdown.append(("6. Адрес нейтрально к планете дня", +1))
+    
+    # 7. Автомобиль
+    if car_planet and car_planet == ruling_planet:
+        score_breakdown.append(("7. Автомобиль = Планета дня", +8))
+    elif car_planet and ruling_planet in planet_friendships.get(car_planet, {}).get('friends', []):
+        score_breakdown.append(("7. Автомобиль дружественно планете дня", +4))
+    elif car_planet and ruling_planet in planet_friendships.get(car_planet, {}).get('enemies', []):
+        score_breakdown.append(("7. Автомобиль враждебно планете дня", -2))
+    else:
+        score_breakdown.append(("7. Автомобиль нейтрально к планете дня", +1))
+    
+    # 8. Личный День
+    if personal_day == ruling_number:
+        score_breakdown.append(("8. Личный День = Планета дня", +20))
+    elif personal_day_planet and ruling_planet in planet_friendships.get(personal_day_planet, {}).get('friends', []):
+        score_breakdown.append(("8. Личный День дружественен планете дня", +12))
+    elif personal_day_planet and ruling_planet in planet_friendships.get(personal_day_planet, {}).get('enemies', []):
+        score_breakdown.append(("8. Личный День враждебен планете дня", -6))
+    else:
+        score_breakdown.append(("8. Личный День нейтрален к планете дня", +3))
+    
+    # 9. Личный Месяц
+    if personal_month == ruling_number:
+        score_breakdown.append(("9. Личный Месяц = Планета дня", +15))
+    elif personal_month_planet and ruling_planet in planet_friendships.get(personal_month_planet, {}).get('friends', []):
+        score_breakdown.append(("9. Личный Месяц дружественен планете дня", +8))
+    else:
+        score_breakdown.append(("9. Личный Месяц нейтрален к планете дня", +2))
+    
+    # 10. Личный Год
+    if personal_year == ruling_number:
+        score_breakdown.append(("10. Личный Год = Планета дня", +10))
+    elif personal_year_planet and ruling_planet in planet_friendships.get(personal_year_planet, {}).get('friends', []):
+        score_breakdown.append(("10. Личный Год дружественен планете дня", +5))
+    else:
+        score_breakdown.append(("10. Личный Год нейтрален к планете дня", +1))
+    
+    # 11. Число Проблемы
+    if challenge_number > 0:
+        challenge_planet = number_to_planet.get(challenge_number)
+        if challenge_number == ruling_number:
+            score_breakdown.append(("11. Число Проблемы = Планета дня (день работы над собой)", -5))
+        elif challenge_planet and ruling_planet in planet_friendships.get(challenge_planet, {}).get('friends', []):
+            score_breakdown.append(("11. День помогает преодолеть Число Проблемы", +5))
+        else:
+            score_breakdown.append(("11. Число Проблемы нейтрально", 0))
+    
+    # 12. Раху Кала
+    if is_rahu_kaal_active:
+        score_breakdown.append((f"12. РАХУ КАЛА активен ({rahu_kaal.get('start', '')} - {rahu_kaal.get('end', '')})", -15))
+    else:
+        score_breakdown.append(("12. Раху Кала не активен", 0))
+    
+    # 13. Глобальная гармония
+    score_breakdown.append((f"13. Глобальная гармония планет (друзья: {friendly_planets_count}, враги: {enemy_planets_count})", global_planet_harmony))
+    
+    # Выводим все баллы
+    total_from_breakdown = 60
+    for desc, points in score_breakdown:
+        sign = "+" if points >= 0 else ""
+        print(f"   {desc}: {sign}{points}")
+        total_from_breakdown += points
+    
+    print("\n" + "-"*80)
+    print(f"📊 ИТОГОВАЯ ОЦЕНКА: {compatibility_score} баллов")
+    print(f"   (Проверка: {total_from_breakdown} баллов)")
+    print("-"*80)
+    print(f"🎭 Позитивных факторов: {positive_factors}")
+    print(f"⚠️  Негативных факторов: {negative_factors}")
+    print(f"🌈 Динамика влияния: {influence_dynamic}")
+    print("="*80 + "\n")
+    
     # Определяем общую оценку дня - ОБНОВЛЁННЫЕ ПОРОГИ
     if compatibility_score >= 95:
         overall_rating = "Превосходный"
