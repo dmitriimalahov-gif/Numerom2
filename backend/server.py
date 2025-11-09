@@ -2108,6 +2108,31 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
     destiny_number = user_data.get('destiny_number', 0)
     mind_number = user_data.get('mind_number', 0)
     
+    # НОВОЕ: Вычисляем Личный Год, Месяц и День
+    birth_date = user_data.get('birth_date')
+    if birth_date:
+        birth_day = birth_date.day
+        birth_month = birth_date.month
+        current_year = date_obj.year
+        current_month = date_obj.month
+        current_day = date_obj.day
+        
+        # Личный Год = (День рождения + Месяц рождения + Текущий год)
+        personal_year = reduce_to_single_digit(birth_day + birth_month + current_year)
+        
+        # Личный Месяц = (Личный Год + Текущий месяц)
+        personal_month = reduce_to_single_digit(personal_year + current_month)
+        
+        # Личный День = (Личный Месяц + Текущий день)
+        personal_day = reduce_to_single_digit(personal_month + current_day)
+    else:
+        personal_year = 0
+        personal_month = 0
+        personal_day = 0
+    
+    # НОВОЕ: Число Проблемы = |Число Души - Число Судьбы|
+    challenge_number = abs(soul_number - destiny_number) if soul_number and destiny_number else 0
+    
     # Маппинг планет на числа
     planet_to_number = {
         'Surya': 1, 'Chandra': 2, 'Guru': 3, 'Rahu': 4,
@@ -2255,6 +2280,67 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
         compatibility_score += 1
         detailed_analysis['car_match'] = 'neutral'
     
+    # 8. НОВОЕ: Анализ Личного Дня
+    personal_day_planet = number_to_planet.get(personal_day)
+    if personal_day == ruling_number:
+        compatibility_score += 20
+        positive_aspects.append(f"🎯 ЛИЧНЫЙ ДЕНЬ ({personal_day}) совпадает с планетой дня! Это ВАШ особенный день!")
+        detailed_analysis['personal_day_match'] = 'perfect'
+    elif personal_day_planet and ruling_planet in planet_friendships.get(personal_day_planet, {}).get('friends', []):
+        compatibility_score += 12
+        positive_aspects.append(f"✨ Ваш личный день ({personal_day} - {personal_day_planet}) дружественен планете дня")
+        detailed_analysis['personal_day_match'] = 'friendly'
+    elif personal_day_planet and ruling_planet in planet_friendships.get(personal_day_planet, {}).get('enemies', []):
+        compatibility_score -= 6
+        challenges.append(f"Личный день создаёт напряжение - время для терпения")
+        detailed_analysis['personal_day_match'] = 'hostile'
+    else:
+        compatibility_score += 3
+        detailed_analysis['personal_day_match'] = 'neutral'
+    
+    # 9. НОВОЕ: Анализ Личного Месяца
+    personal_month_planet = number_to_planet.get(personal_month)
+    if personal_month == ruling_number:
+        compatibility_score += 15
+        positive_aspects.append(f"📅 Ваш личный месяц ({personal_month}) резонирует с планетой дня!")
+        detailed_analysis['personal_month_match'] = 'perfect'
+    elif personal_month_planet and ruling_planet in planet_friendships.get(personal_month_planet, {}).get('friends', []):
+        compatibility_score += 8
+        positive_aspects.append(f"Личный месяц ({personal_month} - {personal_month_planet}) поддерживает день")
+        detailed_analysis['personal_month_match'] = 'friendly'
+    else:
+        compatibility_score += 2
+        detailed_analysis['personal_month_match'] = 'neutral'
+    
+    # 10. НОВОЕ: Анализ Личного Года
+    personal_year_planet = number_to_planet.get(personal_year)
+    if personal_year == ruling_number:
+        compatibility_score += 10
+        positive_aspects.append(f"🌟 Ваш личный год ({personal_year}) гармонирует с планетой дня!")
+        detailed_analysis['personal_year_match'] = 'perfect'
+    elif personal_year_planet and ruling_planet in planet_friendships.get(personal_year_planet, {}).get('friends', []):
+        compatibility_score += 5
+        positive_aspects.append(f"Личный год ({personal_year} - {personal_year_planet}) благоприятствует дню")
+        detailed_analysis['personal_year_match'] = 'friendly'
+    else:
+        compatibility_score += 1
+        detailed_analysis['personal_year_match'] = 'neutral'
+    
+    # 11. НОВОЕ: Анализ Числа Проблемы
+    if challenge_number > 0:
+        challenge_planet = number_to_planet.get(challenge_number)
+        if challenge_number == ruling_number:
+            # День числа проблемы - время для работы над слабостями
+            compatibility_score -= 5
+            challenges.append(f"⚠️ Сегодня день вашего числа проблемы ({challenge_number} - {challenge_planet}). Время для работы над внутренними конфликтами между душой и судьбой.")
+            detailed_analysis['challenge_day'] = True
+        elif challenge_planet and ruling_planet in planet_friendships.get(challenge_planet, {}).get('friends', []):
+            compatibility_score += 5
+            positive_aspects.append(f"💪 День помогает преодолеть ваше число проблемы ({challenge_number})")
+            detailed_analysis['challenge_day'] = False
+        else:
+            detailed_analysis['challenge_day'] = False
+    
     # Объединяем все заметки
     compatibility_notes = positive_aspects + challenges
     
@@ -2302,6 +2388,13 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
             'name': {'number': name_number, 'planet': name_planet, 'text': user_data.get('full_name', '')},
             'address': {'number': address_number, 'planet': address_planet, 'text': user_data.get('full_address', '')},
             'car': {'number': car_number, 'planet': car_planet, 'text': user_data.get('car_plate', '')}
+        },
+        # НОВОЕ: Личные циклы
+        'personal_cycles': {
+            'year': {'number': personal_year, 'planet': personal_year_planet},
+            'month': {'number': personal_month, 'planet': personal_month_planet},
+            'day': {'number': personal_day, 'planet': personal_day_planet},
+            'challenge': {'number': challenge_number, 'planet': number_to_planet.get(challenge_number)}
         }
     }
 
