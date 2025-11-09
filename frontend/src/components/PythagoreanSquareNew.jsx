@@ -1627,18 +1627,6 @@ const personalCycles = [
                 );
               })}
 
-              <SquareShell
-                borderClass={squareBorderClass}
-                className={`bg-gradient-to-br from-[#5f6b67] via-[#4f5854] to-[#2f3332] flex-col ${textPrimaryClass}`}
-                interactive
-                onMouseEnter={() => setHoveredNumbers(HIGHLIGHT_MAP.diagonal[1])}
-                onMouseLeave={() => setHoveredNumbers([])}
-                onClick={() => openDetail(DIAGONAL_INFO[1].title, DIAGONAL_INFO[1].text)}
-              >
-                <span className={`text-[11px] uppercase tracking-[0.35em] ${textMutedClass}`}>диаг.</span>
-                <span className="mt-1 text-3xl font-semibold">{diagonalSums[1] ?? '-'}</span>
-                <span className={`text-[11px] uppercase tracking-[0.35em] ${textSubtleClass} mt-1`}>3-5-7</span>
-              </SquareShell>
               <Placeholder />
               {verticalSums.map((value, idx) => (
                 <SquareShell
@@ -1669,32 +1657,20 @@ const personalCycles = [
                 <span className={`text-[11px] uppercase tracking-[0.35em] ${textSubtleClass} mt-1`}>1-5-9</span>
               </SquareShell>
 
+              <SquareShell
+                borderClass={squareBorderClass}
+                className={`bg-gradient-to-br from-[#5f6b67] via-[#4f5854] to-[#2f3332] flex-col ${textPrimaryClass}`}
+                interactive
+                onMouseEnter={() => setHoveredNumbers(HIGHLIGHT_MAP.diagonal[1])}
+                onMouseLeave={() => setHoveredNumbers([])}
+                onClick={() => openDetail(DIAGONAL_INFO[1].title, DIAGONAL_INFO[1].text)}
+              >
+                <span className={`text-[11px] uppercase tracking-[0.35em] ${textMutedClass}`}>диаг.</span>
+                <span className="mt-1 text-3xl font-semibold">{diagonalSums[1] ?? '-'}</span>
+                <span className={`text-[11px] uppercase tracking-[0.35em] ${textSubtleClass} mt-1`}>3-5-7</span>
+              </SquareShell>
+
               <Placeholder />
-              {bottomPersonal.map((item) => (
-                <SquareShell
-                  key={item.key}
-                  borderClass={squareBorderClass}
-                  className={`bg-gradient-to-br from-[#6d7a76] via-[#5c6864] to-[#39413f] flex-col ${textPrimaryClass}`}
-                  interactive
-                  onMouseEnter={() => setHoveredNumbers([])}
-                  onMouseLeave={() => setHoveredNumbers([])}
-                  onClick={() =>
-                    openDetail(
-                      PERSONAL_DETAILS[item.type].title,
-                      PERSONAL_DETAILS[item.type].text
-                    )
-                  }
-                >
-                  <span className={`text-sm uppercase tracking-[0.4em] ${textMutedClass}`}>{item.label}</span>
-                  <span className="mt-1 text-3xl font-semibold">
-                    {personalData?.[item.key] ?? '-'}
-                  </span>
-                </SquareShell>
-              ))}
-              <Placeholder />
-              <Placeholder />
-              
-              {/* НОВОЕ: Личные циклы */}
               {personalCycles.map((item) => (
                 <SquareShell
                   key={item.key}
@@ -1722,6 +1698,8 @@ const personalCycles = [
                   </span>
                 </SquareShell>
               ))}
+              <Placeholder />
+              <Placeholder />
               </div>
               <div className={`border-t ${borderClass} pt-8`}>
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
