@@ -9,7 +9,7 @@ import PaymentCancelled from "./components/PaymentCancelled";
 
 // Импорты для всех разделов
 import NameNumerology from './components/NameNumerology';
-import Compatibility from './components/Compatibility';
+import Compatibility from './components/CompatibilityNew';
 import Quiz from './components/Quiz';
 import PlanetaryDailyRoute from './components/PlanetaryDailyRouteNew';
 import ReportExport from './components/ReportExport';
