@@ -933,11 +933,17 @@ async def get_planetary_hour_advice(
             
             print(f"🌍 Сила планет: {user_data['planet_counts']}")
             print(f"🌟 Запрашиваемая планета: {planet}, сила: {user_data['planet_counts'].get(planet, 0)}")
+            
+            # Сохраняем дату рождения в user_data для дальнейшего анализа
+            user_data["birth_date"] = birth_date_obj
                 
         except Exception as e:
             print(f"❌ Ошибка при вычислении чисел: {e}")
             import traceback
             traceback.print_exc()
+    
+    print(f"\n🚀 Вызываем get_personalized_planetary_advice для {planet}")
+    print(f"   user_data: {user_data}")
     
     # Получаем персонализированные советы
     advice = await get_personalized_planetary_advice(db, planet, user_data, is_night)

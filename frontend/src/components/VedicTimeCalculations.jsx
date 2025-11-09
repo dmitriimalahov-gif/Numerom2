@@ -1298,7 +1298,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
             {advice.personalized_notes.map((note, idx) => (
               <div 
                 key={idx}
-                className="p-4 rounded-lg border-2"
+                className={`p-4 rounded-lg border-2 ${themeConfig.text}`}
                 style={{
                   backgroundColor: planetColor + '20',
                   borderColor: planetColor + '60'
@@ -1313,7 +1313,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
 
         {/* Общая характеристика */}
         <div>
-          <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
+          <h3 className={`font-bold text-lg mb-2 flex items-center gap-2 ${themeConfig.text}`}>
             <Sparkles className="h-5 w-5" style={{ color: planetColor }} />
             Общая характеристика
           </h3>
@@ -1322,7 +1322,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
 
         {/* Благоприятные действия */}
         <div>
-          <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
+          <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
             <CheckCircle2 className="h-5 w-5 text-emerald-500" />
             Благоприятные действия
           </h3>
@@ -1338,7 +1338,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
 
         {/* Чего избегать */}
         <div>
-          <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
+          <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
             <AlertTriangle className="h-5 w-5 text-amber-500" />
             Чего избегать
           </h3>
@@ -1354,7 +1354,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
 
         {/* Здоровье */}
         <div 
-          className="p-4 rounded-lg"
+          className={`p-4 rounded-lg ${themeConfig.text}`}
           style={{
             backgroundColor: planetColor + '15',
             borderLeft: `4px solid ${planetColor}`
@@ -1367,7 +1367,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
         {/* Мантра */}
         {advice.mantra && (
           <div 
-            className="p-4 rounded-lg text-center"
+            className={`p-4 rounded-lg text-center ${themeConfig.text}`}
             style={{
               backgroundColor: planetColor + '20',
               border: `2px solid ${planetColor}60`
@@ -1380,7 +1380,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
 
         {/* Совет для времени суток */}
         {advice.time_advice && (
-          <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
+          <div className={`p-4 rounded-lg bg-blue-500/10 border border-blue-500/30 ${themeConfig.text}`}>
             <p className="text-sm italic">{advice.time_advice}</p>
           </div>
         )}
