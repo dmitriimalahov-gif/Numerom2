@@ -1,20 +1,7 @@
 #!/usr/bin/env python3
 """
-Скрипт для автоматического создания урока из папки с материалами.
-
-Использование:
-    python create_lesson_from_folder.py <номер_урока>
-    
-Например:
-    python create_lesson_from_folder.py 1
-    
-Скрипт ищет папку: файлы для запуска/NumerOM запуск курса/{номер}/Для сайта {номер}
-И создаёт урок на основе файлов:
-    - Урок_{номер}_*_Теория.txt
-    - Урок_{номер}_*_Упражнения.txt
-    - Урок_{номер}_*_Тест.txt
-    - Урок_{номер}_*_Челлендж.txt
-    - файлы/* (PDF, DOCX файлы)
+Улучшенный скрипт для создания урока из папки с материалами.
+Правильно парсит все компоненты урока согласно структуре lesson_system.py
 """
 
 import os
@@ -24,6 +11,7 @@ import requests
 import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+import uuid
 
 # Конфигурация
 BACKEND_URL = "http://192.168.110.178:8001/api"
@@ -47,17 +35,14 @@ LESSON_PLANETS = {
 
 def get_admin_token():
     """Получить токен администратора"""
-    # Попробуем прочитать из файла, если есть
     token_file = BASE_DIR / ".admin_token"
     if token_file.exists():
         return token_file.read_text().strip()
     
-    # Иначе запросим у пользователя
     print("\n🔐 Требуется токен администратора")
     print("Войдите в систему как администратор и скопируйте токен из localStorage")
     token = input("Введите токен: ").strip()
     
-    # Сохраним для следующих запусков
     token_file.write_text(token)
     return token
 
@@ -79,20 +64,33 @@ def parse_theory(content: str) -> Dict[str, Any]:
     current_content = []
     
     lines = content.split('\n')
-    for line in lines:
-        # Проверяем, является ли строка заголовком секции
-        if line.strip().startswith('───') or (line.strip() and line.strip().isupper() and len(line.strip()) < 50):
+    i = 0
+    
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        # Проверяем, является ли строка разделителем
+        if line.startswith('───'):
             # Сохраняем предыдущую секцию
             if current_section and current_content:
                 sections[current_section] = '\n'.join(current_content).strip()
-            
-            # Начинаем новую секцию
-            if not line.strip().startswith('───'):
-                current_section = line.strip().lower().replace(' ', '_')
                 current_content = []
+            
+            # Следующая строка после разделителя - это заголовок секции
+            if i + 1 < len(lines):
+                i += 1
+                header = lines[i].strip()
+                if header and header.isupper():
+                    current_section = header.lower()
+                    # Пропускаем следующий разделитель если он есть
+                    if i + 1 < len(lines) and lines[i + 1].strip().startswith('───'):
+                        i += 1
         else:
-            if line.strip():
-                current_content.append(line)
+            # Добавляем содержимое к текущей секции
+            if current_section and line:
+                current_content.append(lines[i])
+        
+        i += 1
     
     # Сохраняем последнюю секцию
     if current_section and current_content:
@@ -100,73 +98,81 @@ def parse_theory(content: str) -> Dict[str, Any]:
     
     return {
         "introduction": sections.get("введение", ""),
-        "myth": sections.get("миф_о_сурье", sections.get("миф", "")),
-        "key_concepts": sections.get("ключевые_концепции", ""),
-        "gunas": sections.get("проявления_в_гунах", ""),
-        "body": sections.get("сурья_в_теле", sections.get("в_теле", "")),
-        "karma": sections.get("кармическая_задача", ""),
-        "upai": sections.get("упайи_(гармонизация_сурьи)", sections.get("упайи", "")),
-        "pythagoras": sections.get("связь_с_квадратом_пифагора_и_числом_1", ""),
-        "practical": sections.get("практическое_применение", ""),
+        "myth": sections.get("миф о сурье", ""),
+        "key_concepts": sections.get("ключевые концепции", ""),
+        "gunas": sections.get("проявления в гунах", ""),
+        "body": sections.get("сурья в теле", ""),
+        "karma": sections.get("кармическая задача", ""),
+        "upai": sections.get("упайи (гармонизация сурьи)", sections.get("упайи", "")),
+        "pythagoras": sections.get("связь с квадратом пифагора и числом 1", ""),
+        "practical": sections.get("практическое применение", ""),
         "full_text": content
     }
 
 
 def parse_exercises(content: str) -> List[Dict[str, Any]]:
-    """Парсинг упражнений"""
+    """Парсинг упражнений согласно структуре Exercise"""
     exercises = []
     
-    # Разбиваем на упражнения по заголовкам
-    exercise_pattern = r'УПРАЖНЕНИЕ\s+(\d+)[:\s]+([^\n]+)'
-    matches = list(re.finditer(exercise_pattern, content, re.IGNORECASE))
+    # Разбиваем на блоки упражнений по разделителям
+    exercise_blocks = re.split(r'───+', content)
     
-    for i, match in enumerate(matches):
-        exercise_num = match.group(1)
-        title = match.group(2).strip()
+    for i, block in enumerate(exercise_blocks):
+        if not block.strip():
+            continue
+            
+        # Ищем номер упражнения
+        number_match = re.search(r'(\d+)\.\s*Название:\s*([^\n]+)', block, re.IGNORECASE)
+        if not number_match:
+            continue
+            
+        exercise_num = number_match.group(1)
+        title = number_match.group(2).strip()
         
-        # Извлекаем содержимое упражнения
-        start_pos = match.end()
-        end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(content)
-        exercise_content = content[start_pos:end_pos].strip()
+        # Извлекаем тип
+        type_match = re.search(r'Тип:\s*([^\n]+)', block, re.IGNORECASE)
+        exercise_type = type_match.group(1).strip() if type_match else "practical"
         
-        # Разбиваем на инструкции и ожидаемый результат
+        # Извлекаем содержание
+        content_match = re.search(r'Содержание:\s*\n(.*?)(?=Инструкция:|$)', block, re.DOTALL | re.IGNORECASE)
+        exercise_content = content_match.group(1).strip() if content_match else ""
+        
+        # Извлекаем инструкции
         instructions = []
-        expected_outcome = ""
+        instruction_match = re.search(r'Инструкция:\s*\n(.*?)(?=Ожидаемый результат:|$)', block, re.DOTALL | re.IGNORECASE)
+        if instruction_match:
+            instruction_text = instruction_match.group(1).strip()
+            # Разбиваем по пунктам
+            for line in instruction_text.split('\n'):
+                line = line.strip()
+                if line and (line[0].isdigit() or line.startswith('•') or line.startswith('-')):
+                    instructions.append(re.sub(r'^\d+\.\s*', '', line.lstrip('•- ')))
         
-        lines = exercise_content.split('\n')
-        current_section = "instructions"
+        # Извлекаем ожидаемый результат
+        outcome_match = re.search(r'Ожидаемый результат:\s*\n?(.*?)(?=───|$)', block, re.DOTALL | re.IGNORECASE)
+        expected_outcome = outcome_match.group(1).strip() if outcome_match else ""
         
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith('───'):
-                continue
-            
-            if "ожидаемый результат" in line.lower() or "результат:" in line.lower():
-                current_section = "outcome"
-                continue
-            
-            if current_section == "instructions":
-                if line and not line.startswith('─'):
-                    instructions.append(line)
-            elif current_section == "outcome":
-                if line and not line.startswith('─'):
-                    expected_outcome += line + " "
-        
-        exercises.append({
-            "title": title,
-            "instructions": instructions,
-            "expected_outcome": expected_outcome.strip()
-        })
+        if title:
+            exercises.append({
+                "id": f"ex_{exercise_num}_{title.lower().replace(' ', '_')[:20]}",
+                "title": title,
+                "type": exercise_type.lower(),
+                "content": exercise_content,
+                "instructions": instructions,
+                "expected_outcome": expected_outcome
+            })
     
     return exercises
 
 
 def parse_quiz(content: str) -> Dict[str, Any]:
-    """Парсинг теста"""
+    """Парсинг теста согласно структуре Quiz"""
     questions = []
+    correct_answers = []
+    explanations = []
     
     # Разбиваем на вопросы
-    question_pattern = r'(\d+)\.\s+([^\n]+)\n((?:[a-dа-г]\).*\n?)+)'
+    question_pattern = r'(\d+)\.\s+([^\n]+)\n((?:[A-E]\.\s+[^\n]+\n?)+)'
     matches = re.finditer(question_pattern, content, re.MULTILINE)
     
     for match in matches:
@@ -178,7 +184,7 @@ def parse_quiz(content: str) -> Dict[str, Any]:
         options = []
         for line in options_text.split('\n'):
             line = line.strip()
-            if line and (line[0].lower() in 'abcdабвгд' and line[1] in ')'):
+            if line and re.match(r'^[A-E]\.', line):
                 options.append(line)
         
         if question_text and len(options) >= 2:
@@ -187,52 +193,81 @@ def parse_quiz(content: str) -> Dict[str, Any]:
                 "options": options
             })
     
+    # Извлекаем правильные ответы из блока ОТВЕТЫ
+    answers_match = re.search(r'ОТВЕТЫ:\s*\n([^\n]+)', content)
+    if answers_match:
+        answers_text = answers_match.group(1)
+        # Парсим формат "1–C, 2–A, 3–C, ..."
+        answer_pairs = re.findall(r'(\d+)–([A-E])', answers_text)
+        for num, answer in answer_pairs:
+            correct_answers.append(answer)
+            explanations.append(f"Правильный ответ на вопрос {num}: {answer}")
+    
     return {
         "id": f"quiz_lesson_{len(questions)}",
         "title": "Тест по уроку",
-        "questions": questions
+        "questions": questions,
+        "correct_answers": correct_answers,
+        "explanations": explanations
     }
 
 
 def parse_challenge(content: str) -> Dict[str, Any]:
-    """Парсинг челленджа"""
+    """Парсинг челленджа согласно структуре Challenge"""
     lines = content.split('\n')
     
     title = ""
     description = ""
-    goals = []
-    duration = "7 дней"
+    daily_tasks = []
     
-    current_section = None
+    current_day = None
+    current_tasks = []
     
     for line in lines:
         line = line.strip()
         if not line or line.startswith('───'):
             continue
         
-        # Определяем секции
+        # Заголовок челленджа
         if "ЧЕЛЛЕНДЖ" in line.upper() and not title:
             title = line
-        elif "ОПИСАНИЕ" in line.upper() or "ЦЕЛЬ" in line.upper():
-            current_section = "description"
-        elif "ЗАДАЧИ" in line.upper() or "ЗАДАНИЯ" in line.upper():
-            current_section = "goals"
-        elif "ДЛИТЕЛЬНОСТЬ" in line.upper():
-            current_section = "duration"
-        else:
-            if current_section == "description":
-                description += line + " "
-            elif current_section == "goals":
-                if line and (line[0].isdigit() or line.startswith('•') or line.startswith('-')):
-                    goals.append(line.lstrip('0123456789.•- '))
-            elif current_section == "duration":
-                duration = line
+        elif "Описание:" in line:
+            # Следующие строки до первого дня - это описание
+            continue
+        elif re.match(r'^[А-Я]+ — ', line):
+            # Новый день (ВОСКРЕСЕНЬЕ — СВЕТ ВНУТРИ)
+            if current_day and current_tasks:
+                daily_tasks.append({
+                    "day": len(daily_tasks) + 1,
+                    "title": current_day,
+                    "tasks": current_tasks
+                })
+            
+            current_day = line
+            current_tasks = []
+        elif line and current_day:
+            # Задачи дня
+            if line[0].isdigit() or line.startswith('•') or line.startswith('-'):
+                current_tasks.append(line.lstrip('0123456789.•- '))
+            elif not any(keyword in line.lower() for keyword in ['результат:', 'описание:']):
+                if not description and not current_day:
+                    description += line + " "
+    
+    # Добавляем последний день
+    if current_day and current_tasks:
+        daily_tasks.append({
+            "day": len(daily_tasks) + 1,
+            "title": current_day,
+            "tasks": current_tasks
+        })
     
     return {
-        "title": title or "Недельный челлендж",
+        "id": f"challenge_7days_{uuid.uuid4().hex[:8]}",
+        "title": title or "7-дневный челлендж",
         "description": description.strip(),
-        "goals": goals,
-        "duration_days": 7
+        "duration_days": 7,
+        "daily_tasks": daily_tasks,
+        "completion_tracking": {}
     }
 
 
@@ -318,10 +353,11 @@ def create_lesson(lesson_num: int, token: str):
         quiz = parse_quiz(quiz_content)
         print(f"  ✅ Тест ({len(quiz['questions'])} вопросов)")
     
-    challenge = None
+    challenges = []
     if challenge_file:
         challenge_content = read_text_file(challenge_file[0])
         challenge = parse_challenge(challenge_content)
+        challenges = [challenge]
         print(f"  ✅ Челлендж")
     
     # Загружаем файлы
@@ -338,22 +374,23 @@ def create_lesson(lesson_num: int, token: str):
                         "title": file_path.stem
                     })
     
-    # Формируем данные урока
+    # Формируем данные урока согласно структуре Lesson
     lesson_data = {
         "id": f"lesson_{lesson_num}_{planet_info['name'].lower()}",
         "title": f"Урок {lesson_num}: {planet_info['name']} - Число {planet_info['number']}",
         "module": f"Модуль {(lesson_num // 3) + 1}: Планеты и числа",
-        "description": theory.get("introduction", "")[:200],
-        "points_required": lesson_num * 100,
-        "is_active": True,
         "content": {
             "theory": theory,
             "planet_info": planet_info
         },
+        "video_path": None,
+        "pdf_path": None,
+        "additional_pdfs": additional_files,
         "exercises": exercises,
         "quiz": quiz,
-        "challenges": [challenge] if challenge else [],
-        "additional_pdfs": additional_files
+        "challenges": challenges,
+        "habit_tracker": None,  # Можно добавить позже
+        "points_required": lesson_num * 100
     }
     
     # Отправляем на сервер
@@ -383,8 +420,8 @@ def create_lesson(lesson_num: int, token: str):
 
 def main():
     if len(sys.argv) < 2:
-        print("Использование: python create_lesson_from_folder.py <номер_урока>")
-        print("Например: python create_lesson_from_folder.py 1")
+        print("Использование: python create_lesson_improved.py <номер_урока>")
+        print("Например: python create_lesson_improved.py 1")
         sys.exit(1)
     
     lesson_num = int(sys.argv[1])
@@ -402,4 +439,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

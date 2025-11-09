@@ -98,18 +98,18 @@ const LessonMediaEditor = ({
                   <p className="text-xs text-yellow-600 mt-1">Обрабатывается...</p>
                 )}
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  const videoUrl = editingLesson.video_file_id
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => {
+                    const videoUrl = editingLesson.video_file_id 
                     ? getConsultationAssetUrl('video', editingLesson.video_file_id)
-                    : editingLesson.video_url;
+                      : editingLesson.video_url;
                   openInNewTab(videoUrl);
-                }}
-              >
-                <Eye className="w-3 h-3 mr-1" />
-                Просмотр
+                  }}
+                >
+                  <Eye className="w-3 h-3 mr-1" />
+                  Просмотр
               </Button>
             </div>
           )}
@@ -150,14 +150,14 @@ const LessonMediaEditor = ({
           {(editingLesson?.pdf_filename || editingLesson?.pdf_file_id) && (
             <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded flex justify-between items-center">
               <p className="text-sm text-green-600">✓ PDF: {editingLesson.pdf_filename || 'PDF файл загружен'}</p>
-              <Button
-                size="sm"
-                variant="outline"
+                <Button 
+                  size="sm" 
+                  variant="outline"
                 onClick={() => openInNewTab(getConsultationAssetUrl('pdf', editingLesson.pdf_file_id))}
-              >
-                <Eye className="w-3 h-3 mr-1" />
-                Просмотр
-              </Button>
+                >
+                  <Eye className="w-3 h-3 mr-1" />
+                  Просмотр
+                </Button>
             </div>
           )}
           <p className="text-xs text-gray-500 mt-1">Только PDF файлы. Максимум: 50MB</p>
@@ -197,22 +197,22 @@ const LessonMediaEditor = ({
           {(editingLesson?.word_filename || editingLesson?.word_file_id) && (
             <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded flex justify-between items-center">
               <p className="text-sm text-green-600">✓ Word: {editingLesson.word_filename || 'Word файл загружен'}</p>
-              <Button
-                size="sm"
-                variant="outline"
+                <Button 
+                  size="sm" 
+                  variant="outline"
                 onClick={() => openInNewTab(getLessonWordUrl(editingLesson.word_file_id))}
-              >
-                <Eye className="w-3 h-3 mr-1" />
-                Просмотр
-              </Button>
+                >
+                  <Eye className="w-3 h-3 mr-1" />
+                  Просмотр
+                </Button>
             </div>
           )}
           <p className="text-xs text-gray-500 mt-1">Форматы: .doc, .docx. Максимум: 50MB</p>
         </div>
 
         {/* Пустое состояние */}
-        {(!editingLesson?.video_filename && !editingLesson?.video_file_id &&
-          !editingLesson?.pdf_filename && !editingLesson?.pdf_file_id &&
+        {(!editingLesson?.video_filename && !editingLesson?.video_file_id && 
+          !editingLesson?.pdf_filename && !editingLesson?.pdf_file_id && 
           !editingLesson?.word_filename && !editingLesson?.word_file_id) && (
           <div className="text-center py-6 text-gray-400">
             <Upload className="w-12 h-12 mx-auto mb-2" />
