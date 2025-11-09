@@ -217,8 +217,8 @@ def calculate_planetary_hours(sunrise: datetime, sunset: datetime, weekday: int)
             "hour": i + 1,
             "planet": planet,
             "planet_sanskrit": get_planet_sanskrit(planet),
-            "start_time": hour_start,
-            "end_time": hour_end,
+            "start_time": hour_start.isoformat(),
+            "end_time": hour_end.isoformat(),
             "is_favorable": is_favorable_time(planet, hour_start),
             "period": "day"
         })
@@ -255,8 +255,8 @@ def calculate_night_planetary_hours(sunset: datetime, next_sunrise: datetime, we
             "hour": i + 13,  # Нумерация с 13 до 24
             "planet": planet,
             "planet_sanskrit": get_planet_sanskrit(planet),
-            "start_time": hour_start,
-            "end_time": hour_end,
+            "start_time": hour_start.isoformat(),
+            "end_time": hour_end.isoformat(),
             "is_favorable": is_favorable_time(planet, hour_start),
             "period": "night"
         })

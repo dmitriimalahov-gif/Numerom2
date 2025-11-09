@@ -215,17 +215,22 @@ const VedicTimeCalculations = () => {
   const parsePlanetaryTime = useCallback(
     (timeString) => {
       if (!timeString) return null;
+      
       // Если приходит полный ISO-формат — используем напрямую
       const isoPattern = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
       if (isoPattern.test(timeString)) {
-        return new Date(timeString);
+        const date = new Date(timeString);
+        console.log('📅 Парсинг ISO времени:', timeString, '→', date.toLocaleString('ru-RU'));
+        return date;
       }
 
       if (!selectedDate) return null;
 
       // Если приходит только время (HH:MM), привязываем к выбранной дате (локальной)
       const normalized = timeString.slice(0, 5);
-      return new Date(`${selectedDate}T${normalized}:00`);
+      const date = new Date(`${selectedDate}T${normalized}:00`);
+      console.log('📅 Парсинг времени:', timeString, '→', date.toLocaleString('ru-RU'));
+      return date;
     },
     [selectedDate]
   );
