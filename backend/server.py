@@ -2118,6 +2118,175 @@ async def get_user_numerology_data(user_id: str) -> dict:
         'car_plate': user.car_number or ''
     }
 
+def generate_detailed_day_interpretation(
+    ruling_planet: str,
+    ruling_number: int,
+    soul_number: int,
+    mind_number: int,
+    destiny_number: int,
+    personal_year: int,
+    personal_month: int,
+    personal_day: int,
+    challenge_number: int,
+    planet_strength: int,
+    planet_counts: dict,
+    detailed_analysis: dict,
+    positive_aspects: list,
+    challenges: list
+) -> dict:
+    """Генерирует подробную интерпретацию дня с учётом всех чисел и силы планет"""
+    
+    # Характеристики планет
+    planet_characteristics = {
+        'Surya': {
+            'name': 'Солнце',
+            'energy': 'лидерство, уверенность, власть',
+            'activities': 'важные встречи, публичные выступления, принятие решений',
+            'avoid': 'конфликты с начальством, эгоизм'
+        },
+        'Chandra': {
+            'name': 'Луна',
+            'energy': 'эмоции, интуиция, забота',
+            'activities': 'семейные дела, творчество, работа с эмоциями',
+            'avoid': 'импульсивные решения, эмоциональные срывы'
+        },
+        'Mangal': {
+            'name': 'Марс',
+            'energy': 'действие, смелость, энергия',
+            'activities': 'спорт, активные проекты, решительные действия',
+            'avoid': 'агрессия, конфликты, спешка'
+        },
+        'Budh': {
+            'name': 'Меркурий',
+            'energy': 'общение, обучение, торговля',
+            'activities': 'переговоры, учёба, коммуникации, бизнес',
+            'avoid': 'обман, пустая болтовня'
+        },
+        'Guru': {
+            'name': 'Юпитер',
+            'energy': 'мудрость, рост, благополучие',
+            'activities': 'обучение, духовные практики, инвестиции',
+            'avoid': 'излишества, самодовольство'
+        },
+        'Shukra': {
+            'name': 'Венера',
+            'energy': 'любовь, красота, гармония',
+            'activities': 'романтика, искусство, покупки, отдых',
+            'avoid': 'излишества, лень, поверхностность'
+        },
+        'Shani': {
+            'name': 'Сатурн',
+            'energy': 'дисциплина, терпение, ответственность',
+            'activities': 'долгосрочное планирование, серьёзная работа',
+            'avoid': 'пессимизм, жёсткость, страхи'
+        },
+        'Rahu': {
+            'name': 'Раху',
+            'energy': 'амбиции, инновации, трансформация',
+            'activities': 'нестандартные решения, технологии, риск',
+            'avoid': 'обман, манипуляции, иллюзии'
+        },
+        'Ketu': {
+            'name': 'Кету',
+            'energy': 'духовность, освобождение, интуиция',
+            'activities': 'медитация, завершение циклов, духовный рост',
+            'avoid': 'изоляция, отрешённость от реальности'
+        }
+    }
+    
+    planet_info = planet_characteristics.get(ruling_planet, {})
+    
+    # Анализ силы планеты в карте
+    strength_interpretation = ""
+    if planet_strength >= 4:
+        strength_interpretation = f"У вас очень сильная {planet_info.get('name', ruling_planet)} в личной карте ({planet_strength} раз). Это ВАША планета! Вы естественно владеете энергией {planet_info.get('energy', '')}. Сегодня эта энергия усиливается многократно - используйте её для {planet_info.get('activities', '')}."
+    elif planet_strength >= 2:
+        strength_interpretation = f"В вашей карте присутствует {planet_info.get('name', ruling_planet)} ({planet_strength} раз). Вы знакомы с энергией {planet_info.get('energy', '')}. Сегодня - отличный день для развития этих качеств через {planet_info.get('activities', '')}."
+    elif planet_strength == 1:
+        strength_interpretation = f"У вас есть {planet_info.get('name', ruling_planet)} в карте (1 раз). Это слабая, но важная энергия. Сегодня день поможет вам развить качества {planet_info.get('energy', '')}. Рекомендуется: {planet_info.get('activities', '')}."
+    else:
+        strength_interpretation = f"В вашей карте отсутствует {planet_info.get('name', ruling_planet)}. Это означает, что энергия {planet_info.get('energy', '')} может быть для вас непривычной. Сегодня - прекрасная возможность познакомиться с этой энергией и восполнить пробел. Начните с малого: {planet_info.get('activities', '')}."
+    
+    # Анализ личных чисел
+    personal_numbers_analysis = []
+    
+    if soul_number:
+        personal_numbers_analysis.append(f"**Число Души ({soul_number})**: {detailed_analysis.get('soul_match', 'neutral')} совместимость с днём. " + 
+            ("Ваша внутренняя сущность полностью резонирует с энергией дня!" if detailed_analysis.get('soul_match') == 'perfect' else
+             "Ваша душа чувствует поддержку от энергии дня." if detailed_analysis.get('soul_match') == 'friendly' else
+             "День создаёт напряжение для вашей души - время для внутренней работы." if detailed_analysis.get('soul_match') == 'hostile' else
+             "Ваша душа открыта новым возможностям."))
+    
+    if mind_number:
+        personal_numbers_analysis.append(f"**Число Ума ({mind_number})**: {detailed_analysis.get('mind_match', 'neutral')} совместимость. " +
+            ("Ваше мышление работает на максимуме!" if detailed_analysis.get('mind_match') == 'perfect' else
+             "Ваш ум получает поддержку от планеты дня." if detailed_analysis.get('mind_match') == 'friendly' else
+             "День расширяет границы вашего мышления."))
+    
+    if destiny_number:
+        personal_numbers_analysis.append(f"**Число Судьбы ({destiny_number})**: {detailed_analysis.get('destiny_match', 'neutral')} совместимость. " +
+            ("Идеальный день для реализации вашего предназначения!" if detailed_analysis.get('destiny_match') == 'perfect' else
+             "День поддерживает движение к вашим целям." if detailed_analysis.get('destiny_match') == 'friendly' else
+             "Работайте над своей судьбой с терпением." if detailed_analysis.get('destiny_match') == 'hostile' else
+             "День открывает новые пути к вашей судьбе."))
+    
+    # Анализ личных циклов
+    personal_cycles_analysis = []
+    
+    if personal_year:
+        personal_cycles_analysis.append(f"**Личный Год ({personal_year})**: Общая энергия вашего года " +
+            ("полностью гармонирует с сегодняшним днём!" if detailed_analysis.get('personal_year_match') == 'perfect' else
+             "поддерживает энергию дня." if detailed_analysis.get('personal_year_match') == 'friendly' else
+             "создаёт нейтральный фон."))
+    
+    if personal_month:
+        personal_cycles_analysis.append(f"**Личный Месяц ({personal_month})**: Энергия текущего месяца " +
+            ("идеально резонирует с днём!" if detailed_analysis.get('personal_month_match') == 'perfect' else
+             "благоприятствует дню." if detailed_analysis.get('personal_month_match') == 'friendly' else
+             "нейтральна к энергии дня."))
+    
+    if personal_day:
+        personal_cycles_analysis.append(f"**Личный День ({personal_day})**: Это " +
+            ("ВАШ особенный день! Максимальный резонанс!" if detailed_analysis.get('personal_day_match') == 'perfect' else
+             "благоприятный день для вас." if detailed_analysis.get('personal_day_match') == 'friendly' else
+             "день с вызовами - будьте внимательны." if detailed_analysis.get('personal_day_match') == 'hostile' else
+             "обычный день в вашем личном цикле."))
+    
+    # Анализ числа проблемы
+    challenge_analysis = ""
+    if challenge_number > 0:
+        if detailed_analysis.get('challenge_day'):
+            challenge_analysis = f"⚠️ **Число Проблемы ({challenge_number})**: Сегодня день вашего числа проблемы. Это время для осознанной работы над внутренним конфликтом между желаниями души (число {soul_number}) и жизненным предназначением (число {destiny_number}). Используйте этот день для медитации, самоанализа и принятия себя."
+        else:
+            challenge_analysis = f"**Число Проблемы ({challenge_number})**: День помогает вам справиться с внутренними противоречиями. Работайте над гармонизацией души и судьбы."
+    
+    # Общие рекомендации
+    recommendations = []
+    recommendations.append(f"🎯 **Главная рекомендация дня**: Сфокусируйтесь на {planet_info.get('activities', 'важных делах')}.")
+    recommendations.append(f"✅ **Что делать**: {', '.join([aspect.replace('🌟', '').replace('✨', '').replace('🎯', '').replace('🧠', '').replace('💪', '').replace('📝', '').replace('🏠', '').replace('🚗', '').replace('💡', '').strip() for aspect in positive_aspects[:3]])}.")
+    
+    if challenges:
+        recommendations.append(f"⚠️ **Чего избегать**: {planet_info.get('avoid', 'негативных проявлений')}. {challenges[0] if challenges else ''}")
+    
+    # Анализ других планет в карте
+    other_planets_analysis = []
+    for planet, count in planet_counts.items():
+        if planet != ruling_planet and count > 0:
+            other_planet_info = planet_characteristics.get(planet, {})
+            other_planets_analysis.append(f"- **{other_planet_info.get('name', planet)}** ({count} раз): энергия {other_planet_info.get('energy', '')} также присутствует в вашей карте и может быть использована сегодня.")
+    
+    return {
+        'ruling_planet_description': f"{planet_info.get('name', ruling_planet)} ({ruling_number}) - планета {planet_info.get('energy', '')}",
+        'strength_interpretation': strength_interpretation,
+        'personal_numbers_analysis': personal_numbers_analysis,
+        'personal_cycles_analysis': personal_cycles_analysis,
+        'challenge_analysis': challenge_analysis,
+        'recommendations': recommendations,
+        'other_planets_in_chart': other_planets_analysis[:5],  # Топ-5 других планет
+        'planet_characteristics': planet_info
+    }
+
+
 def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dict) -> dict:
     """Анализирует совместимость дня с личными числами пользователя"""
     
@@ -2403,6 +2572,24 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
         overall_description = "День для внутренней работы и развития слабых сторон. Каждый вызов - это возможность стать сильнее!"
         color_class = "orange"  # Было "red"
     
+    # НОВОЕ: Подробная расшифровка с учётом всех чисел и силы планет
+    detailed_interpretation = generate_detailed_day_interpretation(
+        ruling_planet=ruling_planet,
+        ruling_number=ruling_number,
+        soul_number=soul_number,
+        mind_number=mind_number,
+        destiny_number=destiny_number,
+        personal_year=personal_year,
+        personal_month=personal_month,
+        personal_day=personal_day,
+        challenge_number=challenge_number,
+        planet_strength=planet_strength,
+        planet_counts=planet_counts,
+        detailed_analysis=detailed_analysis,
+        positive_aspects=positive_aspects,
+        challenges=challenges
+    )
+    
     return {
         'overall_score': compatibility_score,
         'overall_rating': overall_rating,
@@ -2416,6 +2603,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
         'challenges': challenges,  # Новое
         'planet_strength': planet_strength,
         'detailed_analysis': detailed_analysis,
+        'detailed_interpretation': detailed_interpretation,  # НОВОЕ: Подробная расшифровка
         'user_planets': {
             'soul': {'number': soul_number, 'planet': soul_planet},
             'destiny': {'number': destiny_number, 'planet': destiny_planet},
