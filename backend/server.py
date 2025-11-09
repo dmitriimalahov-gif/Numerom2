@@ -39,7 +39,9 @@ from numerology import (
     calculate_compatibility,
     parse_birth_date,
     create_pythagorean_square,
-    reduce_to_single_digit
+    reduce_to_single_digit,
+    reduce_to_single_digit_always,
+    reduce_for_ruling_number
 )
 from vedic_numerology import (
     calculate_comprehensive_vedic_numerology,
@@ -528,15 +530,15 @@ async def pythagorean_square(birth_date: str = None, current_user: dict = Depend
     d, m, y = parse_birth_date(birth_date)
     results = create_pythagorean_square(d, m, y)
     
-    # Добавляем личные числа
-    soul_number = reduce_to_single_digit(d)
-    mind_number = reduce_to_single_digit(m)
-    destiny_number = reduce_to_single_digit(d + m + y)
-    helping_mind_number = reduce_to_single_digit(m + y)
-    wisdom_number = reduce_to_single_digit(d + m)
-    ruling_number = reduce_to_single_digit(d + m)
+    # Добавляем личные числа (все сводим к однозначному, кроме правящего)
+    soul_number = reduce_to_single_digit_always(d)
+    mind_number = reduce_to_single_digit_always(m)
+    destiny_number = reduce_to_single_digit_always(d + m + y)
+    helping_mind_number = reduce_to_single_digit_always(m + y)
+    wisdom_number = reduce_to_single_digit_always(d + m)
+    ruling_number = reduce_for_ruling_number(d + m)  # Только здесь сохраняем 11 и 22
     
-    # Добавляем личные циклы (текущие)
+    # Добавляем личные циклы (текущие) - все сводим к однозначному
     from datetime import datetime
     now = datetime.now()
     current_day = now.day
@@ -544,10 +546,10 @@ async def pythagorean_square(birth_date: str = None, current_user: dict = Depend
     current_year = now.year
     current_hour = now.hour
     
-    personal_year = reduce_to_single_digit(d + m + current_year)
-    personal_month = reduce_to_single_digit(personal_year + current_month)
-    personal_day = reduce_to_single_digit(personal_month + current_day)
-    personal_hour = reduce_to_single_digit(personal_day + current_hour)
+    personal_year = reduce_to_single_digit_always(d + m + current_year)
+    personal_month = reduce_to_single_digit_always(personal_year + current_month)
+    personal_day = reduce_to_single_digit_always(personal_month + current_day)
+    personal_hour = reduce_to_single_digit_always(personal_day + current_hour)
     challenge_number = abs(soul_number - destiny_number) if soul_number and destiny_number else 0
     
     results['soul_number'] = soul_number

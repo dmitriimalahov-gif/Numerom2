@@ -39,6 +39,19 @@ def reduce_to_single_digit_always(number: int) -> int:
     return number
 
 
+def reduce_for_ruling_number(number: int) -> int:
+    """Reduce number for ruling number - keeps only 11 and 22 as master numbers"""
+    if number in [11, 22]:
+        return number
+    
+    while number > 9:
+        number = sum(int(digit) for digit in str(number))
+        # Check if we have 11 or 22 during reduction
+        if number in [11, 22]:
+            return number
+    return number
+
+
 def calculate_destiny_number(day: int, month: int, year: int) -> int:
     """Calculate Destiny number (day + month + year as numbers, always reduced to single digit)"""
     total = day + month + year
