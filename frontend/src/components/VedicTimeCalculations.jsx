@@ -200,6 +200,7 @@ const getLocalISODate = () => {
 
 const VedicTimeCalculations = () => {
   const [schedule, setSchedule] = useState(null);
+  const [yesterdaySchedule, setYesterdaySchedule] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selectedDate, setSelectedDate] = useState(() => getLocalISODate());
@@ -386,10 +387,16 @@ const VedicTimeCalculations = () => {
     }
 
     // Проверяем ночные часы
-    console.log('🔍 Проверяем ночные часы, всего:', schedule.night_hours?.length || 0);
+    // Если текущее время до восхода, используем ночные часы вчерашнего дня
+    const nightHoursToCheck = (firstDayStart && now < firstDayStart && yesterdaySchedule?.night_hours) 
+      ? yesterdaySchedule.night_hours 
+      : schedule.night_hours;
     
-    if (schedule.night_hours?.length) {
-      const nightHourIndex = schedule.night_hours.findIndex((hour, index) => {
+    console.log('🔍 Проверяем ночные часы, всего:', nightHoursToCheck?.length || 0);
+    console.log('🔍 Используем:', (firstDayStart && now < firstDayStart) ? 'вчерашние ночные часы' : 'сегодняшние ночные часы');
+    
+    if (nightHoursToCheck?.length) {
+      const nightHourIndex = nightHoursToCheck.findIndex((hour, index) => {
         const start = parsePlanetaryTime(hour.start_time || hour.start);
         const end = parsePlanetaryTime(hour.end_time || hour.end);
         
@@ -447,7 +454,7 @@ const VedicTimeCalculations = () => {
         console.log('✅ Активный ночной час:', 12 + nightHourIndex);
         return 12 + nightHourIndex;
       } else {
-        console.log('❌ Активный ночной час не найден среди', schedule.night_hours.length, 'часов');
+        console.log('❌ Активный ночной час не найден среди', nightHoursToCheck.length, 'часов');
       }
     } else {
       console.log('⚠️ Ночные часы отсутствуют в расписании');
@@ -455,14 +462,38 @@ const VedicTimeCalculations = () => {
 
     console.log('❌ Активный час не найден');
     return null;
-  }, [parsePlanetaryTime, schedule?.planetary_hours, schedule?.night_hours, selectedDate]);
+  }, [parsePlanetaryTime, schedule?.planetary_hours, schedule?.night_hours, yesterdaySchedule?.night_hours, selectedDate]);
 
   useEffect(() => {
     if (!user) return;
     const initialCity = user.city || 'Москва';
     setSelectedCity(initialCity);
     fetchVedicSchedule(selectedDate, initialCity);
-  }, [user, fetchVedicSchedule, selectedDate]);
+    
+    // Если выбранная дата — сегодня, загружаем также вчерашнее расписание
+    // для корректного отображения ночных часов до восхода
+    const todayISO = getLocalISODate();
+    if (selectedDate === todayISO) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayISO = yesterday.toISOString().split('T')[0];
+      
+      console.log('📅 Загружаем вчерашнее расписание для ночных часов:', yesterdayISO);
+      
+      // Загружаем вчерашнее расписание
+      fetch(`${apiBaseUrl}/vedic-time/daily-schedule?date=${yesterdayISO}&city=${initialCity}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          console.log('✅ Вчерашнее расписание загружено, ночных часов:', data.night_hours?.length);
+          setYesterdaySchedule(data);
+        })
+        .catch(err => console.error('❌ Ошибка загрузки вчерашнего расписания:', err));
+    } else {
+      setYesterdaySchedule(null);
+    }
+  }, [user, fetchVedicSchedule, selectedDate, apiBaseUrl]);
 
   // Автоматическое обновление активного часа каждую минуту
   const [, forceUpdate] = useState({});
