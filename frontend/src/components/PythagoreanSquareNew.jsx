@@ -825,12 +825,11 @@ const PythagoreanSquareNew = () => {
       setLoading(true);
       setError('');
       try {
-        const [squareResponse, personalResponse] = await Promise.all([
-          axios.post('/numerology/pythagorean-square'),
-          axios.post('/numerology/personal-numbers')
-        ]);
-        setSquareData(squareResponse.data);
-        setPersonalData(personalResponse.data);
+        const squareResponse = await axios.post('/numerology/pythagorean-square');
+        const data = squareResponse.data;
+        setSquareData(data);
+        // Используем те же данные для personalData, так как бэкенд возвращает все поля
+        setPersonalData(data);
       } catch (err) {
         console.error('Ошибка загрузки квадрата Пифагора (новый дизайн):', err);
         const detail = err?.response?.data?.detail;
