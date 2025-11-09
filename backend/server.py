@@ -38,7 +38,8 @@ from numerology import (
     calculate_personal_numbers,
     calculate_compatibility,
     parse_birth_date,
-    create_pythagorean_square
+    create_pythagorean_square,
+    reduce_to_single
 )
 from vedic_numerology import (
     calculate_comprehensive_vedic_numerology,
