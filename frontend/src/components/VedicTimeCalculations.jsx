@@ -4,6 +4,13 @@ import { Input } from './ui/input';
 import { useAuth } from './AuthContext';
 import { getPlanetColor, tintHex, shadeHex, withAlpha } from './constants/colors';
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription
+} from './ui/dialog';
+import {
   Loader2,
   Sun,
   Moon,
@@ -209,9 +216,100 @@ const VedicTimeCalculations = () => {
     if (typeof window === 'undefined') return 'dark';
     return localStorage.getItem('vedic-time-theme') === 'light' ? 'light' : 'dark';
   });
+  const [selectedHour, setSelectedHour] = useState(null);
+  const [isHourDialogOpen, setIsHourDialogOpen] = useState(false);
   const { user } = useAuth();
 
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
+
+  // Функция для генерации персонализированных советов
+  const getPersonalizedAdvice = useCallback((hour, userData) => {
+    if (!hour || !userData) return null;
+
+    const planet = hour.planet;
+    const planetSanskrit = hour.planet_sanskrit || planet;
+    
+    // Базовые рекомендации по планетам
+    const planetAdvice = {
+      Sun: {
+        general: 'Время Солнца (Сурья) благоприятно для лидерства, важных решений и работы с властью.',
+        activities: ['Встречи с руководством', 'Подписание важных документов', 'Публичные выступления', 'Работа над карьерными целями'],
+        avoid: ['Конфликты с отцом или начальством', 'Излишняя гордость'],
+        health: 'Укрепляйте сердце и позвоночник. Полезны солнечные ванны (умеренно).'
+      },
+      Moon: {
+        general: 'Время Луны (Чандра) идеально для эмоциональных дел, семьи и интуиции.',
+        activities: ['Общение с матерью', 'Семейные дела', 'Медитация', 'Работа с эмоциями', 'Кулинария'],
+        avoid: ['Важные решения в эмоциональном состоянии', 'Переедание'],
+        health: 'Заботьтесь о желудке и эмоциональном балансе. Пейте достаточно воды.'
+      },
+      Mars: {
+        general: 'Время Марса (Мангал) дает энергию для действий, спорта и преодоления препятствий.',
+        activities: ['Физические упражнения', 'Решение сложных задач', 'Работа с техникой', 'Защита интересов'],
+        avoid: ['Конфликты и агрессия', 'Поспешные решения', 'Работа с острыми предметами'],
+        health: 'Контролируйте кровяное давление. Избегайте травм.'
+      },
+      Mercury: {
+        general: 'Время Меркурия (Будха) благоприятно для общения, обучения и торговли.',
+        activities: ['Переговоры', 'Обучение', 'Написание текстов', 'Торговые сделки', 'Работа с документами'],
+        avoid: ['Обман и манипуляции', 'Поверхностность'],
+        health: 'Заботьтесь о нервной системе и дыхании. Практикуйте пранаяму.'
+      },
+      Jupiter: {
+        general: 'Время Юпитера (Гуру) идеально для духовных практик, обучения и благотворительности.',
+        activities: ['Медитация', 'Изучение философии', 'Благотворительность', 'Консультации с наставниками', 'Планирование будущего'],
+        avoid: ['Излишества', 'Самодовольство'],
+        health: 'Следите за печенью и весом. Практикуйте умеренность.'
+      },
+      Venus: {
+        general: 'Время Венеры (Шукра) благоприятно для любви, творчества и красоты.',
+        activities: ['Романтические встречи', 'Творчество', 'Покупка украшений', 'Уход за собой', 'Искусство'],
+        avoid: ['Излишняя роскошь', 'Потакание желаниям'],
+        health: 'Заботьтесь о репродуктивной системе и почках. Наслаждайтесь красотой.'
+      },
+      Saturn: {
+        general: 'Время Сатурна (Шани) требует дисциплины, терпения и работы над долгосрочными целями.',
+        activities: ['Рутинная работа', 'Планирование', 'Работа с недвижимостью', 'Уборка', 'Медитация на карму'],
+        avoid: ['Спешка', 'Легкомыслие', 'Игнорирование обязанностей'],
+        health: 'Укрепляйте кости и суставы. Практикуйте йогу.'
+      },
+      Rahu: {
+        general: 'Время Раху несет нестандартные возможности и трансформацию.',
+        activities: ['Инновации', 'Работа с технологиями', 'Исследования', 'Нестандартные решения'],
+        avoid: ['Обман', 'Иллюзии', 'Зависимости'],
+        health: 'Избегайте токсинов и зависимостей. Практикуйте осознанность.'
+      },
+      Ketu: {
+        general: 'Время Кету благоприятно для духовных практик и освобождения от привязанностей.',
+        activities: ['Медитация', 'Йога', 'Работа с прошлым', 'Отпускание', 'Духовные практики'],
+        avoid: ['Материальные привязанности', 'Излишняя отстраненность'],
+        health: 'Работайте с тонкими энергиями. Практикуйте пранаяму.'
+      }
+    };
+
+    const advice = planetAdvice[planet] || planetAdvice.Sun;
+    
+    // Добавляем персонализацию на основе данных пользователя
+    let personalNote = '';
+    if (userData.birth_date) {
+      const birthDate = new Date(userData.birth_date);
+      const birthDay = birthDate.getDay();
+      const currentDay = new Date().getDay();
+      
+      if (birthDay === currentDay) {
+        personalNote = '🌟 Сегодня ваш день недели рождения! Энергия планеты особенно сильна для вас.';
+      }
+    }
+
+    return {
+      planet,
+      planetSanskrit,
+      ...advice,
+      personalNote,
+      time: `${hour.start_time?.slice(11, 16) || ''} - ${hour.end_time?.slice(11, 16) || ''}`,
+      isFavorable: hour.is_favorable
+    };
+  }, []);
 
   const parsePlanetaryTime = useCallback(
     (timeString) => {
@@ -975,7 +1073,11 @@ const VedicTimeCalculations = () => {
                   return (
                     <div
                       key={index}
-                      className={`rounded-2xl border p-5 transition-all duration-500 hover:-translate-y-1 relative ${
+                      onClick={() => {
+                        setSelectedHour(hour);
+                        setIsHourDialogOpen(true);
+                      }}
+                      className={`rounded-2xl border p-5 transition-all duration-500 hover:-translate-y-1 relative cursor-pointer ${
                         isActive ? 'shadow-2xl scale-110 ring-4 ring-offset-4 ring-offset-slate-900' : 'shadow-sm hover:shadow-lg'
                       }`}
                       style={{
@@ -1060,6 +1162,114 @@ const VedicTimeCalculations = () => {
           </div>
       )}
       </div>
+
+      {/* Модальное окно с советами для планетарного часа */}
+      <Dialog open={isHourDialogOpen} onOpenChange={setIsHourDialogOpen}>
+        <DialogContent className={`max-w-2xl max-h-[80vh] overflow-y-auto ${themeConfig.card}`}>
+          {selectedHour && (() => {
+            const advice = getPersonalizedAdvice(selectedHour, user);
+            if (!advice) return null;
+            
+            const planetColor = getPlanetColor(advice.planet);
+            
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle 
+                    className="text-2xl font-bold flex items-center gap-3"
+                    style={{ color: planetColor }}
+                  >
+                    <span className="text-3xl">
+                      {advice.planet === 'Sun' && '☀️'}
+                      {advice.planet === 'Moon' && '🌙'}
+                      {advice.planet === 'Mars' && '🔴'}
+                      {advice.planet === 'Mercury' && '💚'}
+                      {advice.planet === 'Jupiter' && '🟠'}
+                      {advice.planet === 'Venus' && '💗'}
+                      {advice.planet === 'Saturn' && '🔵'}
+                      {advice.planet === 'Rahu' && '🌑'}
+                      {advice.planet === 'Ketu' && '⚪'}
+                    </span>
+                    {advice.planetSanskrit}
+                  </DialogTitle>
+                  <DialogDescription className={themeConfig.mutedText}>
+                    Планетарный час: {advice.time}
+                    {advice.isFavorable && (
+                      <span className="ml-3 inline-flex items-center gap-1 text-emerald-500">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Благоприятное время
+                      </span>
+                    )}
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="mt-6 space-y-6">
+                  {advice.personalNote && (
+                    <div 
+                      className="p-4 rounded-lg border-2"
+                      style={{
+                        backgroundColor: planetColor + '20',
+                        borderColor: planetColor + '60'
+                      }}
+                    >
+                      <p className="font-semibold text-center">{advice.personalNote}</p>
+                    </div>
+                  )}
+
+                  <div>
+                    <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
+                      <Sparkles className="h-5 w-5" style={{ color: planetColor }} />
+                      Общая характеристика
+                    </h3>
+                    <p className={themeConfig.mutedText}>{advice.general}</p>
+                  </div>
+
+                  <div>
+                    <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
+                      <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                      Благоприятные действия
+                    </h3>
+                    <ul className="space-y-2">
+                      {advice.activities.map((activity, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="text-emerald-500 mt-1">✓</span>
+                          <span className={themeConfig.mutedText}>{activity}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div>
+                    <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5 text-amber-500" />
+                      Чего избегать
+                    </h3>
+                    <ul className="space-y-2">
+                      {advice.avoid.map((item, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="text-amber-500 mt-1">⚠</span>
+                          <span className={themeConfig.mutedText}>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div 
+                    className="p-4 rounded-lg"
+                    style={{
+                      backgroundColor: planetColor + '15',
+                      borderLeft: `4px solid ${planetColor}`
+                    }}
+                  >
+                    <h3 className="font-bold text-lg mb-2">💊 Здоровье</h3>
+                    <p className={themeConfig.mutedText}>{advice.health}</p>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
