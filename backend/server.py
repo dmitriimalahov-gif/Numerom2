@@ -1418,7 +1418,7 @@ async def get_planetary_hour_advice(
                 # Формат YYYY-MM-DD
                 birth_date_obj = datetime.fromisoformat(birth_date_str)
                 day, month, year = birth_date_obj.day, birth_date_obj.month, birth_date_obj.year
-    else:
+            else:
                 # Пробуем ISO формат
                 birth_date_obj = datetime.fromisoformat(birth_date_str)
                 day, month, year = birth_date_obj.day, birth_date_obj.month, birth_date_obj.year
@@ -1515,7 +1515,7 @@ async def get_planetary_hour_advice(
             # Сохраняем дату рождения в user_data для дальнейшего анализа
             user_data["birth_date"] = birth_date_obj
                 
-    except Exception as e:
+        except Exception as e:
             print(f"❌ Ошибка при вычислении чисел: {e}")
             import traceback
             traceback.print_exc()
