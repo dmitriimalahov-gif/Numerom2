@@ -89,6 +89,91 @@ SUBSCRIPTION_CREDITS = {
 app = FastAPI()
 api_router = APIRouter(prefix='/api')
 
+# Global scoring configuration cache
+_scoring_config_cache = None
+_scoring_config_cache_time = None
+SCORING_CONFIG_CACHE_TTL = 300  # 5 минут
+
+def get_scoring_config_sync() -> Dict[str, int]:
+    """Получить конфигурацию системы оценки (синхронная версия с кэшированием)"""
+    global _scoring_config_cache, _scoring_config_cache_time
+    
+    # Проверяем кэш
+    if _scoring_config_cache and _scoring_config_cache_time:
+        if (datetime.utcnow() - _scoring_config_cache_time).total_seconds() < SCORING_CONFIG_CACHE_TTL:
+            return _scoring_config_cache
+    
+    # Пытаемся загрузить из базы данных
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Если event loop уже запущен, используем дефолтные значения
+            # (обновление произойдёт при следующем вызове)
+            pass
+        else:
+            config = loop.run_until_complete(db.scoring_config.find_one({'is_active': True}))
+            if config:
+                config.pop('_id', None)
+                _scoring_config_cache = config
+                _scoring_config_cache_time = datetime.utcnow()
+                return config
+    except Exception as e:
+        print(f"⚠️ Ошибка загрузки конфигурации из БД: {e}")
+    
+    # Если не удалось загрузить из БД, возвращаем значения по умолчанию
+    default_config = {
+        'base_score': 20,
+        'personal_energy_high': 10,
+        'personal_energy_low': -10,
+        'personal_energy_zero': -15,
+        'soul_resonance': 1,
+        'soul_friendship': 5,
+        'soul_hostility': -10,
+        'mind_resonance': 1,
+        'mind_friendship': 6,
+        'mind_hostility': -20,
+        'destiny_resonance': 1,
+        'destiny_hostility': -30,
+        'planet_strength_high': 12,
+        'planet_strength_medium': 1,
+        'planet_strength_low': -10,
+        'birthday_bonus': 15,
+        'rahu_kaal_penalty': -5,
+        'favorable_period_bonus': 5,
+        'planet_friendship': 8,
+        'planet_hostility': -8,
+        'name_resonance': 5,
+        'name_conflict': -5,
+        'global_harmony_bonus': 10,
+        'global_harmony_penalty': -10,
+        'day_number_bonus': 5
+    }
+    
+    _scoring_config_cache = default_config
+    _scoring_config_cache_time = datetime.utcnow()
+    
+    return default_config
+
+async def load_scoring_config():
+    """Загрузить конфигурацию из базы данных при старте приложения"""
+    global _scoring_config_cache, _scoring_config_cache_time
+    
+    config = await db.scoring_config.find_one({'is_active': True})
+    
+    if not config:
+        # Создаём конфигурацию по умолчанию
+        from models import ScoringSystemConfig
+        default_config = ScoringSystemConfig()
+        await db.scoring_config.insert_one(default_config.dict())
+        config = default_config.dict()
+    
+    # Кэшируем конфигурацию
+    _scoring_config_cache = {k: v for k, v in config.items() if isinstance(v, int)}
+    _scoring_config_cache_time = datetime.utcnow()
+    
+    print(f"✅ Конфигурация системы оценки загружена (версия {config.get('version', 1)})")
+
 # Upload paths
 UPLOAD_ROOT = Path('uploads')
 MATERIALS_DIR = UPLOAD_ROOT / 'materials'
@@ -719,11 +804,59 @@ async def vedic_daily_schedule(vedic_request: VedicTimeRequest = Depends(), curr
         raise HTTPException(status_code=400, detail=schedule['error'])
     return schedule
 
-def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], schedule: Dict[str, Any]) -> Dict[str, Any]:
+async def get_scoring_config_cached():
+    """Получить конфигурацию системы баллов (с кешированием)"""
+    config = await db.scoring_config.find_one({'is_active': True})
+    
+    if not config:
+        # Создаём дефолтную конфигурацию
+        from models import ScoringConfig
+        default_config = ScoringConfig()
+        await db.scoring_config.insert_one(default_config.dict())
+        return default_config.dict()
+    
+    return config
+
+def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], schedule: Dict[str, Any], scoring_config: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Анализирует совместимость дня с личными числами пользователя
     Возвращает оценку дня, сильные/слабые стороны и рекомендации
+    
+    Args:
+        date_obj: Дата для анализа
+        user_data: Данные пользователя
+        schedule: Расписание дня
+        scoring_config: Конфигурация системы баллов (опционально)
     """
+    # Если конфигурация не передана, используем дефолтные значения
+    if not scoring_config:
+        scoring_config = {
+            'base_score': 20,
+            'personal_energy_high': 10,
+            'personal_energy_low': -10,
+            'personal_energy_zero': -15,
+            'soul_resonance': 1,
+            'soul_friendship': 5,
+            'soul_hostility': -10,
+            'mind_resonance': 1,
+            'mind_friendship': 6,
+            'mind_hostility': -20,
+            'destiny_resonance': 1,
+            'destiny_hostility': -30,
+            'planet_strength_high': 12,
+            'planet_strength_medium': 1,
+            'planet_strength_low': -10,
+            'birthday_bonus': 15,
+            'planet_friendship': 8,
+            'planet_hostility': -8,
+            'name_resonance': 5,
+            'name_conflict': -5,
+            'rahu_kaal_penalty': -5,
+            'favorable_period_bonus': 5,
+            'global_harmony_bonus': 10,
+            'global_harmony_penalty': -10,
+            'day_number_bonus': 5
+        }
     # Дружественность планет (ведическая нумерология)
     planet_relationships = {
         'Surya': {'friends': ['Chandra', 'Mangal', 'Guru'], 'enemies': ['Shukra', 'Shani'], 'neutral': ['Budh']},
@@ -790,8 +923,11 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     # Получаем день правящей планеты
     is_planet_day = schedule.get('weekday', {}).get('ruling_planet') == ruling_planet
     
-    # 1. БАЗОВЫЙ СЧЁТ (20) - фиксированный базовый счёт
-    base_score = 20
+    # Получаем конфигурацию системы оценки
+    config = get_scoring_config_sync()
+    
+    # 1. БАЗОВЫЙ СЧЁТ - из конфигурации
+    base_score = config['base_score']
     compatibility_score = base_score
     
     # Списки для позитивных аспектов и вызовов
@@ -3940,6 +4076,103 @@ async def upload_lesson_video(lesson_id: str, file: UploadFile = File(...), curr
             file_path.unlink()
         raise HTTPException(status_code=500, detail=f'Ошибка при загрузке файла: {str(e)}')
 
+# ----------------- SCORING CONFIGURATION (ADMIN) -----------------
+@api_router.get('/admin/scoring-config')
+async def get_scoring_config(current_user: dict = Depends(get_current_user)):
+    """Получить текущую конфигурацию системы баллов"""
+    admin_user = await check_admin_rights(current_user, require_super_admin=False)
+    
+    # Получаем активную конфигурацию
+    config = await db.scoring_config.find_one({'is_active': True})
+    
+    if not config:
+        # Если конфигурации нет, создаём дефолтную
+        from models import ScoringConfig
+        default_config = ScoringConfig()
+        await db.scoring_config.insert_one(default_config.dict())
+        config = default_config.dict()
+    
+    # Удаляем MongoDB _id
+    if config:
+        config.pop('_id', None)
+    
+    return config
+
+@api_router.put('/admin/scoring-config')
+async def update_scoring_config(
+    config_update: Dict[str, Any],
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить конфигурацию системы баллов"""
+    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    
+    # Получаем текущую активную конфигурацию
+    current_config = await db.scoring_config.find_one({'is_active': True})
+    
+    if not current_config:
+        # Создаём новую конфигурацию
+        from models import ScoringConfig
+        new_config = ScoringConfig(**config_update)
+        await db.scoring_config.insert_one(new_config.dict())
+        
+        # Инвалидируем кэш
+        global _scoring_config_cache, _scoring_config_cache_time
+        _scoring_config_cache = None
+        _scoring_config_cache_time = None
+        
+        config_dict = new_config.dict()
+        config_dict.pop('_id', None)
+        return {'message': 'Конфигурация создана', 'config': config_dict}
+    
+    # Обновляем существующую конфигурацию
+    config_update['updated_at'] = datetime.utcnow()
+    
+    await db.scoring_config.update_one(
+        {'is_active': True},
+        {'$set': config_update}
+    )
+    
+    # Инвалидируем кэш
+    global _scoring_config_cache, _scoring_config_cache_time
+    _scoring_config_cache = None
+    _scoring_config_cache_time = None
+    
+    # Получаем обновлённую конфигурацию
+    updated_config = await db.scoring_config.find_one({'is_active': True})
+    if updated_config:
+        updated_config.pop('_id', None)
+    
+    return {
+        'message': 'Конфигурация обновлена',
+        'config': updated_config
+    }
+
+@api_router.post('/admin/scoring-config/reset')
+async def reset_scoring_config(current_user: dict = Depends(get_current_user)):
+    """Сбросить конфигурацию к дефолтным значениям"""
+    admin_user = await check_admin_rights(current_user, require_super_admin=True)
+    
+    # Деактивируем все существующие конфигурации
+    await db.scoring_config.update_many({}, {'$set': {'is_active': False}})
+    
+    # Создаём новую дефолтную конфигурацию
+    from models import ScoringConfig
+    default_config = ScoringConfig()
+    await db.scoring_config.insert_one(default_config.dict())
+    
+    # Инвалидируем кэш
+    global _scoring_config_cache, _scoring_config_cache_time
+    _scoring_config_cache = None
+    _scoring_config_cache_time = None
+    
+    config_dict = default_config.dict()
+    config_dict.pop('_id', None)
+    
+    return {
+        'message': 'Конфигурация сброшена к дефолтным значениям',
+        'config': config_dict
+    }
+
 # ----------------- PERSONAL CONSULTATIONS -----------------
 
 # Admin endpoints for managing consultations
@@ -4652,6 +4885,137 @@ async def get_available_calculations(current_user: dict = Depends(get_current_us
             'city': bool(user.city)
         }
     }
+
+# ============= SCORING SYSTEM CONFIGURATION =============
+
+@api_router.get('/admin/scoring-config')
+async def get_scoring_config(current_user: dict = Depends(get_current_user)):
+    """Получить текущую конфигурацию системы оценки"""
+    admin_user = await check_admin_rights(current_user)
+    
+    # Получаем активную конфигурацию
+    config = await db.scoring_config.find_one({'is_active': True})
+    
+    if not config:
+        # Создаём конфигурацию по умолчанию
+        from models import ScoringSystemConfig
+        default_config = ScoringSystemConfig()
+        await db.scoring_config.insert_one(default_config.dict())
+        config = default_config.dict()
+    
+    # Удаляем _id для JSON сериализации
+    if '_id' in config:
+        config.pop('_id')
+    
+    return config
+
+@api_router.put('/admin/scoring-config')
+async def update_scoring_config(
+    config_update: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить конфигурацию системы оценки"""
+    admin_user = await check_admin_rights(current_user)
+    
+    # Получаем текущую активную конфигурацию
+    current_config = await db.scoring_config.find_one({'is_active': True})
+    
+    if not current_config:
+        raise HTTPException(status_code=404, detail='Конфигурация не найдена')
+    
+    # Обновляем метаданные
+    config_update['updated_at'] = datetime.utcnow()
+    config_update['updated_by'] = admin_user['email']
+    config_update['version'] = current_config.get('version', 1) + 1
+    
+    # Обновляем конфигурацию
+    await db.scoring_config.update_one(
+        {'id': current_config['id']},
+        {'$set': config_update}
+    )
+    
+    # Логируем изменение
+    await db.admin_actions.insert_one({
+        'action': 'update_scoring_config',
+        'target_type': 'scoring_config',
+        'target_id': current_config['id'],
+        'details': {
+            'old_version': current_config.get('version', 1),
+            'new_version': config_update['version'],
+            'changes': config_update
+        },
+        'performed_by': admin_user['email'],
+        'performed_at': datetime.utcnow()
+    })
+    
+    # Получаем обновлённую конфигурацию
+    updated_config = await db.scoring_config.find_one({'id': current_config['id']})
+    if '_id' in updated_config:
+        updated_config.pop('_id')
+    
+    return {
+        'message': 'Конфигурация успешно обновлена',
+        'config': updated_config
+    }
+
+@api_router.post('/admin/scoring-config/reset')
+async def reset_scoring_config(current_user: dict = Depends(get_current_user)):
+    """Сбросить конфигурацию к значениям по умолчанию"""
+    admin_user = await check_admin_rights(current_user)
+    
+    # Деактивируем текущую конфигурацию
+    await db.scoring_config.update_many(
+        {'is_active': True},
+        {'$set': {'is_active': False}}
+    )
+    
+    # Создаём новую конфигурацию по умолчанию
+    from models import ScoringSystemConfig
+    default_config = ScoringSystemConfig()
+    default_config.updated_by = admin_user['email']
+    
+    await db.scoring_config.insert_one(default_config.dict())
+    
+    # Логируем действие
+    await db.admin_actions.insert_one({
+        'action': 'reset_scoring_config',
+        'target_type': 'scoring_config',
+        'target_id': default_config.id,
+        'details': {
+            'message': 'Конфигурация сброшена к значениям по умолчанию'
+        },
+        'performed_by': admin_user['email'],
+        'performed_at': datetime.utcnow()
+    })
+    
+    config_dict = default_config.dict()
+    if '_id' in config_dict:
+        config_dict.pop('_id')
+    
+    return {
+        'message': 'Конфигурация сброшена к значениям по умолчанию',
+        'config': config_dict
+    }
+
+@api_router.get('/admin/scoring-config/history')
+async def get_scoring_config_history(current_user: dict = Depends(get_current_user)):
+    """Получить историю изменений конфигурации"""
+    admin_user = await check_admin_rights(current_user)
+    
+    # Получаем все версии конфигурации
+    configs = await db.scoring_config.find().sort('version', -1).to_list(100)
+    
+    # Удаляем _id для JSON сериализации
+    for config in configs:
+        if '_id' in config:
+            config.pop('_id')
+    
+    return {
+        'total': len(configs),
+        'configs': configs
+    }
+
+# ============= HTML EXPORT =============
 
 @api_router.post('/reports/html/numerology')
 async def generate_numerology_html(html_request: HTMLReportRequest, current_user: dict = Depends(get_current_user)):

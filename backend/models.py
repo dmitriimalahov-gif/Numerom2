@@ -521,6 +521,93 @@ class SuperAdminAction(BaseModel):
     performed_by: str  # email суперадминистратора
     performed_at: datetime = Field(default_factory=datetime.utcnow)
 
+# Scoring System Configuration Models
+class ScoringSystemConfig(BaseModel):
+    """Конфигурация системы оценки дня"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    
+    # Базовый счёт
+    base_score: int = 20
+    
+    # Личная энергия планеты дня
+    personal_energy_high: int = 10      # >= 7
+    personal_energy_low: int = -10      # 1-3
+    personal_energy_zero: int = -15     # 0
+    
+    # Резонанс числа души
+    soul_resonance: int = 1             # Точное совпадение
+    soul_friendship: int = 5            # Дружественные планеты
+    soul_hostility: int = -10           # Враждебные планеты
+    
+    # Резонанс числа ума
+    mind_resonance: int = 1             # Точное совпадение
+    mind_friendship: int = 6            # Дружественные планеты
+    mind_hostility: int = -20           # Враждебные планеты
+    
+    # Резонанс числа судьбы
+    destiny_resonance: int = 1          # Точное совпадение
+    destiny_hostility: int = -30        # Враждебные планеты
+    
+    # Сила планеты в квадрате Пифагора
+    planet_strength_high: int = 12      # >= 4 цифр
+    planet_strength_medium: int = 1     # 2-3 цифры
+    planet_strength_low: int = -10      # 0 цифр
+    
+    # Особые дни и периоды
+    birthday_bonus: int = 15            # День рождения
+    rahu_kaal_penalty: int = -5         # Rahu Kaal
+    favorable_period_bonus: int = 5     # Abhijit Muhurta
+    
+    # Дружественность планет
+    planet_friendship_bonus: int = 8    # Дружественные планеты
+    planet_hostility_penalty: int = -8  # Враждебные планеты
+    
+    # Нумерология имени/адреса/машины
+    name_address_bonus: int = 5         # Совпадение
+    name_address_penalty: int = -5      # Конфликт
+    
+    # Глобальная гармония
+    global_harmony_bonus: int = 10      # Больше дружественных
+    global_harmony_penalty: int = -10   # Больше враждебных
+    
+    # Число дня
+    day_number_bonus: int = 5           # Совпадение с личными числами
+    
+    # Метаданные
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_by: Optional[str] = None    # email администратора
+    is_active: bool = True              # Активная конфигурация
+    version: int = 1                    # Версия конфигурации
+
+class ScoringSystemConfigUpdate(BaseModel):
+    """Обновление конфигурации системы оценки"""
+    base_score: Optional[int] = None
+    personal_energy_high: Optional[int] = None
+    personal_energy_low: Optional[int] = None
+    personal_energy_zero: Optional[int] = None
+    soul_resonance: Optional[int] = None
+    soul_friendship: Optional[int] = None
+    soul_hostility: Optional[int] = None
+    mind_resonance: Optional[int] = None
+    mind_friendship: Optional[int] = None
+    mind_hostility: Optional[int] = None
+    destiny_resonance: Optional[int] = None
+    destiny_hostility: Optional[int] = None
+    planet_strength_high: Optional[int] = None
+    planet_strength_medium: Optional[int] = None
+    planet_strength_low: Optional[int] = None
+    birthday_bonus: Optional[int] = None
+    rahu_kaal_penalty: Optional[int] = None
+    favorable_period_bonus: Optional[int] = None
+    planet_friendship_bonus: Optional[int] = None
+    planet_hostility_penalty: Optional[int] = None
+    name_address_bonus: Optional[int] = None
+    name_address_penalty: Optional[int] = None
+    global_harmony_bonus: Optional[int] = None
+    global_harmony_penalty: Optional[int] = None
+    day_number_bonus: Optional[int] = None
+
 # HTML Export Models
 class HTMLReportRequest(BaseModel):
     # Новая система выбора расчётов
@@ -532,3 +619,91 @@ class HTMLReportRequest(BaseModel):
     include_compatibility: bool = False
     partner_birth_date: Optional[str] = None
     theme: str = "default"  # "default", "dark", "print"
+
+# Scoring Configuration Models
+class ScoringConfig(BaseModel):
+    """Конфигурация системы баллов для оценки дня"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    
+    # Базовые настройки
+    base_score: int = 20
+    
+    # Личная энергия планеты дня (DDMM × YYYY)
+    personal_energy_high: int = 10      # >= 7
+    personal_energy_low: int = -10      # 1-3
+    personal_energy_zero: int = -15     # = 0
+    
+    # Резонанс числа души
+    soul_resonance: int = 1             # Полное совпадение
+    soul_friendship: int = 5            # Дружественные планеты
+    soul_hostility: int = -10           # Враждебные планеты
+    
+    # Резонанс числа ума
+    mind_resonance: int = 1             # Полное совпадение
+    mind_friendship: int = 6            # Дружественные планеты
+    mind_hostility: int = -20           # Враждебные планеты
+    
+    # Резонанс числа судьбы
+    destiny_resonance: int = 1          # Полное совпадение
+    destiny_hostility: int = -30        # Враждебные планеты
+    
+    # Сила планеты в квадрате Пифагора
+    planet_strength_high: int = 12      # >= 4 цифры
+    planet_strength_medium: int = 1     # 2-3 цифры
+    planet_strength_low: int = -10      # 0 цифр
+    
+    # Специальные бонусы
+    birthday_bonus: int = 15            # День рождения (день недели)
+    planet_friendship: int = 8          # Дружественность планет
+    planet_hostility: int = -8          # Враждебность планет
+    
+    # Нумерология имени/адреса/машины
+    name_resonance: int = 5             # Совпадение с планетой дня
+    name_conflict: int = -5             # Конфликт с планетой дня
+    
+    # Ведические периоды
+    rahu_kaal_penalty: int = -5         # Период Раху Каал
+    favorable_period_bonus: int = 5     # Благоприятный период
+    
+    # Глобальная гармония
+    global_harmony_bonus: int = 10      # Больше дружественных планет
+    global_harmony_penalty: int = -10   # Больше враждебных планет
+    
+    # Число дня
+    day_number_bonus: int = 5           # Совпадение числа дня
+    
+    # Метаданные
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    is_active: bool = True
+    version: str = "1.0"
+    description: str = "Финальная система оценки дня"
+
+class ScoringConfigUpdate(BaseModel):
+    """Модель для обновления конфигурации баллов"""
+    base_score: Optional[int] = None
+    personal_energy_high: Optional[int] = None
+    personal_energy_low: Optional[int] = None
+    personal_energy_zero: Optional[int] = None
+    soul_resonance: Optional[int] = None
+    soul_friendship: Optional[int] = None
+    soul_hostility: Optional[int] = None
+    mind_resonance: Optional[int] = None
+    mind_friendship: Optional[int] = None
+    mind_hostility: Optional[int] = None
+    destiny_resonance: Optional[int] = None
+    destiny_hostility: Optional[int] = None
+    planet_strength_high: Optional[int] = None
+    planet_strength_medium: Optional[int] = None
+    planet_strength_low: Optional[int] = None
+    birthday_bonus: Optional[int] = None
+    planet_friendship: Optional[int] = None
+    planet_hostility: Optional[int] = None
+    name_resonance: Optional[int] = None
+    name_conflict: Optional[int] = None
+    rahu_kaal_penalty: Optional[int] = None
+    favorable_period_bonus: Optional[int] = None
+    global_harmony_bonus: Optional[int] = None
+    global_harmony_penalty: Optional[int] = None
+    day_number_bonus: Optional[int] = None
+    description: Optional[str] = None
