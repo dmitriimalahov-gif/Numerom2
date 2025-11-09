@@ -386,12 +386,17 @@ const VedicTimeCalculations = () => {
     }
 
     // Проверяем ночные часы
+    console.log('🔍 Проверяем ночные часы, всего:', schedule.night_hours?.length || 0);
+    
     if (schedule.night_hours?.length) {
       const nightHourIndex = schedule.night_hours.findIndex((hour, index) => {
         const start = parsePlanetaryTime(hour.start_time || hour.start);
         const end = parsePlanetaryTime(hour.end_time || hour.end);
         
-        if (!start || !end) return false;
+        if (!start || !end) {
+          console.log(`⚠️ Ночной час ${index + 13}: не удалось распарсить время`);
+          return false;
+        }
         
         // Ночные часы могут переходить через полночь
         // Если end > start, то это обычный интервал
@@ -405,13 +410,16 @@ const VedicTimeCalculations = () => {
           isActive = now >= start || now < end;
         }
         
-        if (isActive || (index === 0 && now < firstDayStart)) {
+        // Логируем все часы до восхода и активный час
+        if (isActive || (firstDayStart && now < firstDayStart && index < 3)) {
           console.log(`🌙 Ночной час ${index + 13} (${hour.planet}):`, {
             start: start?.toLocaleString('ru-RU'),
             end: end?.toLocaleString('ru-RU'),
             now: now.toLocaleString('ru-RU'),
             isActive,
-            crossesMidnight: end < start
+            crossesMidnight: end < start,
+            'now >= start': now >= start,
+            'now < end': now < end
           });
         }
         
@@ -421,7 +429,11 @@ const VedicTimeCalculations = () => {
       if (nightHourIndex !== -1) {
         console.log('✅ Активный ночной час:', 12 + nightHourIndex);
         return 12 + nightHourIndex;
+      } else {
+        console.log('❌ Активный ночной час не найден среди', schedule.night_hours.length, 'часов');
       }
+    } else {
+      console.log('⚠️ Ночные часы отсутствуют в расписании');
     }
 
     console.log('❌ Активный час не найден');
