@@ -44,7 +44,10 @@ const PlanetaryDailyRouteNew = () => {
     setError('');
     try {
       const response = await fetch(
-        `${apiBaseUrl}/vedic-time/planetary-route?date=${selectedDate}&city=${encodeURIComponent(user.city)}`
+        `${apiBaseUrl}/vedic-time/planetary-route?date=${selectedDate}&city=${encodeURIComponent(user.city)}`,
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        }
       );
       if (!response.ok) throw new Error('Ошибка загрузки данных');
       const data = await response.json();
@@ -61,7 +64,10 @@ const PlanetaryDailyRouteNew = () => {
   const getPersonalizedAdvice = async (hour) => {
     try {
       const response = await fetch(
-        `${apiBaseUrl}/vedic-time/hourly-advice?planet=${hour.planet}&date=${selectedDate}&city=${encodeURIComponent(user.city)}`
+        `${apiBaseUrl}/vedic-time/hourly-advice?planet=${hour.planet}&date=${selectedDate}&city=${encodeURIComponent(user.city)}`,
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        }
       );
       if (!response.ok) throw new Error('Ошибка загрузки советов');
       return await response.json();
