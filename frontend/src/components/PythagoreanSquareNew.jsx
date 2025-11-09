@@ -1633,7 +1633,6 @@ const personalCycles = [
                 <span className="mt-1 text-3xl font-semibold">{diagonalSums[1] ?? '-'}</span>
                 <span className={`text-[11px] uppercase tracking-[0.35em] ${textSubtleClass} mt-1`}>3-5-7</span>
               </SquareShell>
-              <Placeholder />
               {verticalSums.map((value, idx) => (
                 <SquareShell
                   key={`v-${idx}`}
@@ -1663,8 +1662,6 @@ const personalCycles = [
                 <span className={`text-[11px] uppercase tracking-[0.35em] ${textSubtleClass} mt-1`}>1-5-9</span>
               </SquareShell>
 
-              <Placeholder />
-
               {bottomPersonal.map((item) => (
                 <SquareShell
                   key={item.key}
@@ -1686,11 +1683,27 @@ const personalCycles = [
                   </span>
                 </SquareShell>
               ))}
-              <Placeholder />
+              <SquareShell
+                borderClass={squareBorderClass}
+                className="bg-gradient-to-br from-red-400 via-orange-400 to-red-500 flex-col text-white"
+                interactive
+                onMouseEnter={() => setHoveredNumbers([])}
+                onMouseLeave={() => setHoveredNumbers([])}
+                onClick={() =>
+                  openDetail(
+                    PERSONAL_DETAILS.challengeNumber.title,
+                    PERSONAL_DETAILS.challengeNumber.text
+                  )
+                }
+              >
+                <span className="text-sm uppercase tracking-[0.4em] text-white/80">Ч/П</span>
+                <span className="mt-1 text-3xl font-semibold">
+                  {personalData?.challenge_number ?? '-'}
+                </span>
+              </SquareShell>
               <Placeholder />
 
-              <Placeholder />
-              {personalCycles.map((item) => (
+              {personalCycles.filter(item => item.type !== 'challengeNumber').map((item) => (
                 <SquareShell
                   key={item.key}
                   borderClass={squareBorderClass}
@@ -1717,6 +1730,11 @@ const personalCycles = [
                   </span>
                 </SquareShell>
               ))}
+              <Placeholder />
+
+              <Placeholder />
+              <Placeholder />
+              <Placeholder />
               <Placeholder />
               <Placeholder />
               </div>
