@@ -2117,152 +2117,168 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
     
     ruling_number = planet_to_number.get(ruling_planet, 0)
     
-    # Анализ совместимости
-    compatibility_score = 50  # Базовый нейтральный балл
+    # Анализ совместимости - УЛУЧШЕННАЯ ЛОГИКА
+    compatibility_score = 60  # Базовый позитивный балл (было 50)
     compatibility_notes = []
+    positive_aspects = []  # Новое: собираем позитивные аспекты
+    challenges = []  # Новое: собираем вызовы
     detailed_analysis = {}
     
     # 1. Совместимость с числом души (самое важное)
     soul_planet = number_to_planet.get(soul_number)
     if soul_number == ruling_number:
-        compatibility_score += 35
-        compatibility_notes.append(f"🌟 ИДЕАЛЬНЫЙ РЕЗОНАНС! Планета дня ({ruling_planet}) полностью совпадает с вашим числом души ({soul_number})")
+        compatibility_score += 30
+        positive_aspects.append(f"🌟 ИДЕАЛЬНЫЙ РЕЗОНАНС! Планета дня ({ruling_planet}) полностью совпадает с вашим числом души ({soul_number})")
         detailed_analysis['soul_match'] = 'perfect'
     elif soul_planet and ruling_planet in planet_friendships.get(soul_planet, {}).get('friends', []):
-        compatibility_score += 20
-        compatibility_notes.append(f"✨ Планета дня ({ruling_planet}) дружественна вашему числу души ({soul_number} - {soul_planet})")
+        compatibility_score += 18
+        positive_aspects.append(f"✨ Планета дня ({ruling_planet}) дружественна вашему числу души ({soul_number} - {soul_planet})")
         detailed_analysis['soul_match'] = 'friendly'
     elif soul_planet and ruling_planet in planet_friendships.get(soul_planet, {}).get('enemies', []):
-        compatibility_score -= 15
-        compatibility_notes.append(f"⚠️ Планета дня ({ruling_planet}) враждебна вашему числу души ({soul_number} - {soul_planet})")
+        compatibility_score -= 8  # Уменьшено с -15
+        challenges.append(f"День {ruling_planet} создаёт напряжение, но это возможность для роста вашего числа души ({soul_number})")
         detailed_analysis['soul_match'] = 'hostile'
     else:
+        compatibility_score += 5  # Нейтральное = небольшой плюс
+        positive_aspects.append(f"День {ruling_planet} открывает новые возможности для вашего числа души ({soul_number})")
         detailed_analysis['soul_match'] = 'neutral'
     
     # 2. Совместимость с числом судьбы
     destiny_planet = number_to_planet.get(destiny_number)
     if destiny_number == ruling_number:
-        compatibility_score += 25
-        compatibility_notes.append(f"🎯 Планета дня резонирует с вашим числом судьбы ({destiny_number})")
+        compatibility_score += 22
+        positive_aspects.append(f"🎯 Планета дня резонирует с вашим числом судьбы ({destiny_number}) - день для реализации целей!")
         detailed_analysis['destiny_match'] = 'perfect'
     elif destiny_planet and ruling_planet in planet_friendships.get(destiny_planet, {}).get('friends', []):
-        compatibility_score += 15
-        compatibility_notes.append(f"Планета дня дружественна вашему числу судьбы ({destiny_number} - {destiny_planet})")
+        compatibility_score += 13
+        positive_aspects.append(f"Планета дня поддерживает ваше число судьбы ({destiny_number} - {destiny_planet})")
         detailed_analysis['destiny_match'] = 'friendly'
     elif destiny_planet and ruling_planet in planet_friendships.get(destiny_planet, {}).get('enemies', []):
-        compatibility_score -= 10
-        compatibility_notes.append(f"Планета дня создаёт напряжение с числом судьбы ({destiny_number} - {destiny_planet})")
+        compatibility_score -= 5  # Уменьшено с -10
+        challenges.append(f"Напряжение с числом судьбы - время для терпения и мудрости")
         detailed_analysis['destiny_match'] = 'hostile'
     else:
+        compatibility_score += 3
+        positive_aspects.append(f"День благоприятен для работы над вашей судьбой ({destiny_number})")
         detailed_analysis['destiny_match'] = 'neutral'
     
     # 3. Совместимость с числом ума
     mind_planet = number_to_planet.get(mind_number)
     if mind_number == ruling_number:
-        compatibility_score += 20
-        compatibility_notes.append(f"🧠 Планета дня усиливает ваше число ума ({mind_number})")
+        compatibility_score += 18
+        positive_aspects.append(f"🧠 Планета дня усиливает ваше число ума ({mind_number}) - отличный день для интеллектуальной работы!")
         detailed_analysis['mind_match'] = 'perfect'
     elif mind_planet and ruling_planet in planet_friendships.get(mind_planet, {}).get('friends', []):
         compatibility_score += 10
-        compatibility_notes.append(f"Планета дня поддерживает ваш ум ({mind_number} - {mind_planet})")
+        positive_aspects.append(f"Планета дня поддерживает ваш ум ({mind_number} - {mind_planet})")
         detailed_analysis['mind_match'] = 'friendly'
     else:
+        compatibility_score += 2
+        positive_aspects.append(f"День {ruling_planet} расширяет ваше мышление ({mind_number})")
         detailed_analysis['mind_match'] = 'neutral'
     
-    # 4. Сила планеты в личной карте
+    # 4. Сила планеты в личной карте - ПЕРЕРАБОТАНО
     planet_counts = user_data.get('planet_counts', {})
     planet_strength = planet_counts.get(ruling_planet, 0)
     
     if planet_strength >= 4:
-        compatibility_score += 25
-        compatibility_notes.append(f"💪 У вас очень сильная {ruling_planet} в карте ({planet_strength} раз)")
+        compatibility_score += 22
+        positive_aspects.append(f"💪 У вас очень сильная {ruling_planet} в карте ({planet_strength} раз) - это ВАШ день!")
         detailed_analysis['planet_strength'] = 'very_strong'
     elif planet_strength >= 2:
-        compatibility_score += 15
-        compatibility_notes.append(f"✓ У вас присутствует {ruling_planet} в карте ({planet_strength} раз)")
+        compatibility_score += 14
+        positive_aspects.append(f"✓ У вас присутствует {ruling_planet} в карте ({planet_strength} раз) - используйте эту энергию!")
         detailed_analysis['planet_strength'] = 'strong'
     elif planet_strength == 1:
-        compatibility_score += 5
-        compatibility_notes.append(f"У вас слабая {ruling_planet} в карте ({planet_strength} раз)")
+        compatibility_score += 7
+        positive_aspects.append(f"У вас есть {ruling_planet} в карте - развивайте эту энергию!")
         detailed_analysis['planet_strength'] = 'weak'
     else:
-        compatibility_score -= 20
-        compatibility_notes.append(f"⚠️ У вас отсутствует {ruling_planet} в карте - день может быть вызовом для развития этой энергии")
+        # ВАЖНО: Отсутствие планеты - это не минус, а возможность!
+        compatibility_score += 0  # Было -20, теперь нейтрально
+        positive_aspects.append(f"💡 День {ruling_planet} - отличная возможность развить эту энергию, которой вам не хватает!")
+        challenges.append(f"Энергия {ruling_planet} может быть непривычной - будьте внимательны к новым ощущениям")
         detailed_analysis['planet_strength'] = 'absent'
     
     # 5. Совместимость с именем
     name_planet = user_data.get('name_planet')
     name_number = user_data.get('name_number', 0)
     if name_planet == ruling_planet:
-        compatibility_score += 15
-        compatibility_notes.append(f"📝 Ваше имя ({name_number} - {name_planet}) резонирует с планетой дня!")
+        compatibility_score += 12
+        positive_aspects.append(f"📝 Ваше имя ({name_number} - {name_planet}) резонирует с планетой дня!")
         detailed_analysis['name_match'] = 'perfect'
     elif name_planet and ruling_planet in planet_friendships.get(name_planet, {}).get('friends', []):
-        compatibility_score += 8
-        compatibility_notes.append(f"Ваше имя ({name_number} - {name_planet}) дружественно планете дня")
+        compatibility_score += 7
+        positive_aspects.append(f"Ваше имя ({name_number} - {name_planet}) дружественно планете дня")
         detailed_analysis['name_match'] = 'friendly'
     elif name_planet and ruling_planet in planet_friendships.get(name_planet, {}).get('enemies', []):
-        compatibility_score -= 5
-        compatibility_notes.append(f"Ваше имя создаёт напряжение с планетой дня")
+        compatibility_score -= 3  # Уменьшено с -5
+        challenges.append(f"Ваше имя создаёт небольшое напряжение - будьте собой")
         detailed_analysis['name_match'] = 'hostile'
     else:
+        compatibility_score += 2
         detailed_analysis['name_match'] = 'neutral'
     
     # 6. Совместимость с адресом
     address_planet = user_data.get('address_planet')
     address_number = user_data.get('address_number', 0)
     if address_planet and address_planet == ruling_planet:
-        compatibility_score += 10
-        compatibility_notes.append(f"🏠 Ваш адрес ({address_number} - {address_planet}) гармонирует с планетой дня!")
+        compatibility_score += 8
+        positive_aspects.append(f"🏠 Ваш адрес ({address_number} - {address_planet}) гармонирует с планетой дня!")
         detailed_analysis['address_match'] = 'perfect'
     elif address_planet and ruling_planet in planet_friendships.get(address_planet, {}).get('friends', []):
-        compatibility_score += 5
-        compatibility_notes.append(f"Ваш адрес поддерживает энергию дня")
+        compatibility_score += 4
+        positive_aspects.append(f"Ваш адрес поддерживает энергию дня")
         detailed_analysis['address_match'] = 'friendly'
     elif address_planet and ruling_planet in planet_friendships.get(address_planet, {}).get('enemies', []):
-        compatibility_score -= 3
+        compatibility_score -= 2  # Уменьшено с -3
         detailed_analysis['address_match'] = 'hostile'
     else:
+        compatibility_score += 1
         detailed_analysis['address_match'] = 'neutral'
     
     # 7. Совместимость с автомобилем
     car_planet = user_data.get('car_planet')
     car_number = user_data.get('car_number', 0)
     if car_planet and car_planet == ruling_planet:
-        compatibility_score += 10
-        compatibility_notes.append(f"🚗 Номер вашего автомобиля ({car_number} - {car_planet}) усиливает день!")
+        compatibility_score += 8
+        positive_aspects.append(f"🚗 Номер вашего автомобиля ({car_number} - {car_planet}) усиливает день!")
         detailed_analysis['car_match'] = 'perfect'
     elif car_planet and ruling_planet in planet_friendships.get(car_planet, {}).get('friends', []):
-        compatibility_score += 5
-        compatibility_notes.append(f"Ваш автомобиль поддерживает энергию дня")
+        compatibility_score += 4
+        positive_aspects.append(f"Ваш автомобиль поддерживает энергию дня")
         detailed_analysis['car_match'] = 'friendly'
     elif car_planet and ruling_planet in planet_friendships.get(car_planet, {}).get('enemies', []):
-        compatibility_score -= 3
+        compatibility_score -= 2  # Уменьшено с -3
         detailed_analysis['car_match'] = 'hostile'
     else:
+        compatibility_score += 1
         detailed_analysis['car_match'] = 'neutral'
     
-    # Определяем общую оценку дня
-    if compatibility_score >= 80:
+    # Объединяем все заметки
+    compatibility_notes = positive_aspects + challenges
+    
+    # Определяем общую оценку дня - ОБНОВЛЁННЫЕ ПОРОГИ
+    if compatibility_score >= 95:
         overall_rating = "Превосходный"
         overall_description = "Этот день ИДЕАЛЕН для вас! Максимальная гармония с вашей личной картой. Используйте его для самых важных дел!"
         color_class = "green"
-    elif compatibility_score >= 65:
+    elif compatibility_score >= 80:
         overall_rating = "Отличный"
         overall_description = "Очень благоприятный день! Высокая совместимость с вашими числами. Действуйте уверенно!"
         color_class = "green"
-    elif compatibility_score >= 50:
+    elif compatibility_score >= 65:
         overall_rating = "Хороший"
-        overall_description = "День обещает быть продуктивным. Следуйте рекомендациям для лучших результатов."
+        overall_description = "День обещает быть продуктивным. Много позитивных аспектов поддерживают ваши начинания!"
         color_class = "blue"
-    elif compatibility_score >= 35:
+    elif compatibility_score >= 50:
         overall_rating = "Нейтральный"
-        overall_description = "Обычный день. Будьте внимательны к деталям и избегайте рискованных решений."
+        overall_description = "Сбалансированный день с возможностями для роста. Следуйте интуиции и будьте открыты новому."
         color_class = "gray"
     else:
-        overall_rating = "Сложный"
-        overall_description = "День может быть непростым. Сосредоточьтесь на рутинных задачах, отдыхе и внутренней работе."
-        color_class = "red"
+        overall_rating = "Развивающий"  # Было "Сложный"
+        overall_description = "День для внутренней работы и развития слабых сторон. Каждый вызов - это возможность стать сильнее!"
+        color_class = "orange"  # Было "red"
     
     return {
         'overall_score': compatibility_score,
@@ -2273,6 +2289,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
         'ruling_planet': ruling_planet,
         'ruling_number': ruling_number,
         'compatibility_notes': compatibility_notes,
+        'positive_aspects': positive_aspects,  # Новое
+        'challenges': challenges,  # Новое
         'planet_strength': planet_strength,
         'detailed_analysis': detailed_analysis,
         'user_planets': {
