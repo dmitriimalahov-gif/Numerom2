@@ -82,18 +82,32 @@ const PlanetaryDailyRouteNew = () => {
 
   // Проверка, является ли час текущим
   const isCurrentHour = (hour) => {
+    if (!hour || !hour.start || !hour.end) return false;
     if (selectedDate !== new Date().toISOString().split('T')[0]) return false;
-    const now = currentTime;
-    const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const [startHour, startMin] = hour.start.split(':').map(Number);
-    const [endHour, endMin] = hour.end.split(':').map(Number);
-    const [currHour, currMin] = currentTimeStr.split(':').map(Number);
     
-    const currentMinutes = currHour * 60 + currMin;
-    const startMinutes = startHour * 60 + startMin;
-    const endMinutes = endHour * 60 + endMin;
-    
-    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    try {
+      const now = currentTime;
+      const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      
+      // Извлекаем время из строк формата "HH:MM" или из объектов времени
+      const startTime = typeof hour.start === 'string' ? hour.start : hour.start_time?.slice(11, 16) || '';
+      const endTime = typeof hour.end === 'string' ? hour.end : hour.end_time?.slice(11, 16) || '';
+      
+      if (!startTime || !endTime) return false;
+      
+      const [startHour, startMin] = startTime.split(':').map(Number);
+      const [endHour, endMin] = endTime.split(':').map(Number);
+      const [currHour, currMin] = currentTimeStr.split(':').map(Number);
+      
+      const currentMinutes = currHour * 60 + currMin;
+      const startMinutes = startHour * 60 + startMin;
+      const endMinutes = endHour * 60 + endMin;
+      
+      return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    } catch (err) {
+      console.error('Ошибка проверки текущего часа:', err, hour);
+      return false;
+    }
   };
 
   if (loading) {
@@ -411,7 +425,7 @@ const PlanetaryDailyRouteNew = () => {
                         textShadow: isCurrent ? `0 0 10px ${planetColor}80` : undefined
                       }}
                     >
-                      {hour.start} — {hour.end}
+                      {(typeof hour.start === 'string' ? hour.start : hour.start_time?.slice(11, 16)) || 'N/A'} — {(typeof hour.end === 'string' ? hour.end : hour.end_time?.slice(11, 16)) || 'N/A'}
                     </div>
                     {isCurrent && (
                       <div 
