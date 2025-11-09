@@ -3,9 +3,11 @@ import { useOutletContext } from 'react-router-dom';
 import { Moon, Sun, Bell, Calendar, Globe, Lock, User, Database, Smartphone, Mail } from 'lucide-react';
 import { Card } from './ui/card';
 import { Label } from './ui/label';
+import { useTheme } from '../hooks/useTheme';
 
 const Settings = () => {
   const { theme, setTheme } = useOutletContext();
+  const themeConfig = useTheme(theme);
   const [notifications, setNotifications] = useState(false);
   const [calendarSync, setCalendarSync] = useState(false);
   const [language, setLanguage] = useState('ru');
@@ -15,44 +17,18 @@ const Settings = () => {
   const [deviceSync, setDeviceSync] = useState(false);
   const [emailNotifications, setEmailNotifications] = useState(false);
 
-  const themeConfig = theme === 'dark' 
-    ? {
-        bg: 'bg-slate-900',
-        card: 'bg-slate-800/50 border-slate-700',
-        text: 'text-white',
-        mutedText: 'text-slate-300',
-        accent: 'bg-indigo-600',
-        accentHover: 'hover:bg-indigo-700',
-        border: 'border-slate-700',
-        input: 'bg-slate-700 border-slate-600 text-white',
-        toggle: 'bg-slate-700',
-        toggleActive: 'bg-indigo-600',
-      }
-    : {
-        bg: 'bg-gray-50',
-        card: 'bg-white border-gray-200',
-        text: 'text-gray-900',
-        mutedText: 'text-gray-600',
-        accent: 'bg-indigo-500',
-        accentHover: 'hover:bg-indigo-600',
-        border: 'border-gray-200',
-        input: 'bg-white border-gray-300 text-gray-900',
-        toggle: 'bg-gray-200',
-        toggleActive: 'bg-indigo-500',
-      };
-
   const SettingItem = ({ icon: Icon, title, description, children, badge }) => (
-    <div className={`p-6 rounded-xl border ${themeConfig.card} transition-all hover:shadow-lg`}>
+    <div className={`p-6 rounded-xl border ${themeConfig.card} transition-all ${themeConfig.shadowHover}`}>
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-4 flex-1">
-          <div className={`p-3 rounded-lg ${themeConfig.accent} bg-opacity-10`}>
-            <Icon className={`h-6 w-6 ${themeConfig.accent === 'bg-indigo-600' ? 'text-indigo-600' : 'text-indigo-500'}`} />
+          <div className={`p-3 rounded-lg ${themeConfig.isDark ? 'bg-indigo-500/20' : 'bg-indigo-100'}`}>
+            <Icon className={`h-6 w-6 ${themeConfig.accentText}`} />
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-1">
               <h3 className={`text-lg font-semibold ${themeConfig.text}`}>{title}</h3>
               {badge && (
-                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${themeConfig.badgeWarning}`}>
                   {badge}
                 </span>
               )}

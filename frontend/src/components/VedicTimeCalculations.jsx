@@ -771,7 +771,7 @@ const VedicTimeCalculations = () => {
                     type="date"
                     value={selectedDate}
                     onChange={handleDateChange}
-                    className="mt-2 h-11 rounded-xl border border-white/10 bg-white/60 px-3 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-emerald-400"
+                    className={`mt-2 h-11 rounded-xl border px-3 text-sm focus-visible:ring-2 focus-visible:ring-emerald-400 ${themeConfig.isDark ? 'border-white/10 bg-white/60 text-slate-900' : 'border-gray-300 bg-white text-gray-900'}`}
                   />
                 </div>
                 <div className={`rounded-2xl ${themeConfig.surface} p-4`}>
@@ -783,7 +783,7 @@ const VedicTimeCalculations = () => {
                     value={selectedCity}
                     onChange={handleCityChange}
                     placeholder="Например, Москва"
-                    className="mt-2 h-11 rounded-xl border border-white/10 bg-white/60 px-3 text-sm text-slate-900 focus-visible:ring-2 focus-visible:ring-emerald-400"
+                    className={`mt-2 h-11 rounded-xl border px-3 text-sm focus-visible:ring-2 focus-visible:ring-emerald-400 ${themeConfig.isDark ? 'border-white/10 bg-white/60 text-slate-900 placeholder:text-slate-600' : 'border-gray-300 bg-white text-gray-900 placeholder:text-gray-400'}`}
                   />
                 </div>
               </div>

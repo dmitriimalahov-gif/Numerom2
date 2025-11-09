@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -7,8 +8,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Calendar, CalendarDays, Clock, TrendingUp, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { getApiBaseUrl } from '../utils/backendUrl';
+import { useTheme } from '../hooks/useTheme';
 
 const PlanetaryDailyRoute = () => {
+  const { theme } = useOutletContext();
+  const themeConfig = useTheme(theme);
   const [routeData, setRouteData] = useState({});
   const [loading, setLoading] = useState({});
   const [error, setError] = useState('');
@@ -17,6 +21,59 @@ const PlanetaryDailyRoute = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const { user } = useAuth();
   const apiBaseUrl = getApiBaseUrl();
+
+  // Утилита для генерации классов с правильной контрастностью
+  const getColorClasses = (color) => {
+    const isDark = themeConfig.isDark;
+    const colorMap = {
+      green: {
+        bg: isDark ? 'bg-green-500/20' : 'bg-green-50',
+        text: isDark ? 'text-green-300' : 'text-green-700',
+        border: isDark ? 'border-green-500/40' : 'border-green-300'
+      },
+      red: {
+        bg: isDark ? 'bg-red-500/20' : 'bg-red-50',
+        text: isDark ? 'text-red-300' : 'text-red-700',
+        border: isDark ? 'border-red-500/40' : 'border-red-300'
+      },
+      blue: {
+        bg: isDark ? 'bg-blue-500/20' : 'bg-blue-50',
+        text: isDark ? 'text-blue-300' : 'text-blue-700',
+        border: isDark ? 'border-blue-500/40' : 'border-blue-300'
+      },
+      orange: {
+        bg: isDark ? 'bg-orange-500/20' : 'bg-orange-50',
+        text: isDark ? 'text-orange-300' : 'text-orange-700',
+        border: isDark ? 'border-orange-500/40' : 'border-orange-300'
+      },
+      purple: {
+        bg: isDark ? 'bg-purple-500/20' : 'bg-purple-50',
+        text: isDark ? 'text-purple-300' : 'text-purple-700',
+        border: isDark ? 'border-purple-500/40' : 'border-purple-300'
+      },
+      amber: {
+        bg: isDark ? 'bg-amber-500/20' : 'bg-amber-50',
+        text: isDark ? 'text-amber-300' : 'text-amber-700',
+        border: isDark ? 'border-amber-500/40' : 'border-amber-300'
+      },
+      yellow: {
+        bg: isDark ? 'bg-yellow-500/20' : 'bg-yellow-50',
+        text: isDark ? 'text-yellow-300' : 'text-yellow-700',
+        border: isDark ? 'border-yellow-500/40' : 'border-yellow-300'
+      },
+      rose: {
+        bg: isDark ? 'bg-rose-500/20' : 'bg-rose-50',
+        text: isDark ? 'text-rose-300' : 'text-rose-700',
+        border: isDark ? 'border-rose-500/40' : 'border-rose-300'
+      },
+      gray: {
+        bg: isDark ? 'bg-gray-500/20' : 'bg-gray-50',
+        text: isDark ? 'text-gray-300' : 'text-gray-700',
+        border: isDark ? 'border-gray-500/40' : 'border-gray-300'
+      }
+    };
+    return colorMap[color] || colorMap.gray;
+  };
 
   const fetchRouteData = async (period = 'daily', date = selectedDate) => {
     if (!user) return;
@@ -131,29 +188,29 @@ const PlanetaryDailyRoute = () => {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="text-center p-3 bg-orange-50 rounded-lg">
-                <div className="text-lg font-semibold text-orange-700">
+              <div className={`text-center p-3 rounded-lg ${themeConfig.isDark ? 'bg-orange-500/20' : 'bg-orange-50'}`}>
+                <div className={`text-lg font-semibold ${themeConfig.isDark ? 'text-orange-300' : 'text-orange-700'}`}>
                   {route.date}
                 </div>
-                <div className="text-sm text-gray-600">Дата</div>
+                <div className={`text-sm ${themeConfig.mutedText}`}>Дата</div>
               </div>
-              <div className="text-center p-3 bg-blue-50 rounded-lg">
-                <div className="text-lg font-semibold text-blue-700">
+              <div className={`text-center p-3 rounded-lg ${themeConfig.isDark ? 'bg-blue-500/20' : 'bg-blue-50'}`}>
+                <div className={`text-lg font-semibold ${themeConfig.isDark ? 'text-blue-300' : 'text-blue-700'}`}>
                   {route.city}
                 </div>
-                <div className="text-sm text-gray-600">Город</div>
+                <div className={`text-sm ${themeConfig.mutedText}`}>Город</div>
               </div>
-              <div className="text-center p-3 bg-purple-50 rounded-lg">
-                <div className="text-lg font-semibold text-purple-700">
+              <div className={`text-center p-3 rounded-lg ${themeConfig.isDark ? 'bg-purple-500/20' : 'bg-purple-50'}`}>
+                <div className={`text-lg font-semibold ${themeConfig.isDark ? 'text-purple-300' : 'text-purple-700'}`}>
                   {route.daily_ruling_planet}
                 </div>
-                <div className="text-sm text-gray-600">Планета дня</div>
+                <div className={`text-sm ${themeConfig.mutedText}`}>Планета дня</div>
               </div>
-              <div className="text-center p-3 bg-green-50 rounded-lg">
-                <div className="text-lg font-semibold text-green-700">
+              <div className={`text-center p-3 rounded-lg ${themeConfig.isDark ? 'bg-green-500/20' : 'bg-green-50'}`}>
+                <div className={`text-lg font-semibold ${themeConfig.isDark ? 'text-green-300' : 'text-green-700'}`}>
                   {route.personal_birth_date}
                 </div>
-                <div className="text-sm text-gray-600">Ваша дата рождения</div>
+                <div className={`text-sm ${themeConfig.mutedText}`}>Ваша дата рождения</div>
               </div>
             </div>
           </CardContent>
@@ -162,7 +219,7 @@ const PlanetaryDailyRoute = () => {
         {/* Лучшие часы для активности */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-green-700 flex items-center">
+            <CardTitle className={`flex items-center ${getColorClasses('green').text}`}>
               <CheckCircle className="w-5 h-5 mr-2" />
               Лучшие часы для активности
             </CardTitle>
@@ -170,11 +227,11 @@ const PlanetaryDailyRoute = () => {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {route.best_activity_hours?.map((hour, index) => (
-                <div key={index} className="bg-green-50 border-2 border-green-300 p-4 rounded-lg">
-                  <div className="text-lg font-bold text-green-800 mb-1">
+                <div key={index} className={`border-2 p-4 rounded-lg ${getColorClasses('green').bg} ${getColorClasses('green').border}`}>
+                  <div className={`text-lg font-bold mb-1 ${getColorClasses('green').text}`}>
                     {hour}
                   </div>
-                  <div className="text-sm text-green-700">
+                  <div className={`text-sm ${themeConfig.mutedText}`}>
                     Оптимальное время для важных дел
                   </div>
                 </div>
@@ -186,7 +243,7 @@ const PlanetaryDailyRoute = () => {
         {/* Периоды, которых стоит избегать */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-red-700 flex items-center">
+            <CardTitle className={`flex items-center ${getColorClasses('red').text}`}>
               <AlertTriangle className="w-5 h-5 mr-2" />
               Периоды, которых стоит избегать
             </CardTitle>
@@ -194,12 +251,12 @@ const PlanetaryDailyRoute = () => {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {Object.entries(route.avoid_periods || {}).map(([key, period]) => (
-                <div key={key} className="bg-red-50 border-2 border-red-300 p-4 rounded-lg">
-                  <h3 className="font-semibold text-red-800 mb-2">{period.name || key}</h3>
-                  <div className="text-lg font-bold text-red-800 mb-2">
+                <div key={key} className={`border-2 p-4 rounded-lg ${getColorClasses('red').bg} ${getColorClasses('red').border}`}>
+                  <h3 className={`font-semibold mb-2 ${getColorClasses('red').text}`}>{period.name || key}</h3>
+                  <div className={`text-lg font-bold mb-2 ${getColorClasses('red').text}`}>
                     {period.start} - {period.end}
                   </div>
-                  <div className="text-sm text-red-700">
+                  <div className={`text-sm ${themeConfig.mutedText}`}>
                     {period.description}
                   </div>
                 </div>
