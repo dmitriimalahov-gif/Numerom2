@@ -11,7 +11,7 @@ import PaymentCancelled from "./components/PaymentCancelled";
 import NameNumerology from './components/NameNumerology';
 import Compatibility from './components/Compatibility';
 import Quiz from './components/Quiz';
-import PlanetaryDailyRoute from './components/PlanetaryDailyRoute';
+import PlanetaryDailyRoute from './components/PlanetaryDailyRouteNew';
 import ReportExport from './components/ReportExport';
 import VedicTimeCalculations from './components/VedicTimeCalculations';
 import LearningSystem from './components/LearningSystem';
