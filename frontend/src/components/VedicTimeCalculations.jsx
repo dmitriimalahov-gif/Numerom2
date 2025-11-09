@@ -343,6 +343,13 @@ const VedicTimeCalculations = () => {
     console.log('🕐 Текущее время:', now.toLocaleString('ru-RU'));
     console.log('📅 Выбранная дата:', selectedDate);
     console.log('📅 Сегодняшняя дата:', todayISO);
+    
+    // Проверяем, не находимся ли мы в ночных часах (до восхода)
+    const firstDayHour = schedule.planetary_hours[0];
+    const firstDayStart = firstDayHour ? parsePlanetaryTime(firstDayHour.start_time || firstDayHour.start) : null;
+    if (firstDayStart && now < firstDayStart) {
+      console.log('⚠️ Текущее время ДО восхода солнца - ищем в ночных часах');
+    }
 
     // Проверяем дневные часы
     const dayHourIndex = schedule.planetary_hours.findIndex((hour, index) => {
@@ -384,15 +391,31 @@ const VedicTimeCalculations = () => {
         const start = parsePlanetaryTime(hour.start_time || hour.start);
         const end = parsePlanetaryTime(hour.end_time || hour.end);
         
-        console.log(`🌙 Ночной час ${index + 13} (${hour.planet}):`, {
-          start: start?.toLocaleString('ru-RU'),
-          end: end?.toLocaleString('ru-RU'),
-          now: now.toLocaleString('ru-RU'),
-          isActive: start && end && now >= start && now < end
-        });
-        
         if (!start || !end) return false;
-        return now >= start && now < end;
+        
+        // Ночные часы могут переходить через полночь
+        // Если end > start, то это обычный интервал
+        // Если end < start, то интервал переходит через полночь
+        let isActive;
+        if (end > start) {
+          // Обычный интервал
+          isActive = now >= start && now < end;
+        } else {
+          // Интервал через полночь: либо после start, либо до end
+          isActive = now >= start || now < end;
+        }
+        
+        if (isActive || (index === 0 && now < firstDayStart)) {
+          console.log(`🌙 Ночной час ${index + 13} (${hour.planet}):`, {
+            start: start?.toLocaleString('ru-RU'),
+            end: end?.toLocaleString('ru-RU'),
+            now: now.toLocaleString('ru-RU'),
+            isActive,
+            crossesMidnight: end < start
+          });
+        }
+        
+        return isActive;
       });
 
       if (nightHourIndex !== -1) {
