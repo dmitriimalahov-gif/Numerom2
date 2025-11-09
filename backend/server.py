@@ -906,14 +906,43 @@ async def get_planetary_hour_advice(
             print(f"🔢 Число ума: {user_data['mind_number']}")
             print(f"🔢 Правящее число: {user_data['ruling_number']}")
             
-            # Создаем квадрат Пифагора для подсчета силы планет
+            # Создаем квадрат Пифагора для подсчета силы планет (метод Александрова)
             birth_date_str = birth_date_obj.strftime("%d%m%Y")
-            all_digits = birth_date_str
             
-            # Подсчитываем количество каждой цифры
+            # Получаем цифры даты рождения (без нулей)
+            birth_digits = [int(d) for d in birth_date_str if d != '0']
+            
+            # Вычисляем рабочие числа
+            # 1-е рабочее число: сумма всех цифр даты рождения
+            first_working = sum(birth_digits)
+            
+            # 2-е рабочее число: сумма цифр 1-го рабочего числа
+            second_working = sum(int(d) for d in str(first_working))
+            
+            # 3-е рабочее число: 1-е рабочее - (2 × первая цифра даты)
+            first_digit = int(birth_date_str[0])
+            third_working = first_working - (2 * first_digit)
+            
+            # 4-е рабочее число: сумма цифр 3-го рабочего числа
+            fourth_working = sum(int(d) for d in str(abs(third_working)))
+            
+            print(f"🔢 Рабочие числа: 1-е={first_working}, 2-е={second_working}, 3-е={third_working}, 4-е={fourth_working}")
+            
+            # Объединяем все цифры: дата рождения + рабочие числа
+            all_digits = (
+                birth_digits +
+                [int(d) for d in str(first_working)] +
+                [int(d) for d in str(second_working)] +
+                [int(d) for d in str(abs(third_working))] +
+                [int(d) for d in str(fourth_working)]
+            )
+            
+            print(f"📊 Все цифры для анализа: {all_digits}")
+            
+            # Подсчитываем количество каждой цифры (1-9)
             digit_counts = {}
-            for digit in all_digits:
-                digit_counts[digit] = digit_counts.get(digit, 0) + 1
+            for i in range(1, 10):
+                digit_counts[str(i)] = all_digits.count(i)
             
             # Маппинг цифр на планеты
             planet_digit_map = {
