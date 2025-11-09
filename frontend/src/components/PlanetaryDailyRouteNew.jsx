@@ -5,7 +5,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
-import { Calendar, Clock, TrendingUp, AlertTriangle, CheckCircle, Sparkles, Activity, Target, Info, Loader2, Star, Zap, Shield } from 'lucide-react';
+import { Calendar, Clock, TrendingUp, AlertTriangle, CheckCircle, CheckCircle2, Sparkles, Activity, Target, Info, Loader2, Star, Zap, Shield } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { getApiBaseUrl } from '../utils/backendUrl';
 import { useTheme } from '../hooks/useTheme';
