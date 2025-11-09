@@ -467,7 +467,7 @@ const VedicTimeCalculations = () => {
   const changeCity = useCallback(
     async (city) => {
       if (!user || !apiBaseUrl || !city) return;
-      try {
+    try {
         await fetch(`${apiBaseUrl}/user/change-city`, {
           method: 'POST',
           headers: {
@@ -1003,7 +1003,7 @@ const VedicTimeCalculations = () => {
                   <p className="text-sm text-white/85">
                     Для выбранного дня мантра не определена. Проверьте настройки города и даты.
                   </p>
-                )}
+          )}
               </div>
             </div>
 
