@@ -480,12 +480,19 @@ const PlanetaryDailyRouteNew = () => {
       {/* Модальное окно с советами для планетарного часа */}
       <Dialog open={isHourDialogOpen} onOpenChange={setIsHourDialogOpen}>
         <DialogContent className={`max-w-2xl max-h-[80vh] overflow-y-auto ${themeConfig.card}`}>
-          {selectedHour && (
+          {selectedHour ? (
             <HourAdviceContent 
               hour={selectedHour} 
               getAdvice={getPersonalizedAdvice} 
               themeConfig={themeConfig} 
             />
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Планетарный час</DialogTitle>
+                <DialogDescription>Выберите час для просмотра рекомендаций</DialogDescription>
+              </DialogHeader>
+            </>
           )}
         </DialogContent>
       </Dialog>
