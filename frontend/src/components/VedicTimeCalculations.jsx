@@ -735,40 +735,70 @@ const VedicTimeCalculations = () => {
                   return (
                     <div
                       key={index}
-                      className={`rounded-2xl border p-5 transition-all duration-300 hover:-translate-y-1 ${
-                        isActive ? 'shadow-2xl scale-105 ring-2' : 'shadow-sm hover:shadow-lg'
+                      className={`rounded-2xl border p-5 transition-all duration-500 hover:-translate-y-1 relative ${
+                        isActive ? 'shadow-2xl scale-110 ring-4 ring-offset-4 ring-offset-slate-900' : 'shadow-sm hover:shadow-lg'
                       }`}
                       style={{
                         borderColor: isActive ? planetColor : planetColor + '40',
-                        backgroundColor: isActive ? planetColor + '30' : planetColor + '10',
-                        boxShadow: isActive ? `0 20px 60px ${planetColor}60, 0 0 40px ${planetColor}40` : undefined,
-                        ringColor: isActive ? planetColor : undefined
+                        backgroundColor: isActive ? planetColor + '40' : planetColor + '10',
+                        boxShadow: isActive 
+                          ? `0 0 60px ${planetColor}80, 0 0 120px ${planetColor}60, 0 20px 80px ${planetColor}40, inset 0 0 40px ${planetColor}20` 
+                          : undefined,
+                        ringColor: isActive ? planetColor : undefined,
+                        borderWidth: isActive ? '3px' : '1px'
                       }}
                     >
+                      {isActive && (
+                        <div 
+                          className="absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest whitespace-nowrap animate-pulse shadow-lg"
+                          style={{
+                            backgroundColor: planetColor,
+                            color: '#ffffff',
+                            boxShadow: `0 0 20px ${planetColor}80, 0 0 40px ${planetColor}60`
+                          }}
+                        >
+                          ⏰ ТЕКУЩЕЕ ВРЕМЯ ⏰
+                        </div>
+                      )}
                       <div className="flex items-center justify-between">
                         <span
-                          className={`text-sm font-semibold ${isActive ? 'text-lg' : ''}`}
-                          style={{ color: isActive ? planetColor : planetColor }}
+                          className={`font-bold ${isActive ? 'text-xl' : 'text-sm'}`}
+                          style={{ 
+                            color: isActive ? '#ffffff' : planetColor,
+                            textShadow: isActive ? `0 0 10px ${planetColor}, 0 0 20px ${planetColor}80` : undefined
+                          }}
                         >
                           {hour.planet_sanskrit || hour.planet}
                         </span>
                         <span 
-                          className={`rounded-full px-3 py-1 text-xs font-medium ${isActive ? 'animate-pulse' : ''}`}
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${isActive ? 'animate-pulse' : ''}`}
                           style={{
-                            backgroundColor: isActive ? planetColor : planetColor + '30',
-                            color: isActive ? '#ffffff' : planetColor
+                            backgroundColor: isActive ? '#ffffff' : planetColor + '30',
+                            color: isActive ? planetColor : planetColor,
+                            boxShadow: isActive ? `0 0 15px ${planetColor}60` : undefined
                           }}
                         >
                           Час {hour.hour || index + 1}
                         </span>
                       </div>
-                      <div className={`mt-3 text-sm ${isActive ? 'font-semibold text-white' : themeConfig.mutedText}`}>
+                      <div className={`mt-3 text-sm ${isActive ? 'font-bold text-white text-base' : themeConfig.mutedText}`}
+                        style={{
+                          textShadow: isActive ? `0 0 10px ${planetColor}80` : undefined
+                        }}
+                      >
                         {hour.start_time?.slice(11, 16) || hour.start} —{' '}
                         {hour.end_time?.slice(11, 16) || hour.end}
                       </div>
                       {isActive && (
-                        <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold text-white animate-pulse">
-                          <Clock3 className="h-3.5 w-3.5" />
+                        <div 
+                          className="mt-3 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold text-white animate-pulse"
+                          style={{
+                            backgroundColor: '#ffffff30',
+                            backdropFilter: 'blur(10px)',
+                            boxShadow: `0 0 20px ${planetColor}40`
+                          }}
+                        >
+                          <Clock3 className="h-4 w-4" />
                           Сейчас активно
                         </div>
                       )}
@@ -806,40 +836,70 @@ const VedicTimeCalculations = () => {
                   return (
                     <div
                       key={index}
-                      className={`rounded-2xl border p-5 transition-all duration-300 hover:-translate-y-1 ${
-                        isActive ? 'shadow-2xl scale-105 ring-2' : 'shadow-sm hover:shadow-lg'
+                      className={`rounded-2xl border p-5 transition-all duration-500 hover:-translate-y-1 relative ${
+                        isActive ? 'shadow-2xl scale-110 ring-4 ring-offset-4 ring-offset-slate-900' : 'shadow-sm hover:shadow-lg'
                       }`}
                       style={{
                         borderColor: isActive ? planetColor : planetColor + '40',
-                        backgroundColor: isActive ? planetColor + '30' : planetColor + '10',
-                        boxShadow: isActive ? `0 20px 60px ${planetColor}60, 0 0 40px ${planetColor}40` : undefined,
-                        ringColor: isActive ? planetColor : undefined
+                        backgroundColor: isActive ? planetColor + '40' : planetColor + '10',
+                        boxShadow: isActive 
+                          ? `0 0 60px ${planetColor}80, 0 0 120px ${planetColor}60, 0 20px 80px ${planetColor}40, inset 0 0 40px ${planetColor}20` 
+                          : undefined,
+                        ringColor: isActive ? planetColor : undefined,
+                        borderWidth: isActive ? '3px' : '1px'
                       }}
                     >
+                      {isActive && (
+                        <div 
+                          className="absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest whitespace-nowrap animate-pulse shadow-lg"
+                          style={{
+                            backgroundColor: planetColor,
+                            color: '#ffffff',
+                            boxShadow: `0 0 20px ${planetColor}80, 0 0 40px ${planetColor}60`
+                          }}
+                        >
+                          ⏰ ТЕКУЩЕЕ ВРЕМЯ ⏰
+                        </div>
+                      )}
                       <div className="flex items-center justify-between">
                         <span
-                          className={`text-sm font-semibold ${isActive ? 'text-lg' : ''}`}
-                          style={{ color: isActive ? planetColor : planetColor }}
+                          className={`font-bold ${isActive ? 'text-xl' : 'text-sm'}`}
+                          style={{ 
+                            color: isActive ? '#ffffff' : planetColor,
+                            textShadow: isActive ? `0 0 10px ${planetColor}, 0 0 20px ${planetColor}80` : undefined
+                          }}
                         >
                           {hour.planet_sanskrit || hour.planet}
                         </span>
                         <span 
-                          className={`rounded-full px-3 py-1 text-xs font-medium ${isActive ? 'animate-pulse' : ''}`}
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${isActive ? 'animate-pulse' : ''}`}
                           style={{
-                            backgroundColor: isActive ? planetColor : planetColor + '30',
-                            color: isActive ? '#ffffff' : planetColor
+                            backgroundColor: isActive ? '#ffffff' : planetColor + '30',
+                            color: isActive ? planetColor : planetColor,
+                            boxShadow: isActive ? `0 0 15px ${planetColor}60` : undefined
                           }}
                         >
                           Час {hour.hour || (13 + index)}
                         </span>
                       </div>
-                      <div className={`mt-3 text-sm ${isActive ? 'font-semibold text-white' : themeConfig.mutedText}`}>
+                      <div className={`mt-3 text-sm ${isActive ? 'font-bold text-white text-base' : themeConfig.mutedText}`}
+                        style={{
+                          textShadow: isActive ? `0 0 10px ${planetColor}80` : undefined
+                        }}
+                      >
                         {hour.start_time?.slice(11, 16) || hour.start} —{' '}
                         {hour.end_time?.slice(11, 16) || hour.end}
                       </div>
                       {isActive && (
-                        <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold text-white animate-pulse">
-                          <Clock3 className="h-3.5 w-3.5" />
+                        <div 
+                          className="mt-3 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold text-white animate-pulse"
+                          style={{
+                            backgroundColor: '#ffffff30',
+                            backdropFilter: 'blur(10px)',
+                            boxShadow: `0 0 20px ${planetColor}40`
+                          }}
+                        >
+                          <Clock3 className="h-4 w-4" />
                           Сейчас активно
                         </div>
                       )}
