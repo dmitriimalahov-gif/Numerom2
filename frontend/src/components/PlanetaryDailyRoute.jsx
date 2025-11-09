@@ -5,10 +5,34 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Calendar, CalendarDays, Clock, TrendingUp, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Calendar, CalendarDays, Clock, TrendingUp, AlertTriangle, CheckCircle, Sparkles, Activity, Target } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { getApiBaseUrl } from '../utils/backendUrl';
 import { useTheme } from '../hooks/useTheme';
+import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+} from 'chart.js';
+
+// Регистрируем компоненты Chart.js
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 const PlanetaryDailyRoute = () => {
   const { theme } = useOutletContext();
@@ -215,6 +239,220 @@ const PlanetaryDailyRoute = () => {
             </div>
           </CardContent>
         </Card>
+
+        {/* Анализ дня - Новая секция */}
+        {route.day_analysis && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5" />
+                Персональный анализ дня
+              </CardTitle>
+              <CardDescription>
+                Совместимость дня с вашими личными числами
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                {/* Общая оценка */}
+                <div className={`p-6 rounded-xl border-2 ${
+                  route.day_analysis.overall_score >= 60 ? getColorClasses('green').bg + ' ' + getColorClasses('green').border :
+                  route.day_analysis.overall_score >= 40 ? getColorClasses('blue').bg + ' ' + getColorClasses('blue').border :
+                  route.day_analysis.overall_score >= 20 ? getColorClasses('amber').bg + ' ' + getColorClasses('amber').border :
+                  getColorClasses('red').bg + ' ' + getColorClasses('red').border
+                }`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className={`text-2xl font-bold ${themeConfig.text}`}>
+                        {route.day_analysis.overall_rating} день
+                      </h3>
+                      <p className={`text-sm ${themeConfig.mutedText} mt-1`}>
+                        Оценка совместимости: {route.day_analysis.overall_score}/100
+                      </p>
+                    </div>
+                    <div className={`text-5xl font-bold ${
+                      route.day_analysis.overall_score >= 60 ? getColorClasses('green').text :
+                      route.day_analysis.overall_score >= 40 ? getColorClasses('blue').text :
+                      route.day_analysis.overall_score >= 20 ? getColorClasses('amber').text :
+                      getColorClasses('red').text
+                    }`}>
+                      {route.day_analysis.overall_score}
+                    </div>
+                  </div>
+                  <p className={`text-base ${themeConfig.text}`}>
+                    {route.day_analysis.overall_description}
+                  </p>
+                </div>
+
+                {/* Детали анализа */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-purple-500/20' : 'bg-purple-50'}`}>
+                    <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Число дня</div>
+                    <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-purple-300' : 'text-purple-700'}`}>
+                      {route.day_analysis.day_number}
+                    </div>
+                  </div>
+                  <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-indigo-500/20' : 'bg-indigo-50'}`}>
+                    <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Управляющая планета</div>
+                    <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                      {route.day_analysis.ruling_planet}
+                    </div>
+                  </div>
+                  <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-cyan-500/20' : 'bg-cyan-50'}`}>
+                    <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Число планеты</div>
+                    <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-cyan-300' : 'text-cyan-700'}`}>
+                      {route.day_analysis.ruling_number}
+                    </div>
+                  </div>
+                  <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-teal-500/20' : 'bg-teal-50'}`}>
+                    <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Сила планеты в вашей карте</div>
+                    <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-teal-300' : 'text-teal-700'}`}>
+                      {route.day_analysis.planet_strength}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Заметки о совместимости */}
+                {route.day_analysis.compatibility_notes && route.day_analysis.compatibility_notes.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className={`font-semibold ${themeConfig.text} mb-3`}>Ключевые факторы:</h4>
+                    {route.day_analysis.compatibility_notes.map((note, idx) => (
+                      <div key={idx} className={`flex items-start gap-3 p-3 rounded-lg ${themeConfig.isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                        <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                        <span className={themeConfig.text}>{note}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* График почасовой энергии - Новая секция */}
+        {route.hourly_energy && route.hourly_energy.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="w-5 h-5" />
+                Почасовая энергия планет
+              </CardTitle>
+              <CardDescription>
+                Уровень энергии каждого планетарного часа с учётом вашей личной карты
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                {/* График */}
+                <div className="h-80">
+                  <Line
+                    data={{
+                      labels: route.hourly_energy.map(h => h.time.split(' - ')[0]),
+                      datasets: [{
+                        label: 'Уровень энергии',
+                        data: route.hourly_energy.map(h => h.energy_level),
+                        borderColor: themeConfig.isDark ? 'rgba(99, 102, 241, 1)' : 'rgba(79, 70, 229, 1)',
+                        backgroundColor: themeConfig.isDark ? 'rgba(99, 102, 241, 0.1)' : 'rgba(79, 70, 229, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 6,
+                        pointHoverRadius: 8,
+                        pointBackgroundColor: themeConfig.isDark ? 'rgba(99, 102, 241, 1)' : 'rgba(79, 70, 229, 1)',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2
+                      }]
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: {
+                        legend: {
+                          display: false
+                        },
+                        tooltip: {
+                          backgroundColor: themeConfig.isDark ? 'rgba(30, 41, 59, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+                          titleColor: themeConfig.isDark ? '#fff' : '#000',
+                          bodyColor: themeConfig.isDark ? '#cbd5e1' : '#64748b',
+                          borderColor: themeConfig.isDark ? 'rgba(148, 163, 184, 0.2)' : 'rgba(203, 213, 225, 0.8)',
+                          borderWidth: 1,
+                          padding: 12,
+                          displayColors: false,
+                          callbacks: {
+                            title: (items) => {
+                              const idx = items[0].dataIndex;
+                              return route.hourly_energy[idx].time;
+                            },
+                            label: (item) => {
+                              const idx = item.dataIndex;
+                              const hour = route.hourly_energy[idx];
+                              return [
+                                `Планета: ${hour.planet}`,
+                                `Энергия: ${hour.energy_level}/10`,
+                                `Сила в карте: ${hour.personal_strength}`,
+                                `${hour.activity_type}`
+                              ];
+                            }
+                          }
+                        }
+                      },
+                      scales: {
+                        y: {
+                          beginAtZero: true,
+                          max: 10,
+                          ticks: {
+                            color: themeConfig.isDark ? '#94a3b8' : '#64748b',
+                            stepSize: 2
+                          },
+                          grid: {
+                            color: themeConfig.isDark ? 'rgba(148, 163, 184, 0.1)' : 'rgba(203, 213, 225, 0.3)'
+                          }
+                        },
+                        x: {
+                          ticks: {
+                            color: themeConfig.isDark ? '#94a3b8' : '#64748b',
+                            maxRotation: 45,
+                            minRotation: 45
+                          },
+                          grid: {
+                            display: false
+                          }
+                        }
+                      }
+                    }}
+                  />
+                </div>
+
+                {/* Легенда энергий */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className={`p-3 rounded-lg ${getColorClasses('green').bg}`}>
+                    <div className={`text-sm font-semibold ${getColorClasses('green').text} mb-1`}>
+                      Высокая энергия (7-10)
+                    </div>
+                    <div className={`text-xs ${themeConfig.mutedText}`}>
+                      Отличное время для активности
+                    </div>
+                  </div>
+                  <div className={`p-3 rounded-lg ${getColorClasses('blue').bg}`}>
+                    <div className={`text-sm font-semibold ${getColorClasses('blue').text} mb-1`}>
+                      Умеренная энергия (4-6)
+                    </div>
+                    <div className={`text-xs ${themeConfig.mutedText}`}>
+                      Подходит для повседневных дел
+                    </div>
+                  </div>
+                  <div className={`p-3 rounded-lg ${getColorClasses('red').bg}`}>
+                    <div className={`text-sm font-semibold ${getColorClasses('red').text} mb-1`}>
+                      Низкая энергия (1-3)
+                    </div>
+                    <div className={`text-xs ${themeConfig.mutedText}`}>
+                      Время для отдыха
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Лучшие часы для активности */}
         <Card>
