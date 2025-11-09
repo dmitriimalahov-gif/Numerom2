@@ -392,6 +392,18 @@ const VedicTimeCalculations = () => {
     fetchVedicSchedule(selectedDate, initialCity);
   }, [user, fetchVedicSchedule, selectedDate]);
 
+  // Автоматическое обновление активного часа каждую минуту
+  const [, forceUpdate] = useState({});
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Принудительно пересчитываем активный час
+      forceUpdate({});
+      console.log('🔄 Автоматическое обновление активного часа');
+    }, 60000); // Каждую минуту
+
+    return () => clearInterval(interval);
+  }, []);
+
   const handleDateChange = useCallback(
     (event) => {
       const value = event.target.value;
