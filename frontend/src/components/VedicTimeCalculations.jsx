@@ -341,21 +341,36 @@ const VedicTimeCalculations = () => {
 
     const now = new Date();
     console.log('🕐 Текущее время:', now.toLocaleString('ru-RU'));
+    console.log('📅 Выбранная дата:', selectedDate);
+    console.log('📅 Сегодняшняя дата:', todayISO);
 
     // Проверяем дневные часы
     const dayHourIndex = schedule.planetary_hours.findIndex((hour, index) => {
       const start = parsePlanetaryTime(hour.start_time || hour.start);
       const end = parsePlanetaryTime(hour.end_time || hour.end);
       
-      console.log(`☀️ Дневной час ${index + 1} (${hour.planet}):`, {
-        start: start?.toLocaleString('ru-RU'),
-        end: end?.toLocaleString('ru-RU'),
-        now: now.toLocaleString('ru-RU'),
-        isActive: start && end && now >= start && now < end
-      });
+      // Логируем только первый час и текущий
+      if (index === 0) {
+        console.log('🔍 Первый дневной час (сырые данные):', {
+          start_time: hour.start_time,
+          end_time: hour.end_time,
+          planet: hour.planet
+        });
+      }
+      
+      const isActive = start && end && now >= start && now < end;
+      
+      if (isActive || index === 0) {
+        console.log(`☀️ Дневной час ${index + 1} (${hour.planet}):`, {
+          start: start?.toLocaleString('ru-RU'),
+          end: end?.toLocaleString('ru-RU'),
+          now: now.toLocaleString('ru-RU'),
+          isActive
+        });
+      }
       
       if (!start || !end) return false;
-      return now >= start && now < end;
+      return isActive;
     });
 
     if (dayHourIndex !== -1) {
