@@ -859,19 +859,37 @@ async def get_planetary_hour_advice(
             birth_date_obj = datetime.fromisoformat(str(user.birth_date))
             day, month, year = birth_date_obj.day, birth_date_obj.month, birth_date_obj.year
             
-            # Вычисляем основные числа
-            def reduce_to_single(num):
+            print(f"📅 Дата рождения пользователя: {day}.{month}.{year}")
+            
+            # Вычисляем основные числа (с учетом мастер-чисел)
+            def reduce_to_single(num, keep_master=True):
+                """Редуцирует число до однозначного, сохраняя мастер-числа 11, 22, 33"""
+                if keep_master and num in [11, 22, 33]:
+                    return num
                 while num > 9:
                     num = sum(int(d) for d in str(num))
+                    if keep_master and num in [11, 22, 33]:
+                        return num
                 return num
             
+            # Число души (день рождения)
             user_data["soul_number"] = reduce_to_single(day)
-            user_data["destiny_number"] = reduce_to_single(day + month + year)
+            
+            # Число судьбы (сумма всех цифр даты)
+            full_date_sum = day + month + year
+            user_data["destiny_number"] = reduce_to_single(full_date_sum)
+            
+            # Число ума (месяц)
             user_data["mind_number"] = reduce_to_single(month)
             
-            # Вычисляем правящее число (сумма числа души и числа судьбы)
+            # Правящее число (сумма числа души и числа судьбы)
             ruling = user_data["soul_number"] + user_data["destiny_number"]
             user_data["ruling_number"] = reduce_to_single(ruling)
+            
+            print(f"🔢 Число души: {user_data['soul_number']}")
+            print(f"🔢 Число судьбы: {user_data['destiny_number']}")
+            print(f"🔢 Число ума: {user_data['mind_number']}")
+            print(f"🔢 Правящее число: {user_data['ruling_number']}")
             
             # Создаем квадрат Пифагора для подсчета силы планет
             birth_date_str = birth_date_obj.strftime("%d%m%Y")
@@ -897,9 +915,14 @@ async def get_planetary_hour_advice(
             
             for planet_name, digit in planet_digit_map.items():
                 user_data["planet_counts"][planet_name] = digit_counts.get(digit, 0)
+            
+            print(f"🌍 Сила планет: {user_data['planet_counts']}")
+            print(f"🌟 Запрашиваемая планета: {planet}, сила: {user_data['planet_counts'].get(planet, 0)}")
                 
         except Exception as e:
-            print(f"Ошибка при вычислении чисел: {e}")
+            print(f"❌ Ошибка при вычислении чисел: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Получаем персонализированные советы
     advice = await get_personalized_planetary_advice(db, planet, user_data, is_night)

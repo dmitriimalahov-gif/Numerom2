@@ -808,6 +808,14 @@ async def get_personalized_planetary_advice(
     planet_counts = user_data.get("planet_counts", {})
     planet_count = planet_counts.get(planet, 0)
     
+    print(f"\n🔍 АНАЛИЗ СОВЕТОВ ДЛЯ {planet}:")
+    print(f"   Число души: {soul_num}")
+    print(f"   Число судьбы: {destiny_num}")
+    print(f"   Число ума: {mind_num}")
+    print(f"   Правящее число: {ruling_num}")
+    print(f"   Сила планеты {planet}: {planet_count}")
+    print(f"   Ночной час: {is_night}")
+    
     # Получаем информацию о дне недели
     birth_weekday = -1
     current_weekday = datetime.now().weekday()
@@ -816,11 +824,14 @@ async def get_personalized_planetary_advice(
         try:
             birth_date = datetime.fromisoformat(str(user_data["birth_date"]))
             birth_weekday = birth_date.weekday()
+            print(f"   День недели рождения: {birth_weekday}")
+            print(f"   Текущий день недели: {current_weekday}")
         except:
             pass
     
     # === ИСПОЛЬЗУЕМ РАСШИРЕННУЮ СИСТЕМУ АНАЛИЗА ===
     if soul_num and destiny_num and mind_num and ruling_num:
+        print(f"✅ Все числа присутствуют - запускаем расширенный анализ")
         advanced_notes = get_advanced_personalized_advice(
             planet=planet,
             soul_num=soul_num,
@@ -835,6 +846,7 @@ async def get_personalized_planetary_advice(
         
         # Добавляем расширенные заметки
         response["personalized_notes"].extend(advanced_notes)
+        print(f"📝 Получено {len(advanced_notes)} персонализированных заметок")
         
         # Добавляем анализ совместимости
         compatibility = get_compatibility_advice(planet, soul_num, destiny_num)
@@ -844,6 +856,9 @@ async def get_personalized_planetary_advice(
                 "title": "🤝 Совместимость планет",
                 "advice": compatibility
             })
+            print(f"🤝 Добавлен анализ совместимости")
+    else:
+        print(f"⚠️ Недостаточно данных для расширенного анализа")
     
     # Если расширенный анализ не сработал, используем базовые советы
     if not response["personalized_notes"]:
