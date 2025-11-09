@@ -529,6 +529,153 @@ def get_monthly_planetary_route(city: str, start_date: datetime, birth_date: str
     }
 
 
+def get_weekly_planetary_route(city: str, start_date: datetime, birth_date: str = None) -> Dict[str, Any]:
+    """
+    Генерирует планетарный маршрут на неделю (7 дней)
+    С детальным анализом каждого дня
+    """
+    weekly_schedule = []
+    current_date = start_date
+    
+    # Собираем данные за 7 дней
+    for day_offset in range(7):
+        try:
+            daily_schedule = get_vedic_day_schedule(city=city, date=current_date)
+            
+            if 'error' not in daily_schedule:
+                weekday_info = daily_schedule.get('weekday', {})
+                ruling_planet = weekday_info.get('ruling_planet', 'Surya')
+                
+                # Базовая оценка благоприятности дня
+                favorable_activities = daily_schedule.get('recommendations', {}).get('activities', [])
+                avoid_activities = daily_schedule.get('recommendations', {}).get('avoid', [])
+                favorable_rating = len(favorable_activities) - (len(avoid_activities) * 0.5)
+                
+                # Определяем тип дня
+                if favorable_rating >= 3:
+                    day_type = 'favorable'
+                    day_type_ru = 'Благоприятный'
+                    color_class = 'green'
+                elif favorable_rating <= 1:
+                    day_type = 'challenging'
+                    day_type_ru = 'Сложный'
+                    color_class = 'red'
+                else:
+                    day_type = 'neutral'
+                    day_type_ru = 'Нейтральный'
+                    color_class = 'blue'
+                
+                day_info = {
+                    'date': current_date.strftime('%Y-%m-%d'),
+                    'weekday': current_date.weekday(),
+                    'weekday_name': weekday_info.get('name_ru', ''),
+                    'ruling_planet': ruling_planet,
+                    'planet_sanskrit': weekday_info.get('ruling_planet', ''),
+                    'day_type': day_type,
+                    'day_type_ru': day_type_ru,
+                    'color_class': color_class,
+                    'favorable_rating': round(favorable_rating, 1),
+                    'rahu_kaal': daily_schedule.get('inauspicious_periods', {}).get('rahu_kaal', {}),
+                    'gulika_kaal': daily_schedule.get('inauspicious_periods', {}).get('gulika_kaal', {}),
+                    'favorable_activities': favorable_activities[:5],  # Топ 5
+                    'avoid_activities': avoid_activities[:5],  # Топ 5
+                    'best_hours': daily_schedule.get('recommendations', {}).get('best_hours', []),
+                    'mantra': daily_schedule.get('mantra', ''),
+                    'colors': daily_schedule.get('recommendations', {}).get('colors', []),
+                }
+                
+                weekly_schedule.append(day_info)
+        except Exception as e:
+            print(f"Error processing day {current_date}: {e}")
+        
+        current_date += timedelta(days=1)
+    
+    # Генерируем сводку недели
+    weekly_summary = get_weekly_summary(weekly_schedule, birth_date)
+    
+    return {
+        'period': 'week',
+        'start_date': start_date.strftime('%Y-%m-%d'),
+        'end_date': (start_date + timedelta(days=6)).strftime('%Y-%m-%d'),
+        'city': city,
+        'daily_schedule': weekly_schedule,
+        'weekly_summary': weekly_summary
+    }
+
+
+def get_weekly_summary(weekly_schedule: List[Dict], birth_date: str = None) -> Dict[str, Any]:
+    """
+    Генерирует сводку недели с ключевыми рекомендациями
+    """
+    # Подсчитываем типы дней
+    favorable_days = [d for d in weekly_schedule if d['day_type'] == 'favorable']
+    challenging_days = [d for d in weekly_schedule if d['day_type'] == 'challenging']
+    neutral_days = [d for d in weekly_schedule if d['day_type'] == 'neutral']
+    
+    # Подсчитываем планеты
+    planet_distribution = {}
+    for day in weekly_schedule:
+        planet = day['ruling_planet']
+        planet_distribution[planet] = planet_distribution.get(planet, 0) + 1
+    
+    # Определяем лучший и худший дни
+    best_day = max(weekly_schedule, key=lambda x: x['favorable_rating']) if weekly_schedule else None
+    worst_day = min(weekly_schedule, key=lambda x: x['favorable_rating']) if weekly_schedule else None
+    
+    # Средняя оценка недели
+    avg_rating = sum(d['favorable_rating'] for d in weekly_schedule) / len(weekly_schedule) if weekly_schedule else 0
+    
+    # Определяем общую энергетику недели
+    if avg_rating >= 2.5:
+        week_energy = 'Высокая'
+        week_description = 'Неделя благоприятна для активных действий и начинаний'
+    elif avg_rating >= 1.5:
+        week_energy = 'Средняя'
+        week_description = 'Неделя требует баланса между действием и осторожностью'
+    else:
+        week_energy = 'Низкая'
+        week_description = 'Неделя требует осторожности и завершения начатых дел'
+    
+    # Ключевые рекомендации
+    key_recommendations = []
+    if favorable_days:
+        key_recommendations.append({
+            'type': 'positive',
+            'title': 'Благоприятные дни',
+            'dates': [d['date'] for d in favorable_days],
+            'advice': 'Используйте эти дни для важных начинаний, подписания договоров и принятия решений'
+        })
+    
+    if challenging_days:
+        key_recommendations.append({
+            'type': 'warning',
+            'title': 'Сложные дни',
+            'dates': [d['date'] for d in challenging_days],
+            'advice': 'Будьте осторожны, избегайте рисков и важных начинаний'
+        })
+    
+    # Рекомендации по планированию
+    planning_advice = []
+    if best_day:
+        planning_advice.append(f"Лучший день недели: {best_day['weekday_name']} ({best_day['date']})")
+    if worst_day:
+        planning_advice.append(f"Будьте осторожны: {worst_day['weekday_name']} ({worst_day['date']})")
+    
+    return {
+        'week_energy': week_energy,
+        'week_description': week_description,
+        'average_rating': round(avg_rating, 1),
+        'favorable_days_count': len(favorable_days),
+        'challenging_days_count': len(challenging_days),
+        'neutral_days_count': len(neutral_days),
+        'planet_distribution': planet_distribution,
+        'best_day': best_day,
+        'worst_day': worst_day,
+        'key_recommendations': key_recommendations,
+        'planning_advice': planning_advice
+    }
+
+
 def get_quarterly_planetary_route(city: str, start_date: datetime, birth_date: str = None) -> Dict[str, Any]:
     """
     Генерирует планетарный маршрут на квартал (90 дней)

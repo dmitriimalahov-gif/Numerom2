@@ -23,6 +23,10 @@ const PlanetaryDailyRouteNew = () => {
   const [isHourDialogOpen, setIsHourDialogOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [activeTab, setActiveTab] = useState('day'); // day, week, month, quarter
+  const [weeklyData, setWeeklyData] = useState(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [selectedDay, setSelectedDay] = useState(null);
+  const [isDayDialogOpen, setIsDayDialogOpen] = useState(false);
   const { user } = useAuth();
   const apiBaseUrl = getApiBaseUrl();
 
@@ -64,6 +68,36 @@ const PlanetaryDailyRouteNew = () => {
       setLoading(false);
     }
   };
+
+  // Загрузка недельных данных
+  const loadWeeklyData = async () => {
+    setWeeklyLoading(true);
+    setError('');
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/vedic-time/planetary-route/weekly?date=${selectedDate}&city=${encodeURIComponent(user.city)}`,
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        }
+      );
+      if (!response.ok) throw new Error('Ошибка загрузки недельных данных');
+      const data = await response.json();
+      console.log('📅 Недельные данные:', data);
+      setWeeklyData(data);
+    } catch (err) {
+      setError(err.message);
+      console.error('Ошибка загрузки недельного маршрута:', err);
+    } finally {
+      setWeeklyLoading(false);
+    }
+  };
+
+  // Загружаем недельные данные при переключении на вкладку "Неделя"
+  useEffect(() => {
+    if (activeTab === 'week' && user?.city && !weeklyData) {
+      loadWeeklyData();
+    }
+  }, [activeTab, user]);
 
   // Функция для получения персонализированных советов для часа (клон из VedicTimeCalculations)
   const getPersonalizedAdvice = async (hour) => {
@@ -853,64 +887,300 @@ const PlanetaryDailyRouteNew = () => {
 
           {/* Контент для недели */}
           <TabsContent value="week" className="mt-6">
-            <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
-              <div className="text-center py-12">
-                <CalendarDays className={`h-16 w-16 mx-auto mb-4 ${themeConfig.mutedText}`} />
-                <h3 className={`text-2xl font-bold mb-2 ${themeConfig.text}`}>
-                  Планетарный маршрут на неделю
-                </h3>
-                <p className={`${themeConfig.mutedText} mb-6`}>
-                  Детальный анализ недели с рекомендациями на каждый день
-                </p>
-                
-                {/* Предварительная структура */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8 text-left">
-                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
-                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>📊 Обзор недели</h4>
-                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
-                      <li>• Общая энергетика недели</li>
-                      <li>• Благоприятные и сложные дни</li>
-                      <li>• Ключевые планетарные влияния</li>
-                      <li>• Рекомендации по планированию</li>
-                    </ul>
+            {weeklyLoading ? (
+              <div className={`flex items-center justify-center py-12 ${themeConfig.text}`}>
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500 mr-3" />
+                <span>Загрузка недельного маршрута...</span>
+              </div>
+            ) : weeklyData ? (
+              <div className="space-y-6">
+                {/* Обзор недели */}
+                <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                  <div className="flex items-center gap-3 mb-6">
+                    <TrendingUp className="h-6 w-6 text-blue-500 drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]" />
+                    <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                      Обзор недели
+                    </h2>
                   </div>
-                  
-                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
-                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>📅 Календарь недели</h4>
-                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
-                      <li>• 7 дней с детальным анализом</li>
-                      <li>• Цветовая индикация дней</li>
-                      <li>• Планетарные часы каждого дня</li>
-                      <li>• Персональные советы</li>
-                    </ul>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                    {/* Энергетика недели */}
+                    <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                      <div className="text-center">
+                        <div className="text-4xl font-bold mb-2" style={{
+                          color: weeklyData.weekly_summary.week_energy === 'Высокая' ? '#10b981' :
+                                 weeklyData.weekly_summary.week_energy === 'Средняя' ? '#3b82f6' : '#ef4444'
+                        }}>
+                          {weeklyData.weekly_summary.average_rating}/5
+                        </div>
+                        <div className={`text-sm ${themeConfig.mutedText}`}>
+                          {weeklyData.weekly_summary.week_energy} энергия
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Благоприятные дни */}
+                    <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                      <div className="text-center">
+                        <div className="text-4xl font-bold text-emerald-500 mb-2">
+                          {weeklyData.weekly_summary.favorable_days_count}
+                        </div>
+                        <div className={`text-sm ${themeConfig.mutedText}`}>
+                          Благоприятных дней
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Сложные дни */}
+                    <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
+                      <div className="text-center">
+                        <div className="text-4xl font-bold text-red-500 mb-2">
+                          {weeklyData.weekly_summary.challenging_days_count}
+                        </div>
+                        <div className={`text-sm ${themeConfig.mutedText}`}>
+                          Сложных дней
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  
-                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
-                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>🎯 Цели недели</h4>
-                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
-                      <li>• Оптимальное время для важных дел</li>
-                      <li>• Дни для отдыха и восстановления</li>
-                      <li>• Периоды максимальной продуктивности</li>
-                      <li>• Защита в сложные периоды</li>
-                    </ul>
+
+                  <p className={`text-center text-lg ${themeConfig.mutedText}`}>
+                    {weeklyData.weekly_summary.week_description}
+                  </p>
+                </div>
+
+                {/* Календарь недели - 7 дней */}
+                <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                  <div className="flex items-center gap-3 mb-6">
+                    <CalendarDays className="h-6 w-6 text-purple-500 drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]" />
+                    <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                      Календарь недели
+                    </h2>
                   </div>
-                  
-                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
-                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>⚡ Энергетический график</h4>
-                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
-                      <li>• Визуализация энергий недели</li>
-                      <li>• Пики и спады активности</li>
-                      <li>• Планетарные транзиты</li>
-                      <li>• Рекомендации по балансу</li>
-                    </ul>
+
+                  <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
+                    {weeklyData.daily_schedule.map((day, index) => {
+                      const planetColor = getPlanetColor(day.ruling_planet);
+                      const isToday = day.date === new Date().toISOString().split('T')[0];
+                      
+                      return (
+                        <div
+                          key={index}
+                          className={`p-4 rounded-2xl border cursor-pointer transition-all duration-300 hover:scale-105 ${
+                            isToday ? 'ring-2 ring-purple-500' : ''
+                          }`}
+                          style={{
+                            borderColor: day.day_type === 'favorable' ? '#10b98140' :
+                                       day.day_type === 'challenging' ? '#ef444440' : '#3b82f640',
+                            backgroundColor: themeConfig.isDark
+                              ? (day.day_type === 'favorable' ? '#10b98110' :
+                                 day.day_type === 'challenging' ? '#ef444410' : '#3b82f610')
+                              : (day.day_type === 'favorable' ? '#10b98108' :
+                                 day.day_type === 'challenging' ? '#ef444408' : '#3b82f608')
+                          }}
+                          onClick={() => {
+                            setSelectedDay(day);
+                            setIsDayDialogOpen(true);
+                          }}
+                        >
+                          {/* День недели */}
+                          <div className={`text-xs font-semibold mb-2 ${themeConfig.mutedText}`}>
+                            {day.weekday_name}
+                          </div>
+
+                          {/* Дата */}
+                          <div className={`text-lg font-bold mb-2 ${themeConfig.text}`}>
+                            {new Date(day.date).getDate()}
+                          </div>
+
+                          {/* Планета */}
+                          <div
+                            className="w-12 h-12 mx-auto rounded-full flex items-center justify-center font-bold text-white text-sm mb-2"
+                            style={{
+                              backgroundColor: planetColor,
+                              boxShadow: `0 0 15px ${planetColor}60`
+                            }}
+                          >
+                            {day.planet_sanskrit?.slice(0, 2) || day.ruling_planet.slice(0, 2)}
+                          </div>
+
+                          {/* Оценка */}
+                          <div className="text-center">
+                            <div className="text-2xl font-bold" style={{
+                              color: day.compatibility_score >= 70 ? '#10b981' :
+                                     day.compatibility_score >= 50 ? '#3b82f6' : '#ef4444'
+                            }}>
+                              {day.compatibility_score}
+                            </div>
+                            <div className={`text-xs ${themeConfig.mutedText}`}>
+                              баллов
+                            </div>
+                          </div>
+
+                          {/* Индикатор */}
+                          {isToday && (
+                            <div className="mt-2 text-center">
+                              <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/40 text-xs">
+                                Сегодня
+                              </Badge>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-                
-                <Badge className="mt-6 bg-blue-500/20 text-blue-400 border-blue-500/40">
-                  В разработке
-                </Badge>
+
+                {/* График энергий недели */}
+                <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                  <div className="flex items-center gap-3 mb-6">
+                    <Activity className="h-6 w-6 text-cyan-500 drop-shadow-[0_0_10px_rgba(6,182,212,0.5)]" />
+                    <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                      График энергий недели
+                    </h2>
+                  </div>
+
+                  <div className={`p-6 rounded-2xl ${themeConfig.surface}`}>
+                    <div className="relative" style={{ height: '300px' }}>
+                      {/* Ось Y - баллы */}
+                      <div className="absolute left-0 top-0 bottom-0 w-12 flex flex-col justify-between text-xs" style={{
+                        color: themeConfig.mutedText
+                      }}>
+                        <div>100</div>
+                        <div>75</div>
+                        <div>50</div>
+                        <div>25</div>
+                        <div>0</div>
+                      </div>
+
+                      {/* График */}
+                      <div className="absolute left-14 right-0 top-0 bottom-12">
+                        <svg width="100%" height="100%" viewBox="0 0 700 280" preserveAspectRatio="none">
+                          {/* Сетка */}
+                          <line x1="0" y1="0" x2="700" y2="0" stroke={themeConfig.isDark ? '#ffffff20' : '#00000020'} strokeWidth="1" />
+                          <line x1="0" y1="70" x2="700" y2="70" stroke={themeConfig.isDark ? '#ffffff10' : '#00000010'} strokeWidth="1" />
+                          <line x1="0" y1="140" x2="700" y2="140" stroke={themeConfig.isDark ? '#ffffff20' : '#00000020'} strokeWidth="1" />
+                          <line x1="0" y1="210" x2="700" y2="210" stroke={themeConfig.isDark ? '#ffffff10' : '#00000010'} strokeWidth="1" />
+                          <line x1="0" y1="280" x2="700" y2="280" stroke={themeConfig.isDark ? '#ffffff20' : '#00000020'} strokeWidth="1" />
+
+                          {/* Линия графика */}
+                          <polyline
+                            fill="none"
+                            stroke="#3b82f6"
+                            strokeWidth="3"
+                            points={weeklyData.daily_schedule.map((day, i) => {
+                              const x = (i / 6) * 700;
+                              const y = 280 - (day.compatibility_score / 100) * 280;
+                              return `${x},${y}`;
+                            }).join(' ')}
+                          />
+
+                          {/* Точки */}
+                          {weeklyData.daily_schedule.map((day, i) => {
+                            const x = (i / 6) * 700;
+                            const y = 280 - (day.compatibility_score / 100) * 280;
+                            const planetColor = getPlanetColor(day.ruling_planet);
+                            
+                            return (
+                              <circle
+                                key={i}
+                                cx={x}
+                                cy={y}
+                                r="8"
+                                fill={planetColor}
+                                stroke="white"
+                                strokeWidth="2"
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => {
+                                  setSelectedDay(day);
+                                  setIsDayDialogOpen(true);
+                                }}
+                              />
+                            );
+                          })}
+                        </svg>
+                      </div>
+
+                      {/* Ось X - дни недели */}
+                      <div className="absolute left-14 right-0 bottom-0 flex justify-between text-xs" style={{
+                        color: themeConfig.mutedText
+                      }}>
+                        {weeklyData.daily_schedule.map((day, i) => (
+                          <div key={i} className="text-center">
+                            {day.weekday_name.slice(0, 2)}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ключевые рекомендации */}
+                {weeklyData.weekly_summary.key_recommendations && weeklyData.weekly_summary.key_recommendations.length > 0 && (
+                  <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                    <div className="flex items-center gap-3 mb-6">
+                      <Target className="h-6 w-6 text-amber-500 drop-shadow-[0_0_10px_rgba(245,158,11,0.5)]" />
+                      <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                        Ключевые рекомендации
+                      </h2>
+                    </div>
+
+                    <div className="space-y-4">
+                      {weeklyData.weekly_summary.key_recommendations.map((rec, index) => (
+                        <div
+                          key={index}
+                          className={`p-6 rounded-2xl border ${themeConfig.surface}`}
+                          style={{
+                            borderColor: rec.type === 'positive' ? '#10b98140' : '#ef444440',
+                            backgroundColor: themeConfig.isDark
+                              ? (rec.type === 'positive' ? '#10b98110' : '#ef444410')
+                              : (rec.type === 'positive' ? '#10b98108' : '#ef444408')
+                          }}
+                        >
+                          <h3 className={`font-bold text-lg mb-2 flex items-center gap-2 ${themeConfig.text}`}>
+                            {rec.type === 'positive' ? (
+                              <CheckCircle className="h-5 w-5 text-emerald-500" />
+                            ) : (
+                              <AlertTriangle className="h-5 w-5 text-amber-500" />
+                            )}
+                            {rec.title}
+                          </h3>
+                          <p className={`text-sm ${themeConfig.mutedText} mb-3`}>
+                            {rec.advice}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {rec.dates.map((date, i) => (
+                              <Badge key={i} className={
+                                rec.type === 'positive'
+                                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                  : 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                              }>
+                                {new Date(date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
+            ) : (
+              <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                <div className="text-center py-12">
+                  <CalendarDays className={`h-16 w-16 mx-auto mb-4 ${themeConfig.mutedText}`} />
+                  <h3 className={`text-2xl font-bold mb-2 ${themeConfig.text}`}>
+                    Планетарный маршрут на неделю
+                  </h3>
+                  <p className={`${themeConfig.mutedText} mb-6`}>
+                    Нажмите кнопку для загрузки недельного маршрута
+                  </p>
+                  <Button onClick={loadWeeklyData} className="bg-blue-500 hover:bg-blue-600">
+                    Загрузить недельный маршрут (2 балла)
+                  </Button>
+                </div>
+              </div>
+            )}
           </TabsContent>
 
           {/* Контент для месяца */}
@@ -1053,6 +1323,164 @@ const PlanetaryDailyRouteNew = () => {
               <DialogHeader>
                 <DialogTitle>Планетарный час</DialogTitle>
                 <DialogDescription>Выберите час для просмотра рекомендаций</DialogDescription>
+              </DialogHeader>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Модальное окно с детальной информацией о дне недели */}
+      <Dialog open={isDayDialogOpen} onOpenChange={setIsDayDialogOpen}>
+        <DialogContent className={`max-w-3xl max-h-[80vh] overflow-y-auto ${themeConfig.card}`}>
+          {selectedDay ? (
+            <>
+              <DialogHeader>
+                <DialogTitle 
+                  className="text-2xl font-bold flex items-center gap-3"
+                  style={{ color: getPlanetColor(selectedDay.ruling_planet) }}
+                >
+                  <span className="text-3xl">
+                    {selectedDay.ruling_planet === 'Surya' && '☀️'}
+                    {selectedDay.ruling_planet === 'Chandra' && '🌙'}
+                    {selectedDay.ruling_planet === 'Mangal' && '🔴'}
+                    {selectedDay.ruling_planet === 'Budh' && '💚'}
+                    {selectedDay.ruling_planet === 'Guru' && '🟠'}
+                    {selectedDay.ruling_planet === 'Shukra' && '💗'}
+                    {selectedDay.ruling_planet === 'Shani' && '🔵'}
+                    {selectedDay.ruling_planet === 'Rahu' && '🌑'}
+                    {selectedDay.ruling_planet === 'Ketu' && '⚪'}
+                  </span>
+                  {selectedDay.weekday_name}, {new Date(selectedDay.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
+                </DialogTitle>
+                <DialogDescription className={themeConfig.mutedText}>
+                  Планета дня: {selectedDay.planet_sanskrit || selectedDay.ruling_planet}
+                  <span className="ml-3">
+                    Оценка: <span style={{
+                      color: selectedDay.compatibility_score >= 70 ? '#10b981' :
+                             selectedDay.compatibility_score >= 50 ? '#3b82f6' : '#ef4444'
+                    }}>{selectedDay.compatibility_score}/100</span>
+                  </span>
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="mt-6 space-y-6">
+                {/* Краткий совет */}
+                {selectedDay.key_advice && (
+                  <div className={`p-4 rounded-lg ${themeConfig.surface}`}>
+                    <p className={themeConfig.text}>{selectedDay.key_advice}</p>
+                  </div>
+                )}
+
+                {/* Позитивные аспекты */}
+                {selectedDay.positive_aspects && selectedDay.positive_aspects.length > 0 && (
+                  <div>
+                    <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
+                      <CheckCircle className="h-5 w-5 text-emerald-500" />
+                      Ваши сильные стороны
+                    </h3>
+                    <div className="space-y-2">
+                      {selectedDay.positive_aspects.map((aspect, idx) => (
+                        <div 
+                          key={idx}
+                          className={`p-3 rounded-lg border ${themeConfig.surface}`}
+                          style={{
+                            borderColor: '#10b98140',
+                            backgroundColor: themeConfig.isDark ? '#10b98110' : '#10b98108'
+                          }}
+                        >
+                          <p className={`font-semibold text-sm ${themeConfig.text}`}>{aspect.title}</p>
+                          <p className={`text-xs mt-1 ${themeConfig.mutedText}`}>{aspect.short_text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Вызовы */}
+                {selectedDay.challenges && selectedDay.challenges.length > 0 && (
+                  <div>
+                    <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
+                      <AlertTriangle className="h-5 w-5 text-amber-500" />
+                      Области для внимания
+                    </h3>
+                    <div className="space-y-2">
+                      {selectedDay.challenges.map((challenge, idx) => (
+                        <div 
+                          key={idx}
+                          className={`p-3 rounded-lg border ${themeConfig.surface}`}
+                          style={{
+                            borderColor: '#ef444440',
+                            backgroundColor: themeConfig.isDark ? '#ef444410' : '#ef444408'
+                          }}
+                        >
+                          <p className={`font-semibold text-sm ${themeConfig.text}`}>{challenge.title}</p>
+                          <p className={`text-xs mt-1 ${themeConfig.mutedText}`}>{challenge.short_text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Благоприятные действия */}
+                {selectedDay.favorable_activities && selectedDay.favorable_activities.length > 0 && (
+                  <div>
+                    <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
+                      <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                      Благоприятные действия
+                    </h3>
+                    <ul className="space-y-2">
+                      {selectedDay.favorable_activities.map((activity, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="text-emerald-500 mt-1">✓</span>
+                          <span className={themeConfig.mutedText}>{activity}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Чего избегать */}
+                {selectedDay.avoid_activities && selectedDay.avoid_activities.length > 0 && (
+                  <div>
+                    <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
+                      <AlertTriangle className="h-5 w-5 text-amber-500" />
+                      Чего избегать
+                    </h3>
+                    <ul className="space-y-2">
+                      {selectedDay.avoid_activities.map((item, idx) => (
+                        <li key={idx} className="flex items-start gap-2">
+                          <span className="text-amber-500 mt-1">⚠</span>
+                          <span className={themeConfig.mutedText}>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Rahu Kaal предупреждение */}
+                {selectedDay.rahu_kaal && selectedDay.rahu_kaal.start && (
+                  <div 
+                    className={`p-4 rounded-lg border-2 ${themeConfig.text}`}
+                    style={{
+                      borderColor: '#ef4444',
+                      backgroundColor: themeConfig.isDark ? '#ef444410' : '#ef444408'
+                    }}
+                  >
+                    <h3 className="font-bold text-sm mb-2 flex items-center gap-2 text-red-500">
+                      ⚠️ Rahu Kaal
+                    </h3>
+                    <p className="text-sm">
+                      С {selectedDay.rahu_kaal.start} до {selectedDay.rahu_kaal.end} - избегайте начинаний
+                    </p>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>День недели</DialogTitle>
+                <DialogDescription>Выберите день для просмотра деталей</DialogDescription>
               </DialogHeader>
             </>
           )}

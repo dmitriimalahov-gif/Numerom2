@@ -1598,6 +1598,96 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
     }
     return route
 
+@api_router.get('/vedic-time/planetary-route/weekly')
+async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), current_user: dict = Depends(get_current_user)):
+    """Планетарный маршрут на неделю - 2 балла"""
+    user_id = current_user['user_id']
+    
+    # Получаем данные пользователя
+    user_dict = await db.users.find_one({'id': user_id})
+    if not user_dict:
+        raise HTTPException(status_code=404, detail='Пользователь не найден')
+    
+    user = User(**user_dict)
+    
+    # Проверяем кредиты (2 балла за неделю)
+    if user.credits_remaining < 2:
+        raise HTTPException(status_code=402, detail='Недостаточно баллов. Требуется 2 балла.')
+    
+    try:
+        # Списываем баллы
+        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': -2}})
+        await record_credit_transaction(user_id, 2, 'Планетарный маршрут на неделю', 'debit')
+        
+        # Парсим дату
+        date_obj = datetime.strptime(vedic_request.date, '%Y-%m-%d')
+        
+        # Импортируем функцию
+        from vedic_time_calculations import get_weekly_planetary_route
+        
+        # Получаем недельный маршрут
+        weekly_route = get_weekly_planetary_route(
+            city=vedic_request.city,
+            start_date=date_obj,
+            birth_date=user.birth_date
+        )
+        
+        # Получаем нумерологические данные пользователя
+        from numerology_calculations import parse_birth_date, reduce_to_single_digit_always, reduce_for_ruling_number
+        
+        # Рассчитываем личные числа если их нет
+        if not hasattr(user, 'soul_number') or user.soul_number is None:
+            d, m, y = parse_birth_date(user.birth_date)
+            user.soul_number = reduce_to_single_digit_always(d)
+            user.mind_number = reduce_to_single_digit_always(m)
+            user.destiny_number = reduce_to_single_digit_always(d + m + y)
+            user.ruling_number = reduce_for_ruling_number(d + m + y)
+        
+        # Добавляем персонализированный анализ для каждого дня
+        user_data = {
+            'soul_number': user.soul_number,
+            'mind_number': user.mind_number,
+            'destiny_number': user.destiny_number,
+            'ruling_number': user.ruling_number,
+            'pythagorean_square': user.pythagorean_square if hasattr(user, 'pythagorean_square') else {},
+            'birth_date': user.birth_date,
+            'full_name': user.full_name if hasattr(user, 'full_name') else '',
+            'address': user.address if hasattr(user, 'address') else '',
+            'car_number': user.car_number if hasattr(user, 'car_number') else ''
+        }
+        
+        # Анализируем каждый день недели
+        for day in weekly_route['daily_schedule']:
+            day_date = datetime.strptime(day['date'], '%Y-%m-%d')
+            
+            # Получаем полное расписание дня для анализа
+            from vedic_time_calculations import get_vedic_day_schedule
+            day_schedule = get_vedic_day_schedule(city=vedic_request.city, date=day_date)
+            
+            # Анализируем совместимость дня
+            day_analysis = analyze_day_compatibility(day_date, user_data, day_schedule)
+            
+            # Добавляем полный анализ к дню
+            day['compatibility_score'] = day_analysis['compatibility_score']
+            day['positive_aspects'] = day_analysis['positive_aspects'][:3]  # Топ 3
+            day['challenges'] = day_analysis['challenges'][:3]  # Топ 3
+            day['key_advice'] = day_analysis['overall_description'][:200] + '...' if len(day_analysis['overall_description']) > 200 else day_analysis['overall_description']
+            day['influence'] = day_analysis.get('influence', {})
+            day['color_class'] = day_analysis.get('color_class', 'blue')
+            
+            # Добавляем информацию о пользователе для отображения
+            day['user_soul_number'] = user.soul_number
+            day['user_mind_number'] = user.mind_number
+            day['user_destiny_number'] = user.destiny_number
+        
+        return weekly_route
+        
+    except Exception as e:
+        # Возвращаем баллы в случае ошибки
+        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': 2}})
+        await record_credit_transaction(user_id, 2, 'Возврат за ошибку недельного маршрута', 'refund')
+        raise HTTPException(status_code=400, detail=f'Ошибка расчета недельного маршрута: {str(e)}')
+
 @api_router.get('/vedic-time/planetary-route/monthly')
 async def monthly_planetary_route(vedic_request: VedicTimeRequest = Depends(), current_user: dict = Depends(get_current_user)):
     """Планетарный маршрут на месяц - 5 баллов"""
