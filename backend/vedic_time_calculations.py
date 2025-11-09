@@ -457,10 +457,18 @@ def get_daily_recommendations(weekday: int, planetary_hours: List[Dict], birth_d
     favorable_hours = [hour for hour in planetary_hours if hour['is_favorable']]
     
     recommendations = day_recommendations.get(ruling_planet, {})
+    
+    # Форматируем лучшие часы (извлекаем время из ISO строки)
+    best_hours_formatted = []
+    for h in favorable_hours[:3]:  # Топ-3 часа
+        # Извлекаем время из ISO формата (YYYY-MM-DDTHH:MM:SS+TZ)
+        start_time = h['start_time'][11:16] if len(h['start_time']) > 16 else h['start_time']
+        end_time = h['end_time'][11:16] if len(h['end_time']) > 16 else h['end_time']
+        best_hours_formatted.append(f"{start_time}-{end_time} ({h['planet_sanskrit']})")
+    
     recommendations.update({
         'ruling_planet': get_planet_sanskrit(ruling_planet),
-        'best_hours': [f"{h['start_time'].strftime('%H:%M')}-{h['end_time'].strftime('%H:%M')} ({h['planet_sanskrit']})" 
-                      for h in favorable_hours[:3]],  # Топ-3 часа
+        'best_hours': best_hours_formatted,
         'planet_mantra': get_planet_mantra(ruling_planet)
     })
     
