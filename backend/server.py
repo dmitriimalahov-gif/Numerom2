@@ -763,50 +763,58 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     # Получаем день правящей планеты
     is_planet_day = schedule.get('weekday', {}).get('ruling_planet') == ruling_planet
     
-    # Базовый счёт (варьируется от 50 до 70)
-    compatibility_score = 50 + (soul_number + mind_number + destiny_number) % 21
+    # 1. БАЗОВЫЙ СЧЁТ (20-30) - зависит от суммы личных чисел
+    base_score = 20 + (soul_number + mind_number + destiny_number) % 11
+    compatibility_score = base_score
     
     # Списки для позитивных аспектов и вызовов
     positive_aspects = []
     challenges = []
     
-    # Анализ совместимости чисел души, ума и судьбы с правящей планетой
+    # Маппинг планет на числа
     planet_to_number = {
         'Surya': 1, 'Chandra': 2, 'Guru': 3, 'Rahu': 4,
         'Budh': 5, 'Shukra': 6, 'Ketu': 7, 'Shani': 8, 'Mangal': 9
     }
+    number_to_planet = {v: k for k, v in planet_to_number.items()}
     
     ruling_planet_number = planet_to_number.get(ruling_planet, 1)
     
-    # Проверяем резонанс числа души
+    # 2. РЕЗОНАНС ЧИСЛА ДУШИ (+5/+2/0)
+    soul_planet = number_to_planet.get(soul_number)
     if soul_number == ruling_planet_number:
-        compatibility_score += 15
+        compatibility_score += 5
         positive_aspects.append(f"🌟 ИДЕАЛЬНЫЙ РЕЗОНАНС! Ваше число души ({soul_number}) полностью резонирует с {ruling_planet}. Это ВАШЕ время максимальной силы!")
-    elif abs(soul_number - ruling_planet_number) <= 2:
-        compatibility_score += 8
+    elif soul_planet and ruling_planet in planet_relationships.get(soul_planet, {}).get('friends', []):
+        compatibility_score += 2
         positive_aspects.append(f"Ваше число души ({soul_number}) гармонирует с энергией {ruling_planet}. Хороший день для самовыражения.")
     else:
         challenges.append(f"Число души ({soul_number}) не резонирует с {ruling_planet}. Будьте внимательны к своим истинным желаниям.")
     
-    # Проверяем резонанс числа ума
+    # 3. РЕЗОНАНС ЧИСЛА УМА (+12/+6/-5)
+    mind_planet = number_to_planet.get(mind_number)
     if mind_number == ruling_planet_number:
         compatibility_score += 12
         positive_aspects.append(f"🧠 Ваше число ума ({mind_number}) резонирует с {ruling_planet}. Ваш ум работает на пике! Идеальное время для интеллектуальной работы и принятия решений.")
-    elif abs(mind_number - ruling_planet_number) <= 2:
+    elif mind_planet and ruling_planet in planet_relationships.get(mind_planet, {}).get('friends', []):
         compatibility_score += 6
         positive_aspects.append(f"Число ума ({mind_number}) в гармонии с {ruling_planet}. Хороший день для планирования и анализа.")
+    elif mind_planet and ruling_planet in planet_relationships.get(mind_planet, {}).get('enemies', []):
+        compatibility_score -= 5
+        challenges.append(f"Число ума ({mind_number}) конфликтует с {ruling_planet}. Будьте осторожны в принятии решений.")
     
-    # Проверяем резонанс числа судьбы
+    # 4. РЕЗОНАНС ЧИСЛА СУДЬБЫ (+10)
+    destiny_planet = number_to_planet.get(destiny_number)
     if destiny_number == ruling_planet_number:
         compatibility_score += 10
         positive_aspects.append(f"🎯 Число судьбы ({destiny_number}) совпадает с {ruling_planet}. Ваш жизненный путь поддерживается энергией дня!")
     
-    # Проверяем единство души и ума
+    # 5. ЕДИНСТВО ДУШИ И УМА (+10)
     if soul_number == mind_number and soul_number == ruling_planet_number:
-        compatibility_score += 15
+        compatibility_score += 10
         positive_aspects.append(f"💫 ЕДИНСТВО ДУШИ И УМА! Ваша душа и ум в полной гармонии с {ruling_planet}. Ваши желания и мысли совпадают, что даёт огромную силу для реализации!")
     
-    # Проверяем силу планеты в карте
+    # 6. СИЛА ПЛАНЕТЫ В КАРТЕ (+12/+6/-10)
     planet_count = planet_counts.get(ruling_planet, 0)
     if planet_count >= 4:
         compatibility_score += 12
@@ -817,35 +825,38 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     elif planet_count == 1:
         challenges.append(f"Энергия {ruling_planet} слабая в вашей карте ({planet_count} цифра). Используйте этот день для развития этого качества.")
     else:
-        compatibility_score -= 5
+        compatibility_score -= 10
         challenges.append(f"Энергия {ruling_planet} отсутствует в вашей карте. Это возможность познакомиться с этой энергией и развить её.")
     
-    # Проверяем день недели рождения
+    # 7. ДЕНЬ НЕДЕЛИ РОЖДЕНИЯ (+20)
     if is_birth_weekday:
         compatibility_score += 20
         positive_aspects.append(f"👑 ВАШЕ ДЕНЬ НЕДЕЛИ РОЖДЕНИЯ! Сегодня день недели, в который вы родились! Все планетарные часы сегодня особенно сильны для вас. Это ваш личный день силы!")
     
-    # Проверяем день планеты
+    # 8. ДЕНЬ ПЛАНЕТЫ (+10/-20)
     if is_planet_day:
-        compatibility_score += 10
-        positive_aspects.append(f"📅 ДЕНЬ ПЛАНЕТЫ! Сегодня день {ruling_planet}! Правящая планета дня и планета часа совпадают, усиливая эффект.")
+        # Проверяем, дружественна ли планета дня пользователю
+        user_main_planet = number_to_planet.get(soul_number)
+        if user_main_planet and ruling_planet in planet_relationships.get(user_main_planet, {}).get('friends', []):
+            compatibility_score += 10
+            positive_aspects.append(f"📅 ДЕНЬ ПЛАНЕТЫ! Сегодня день {ruling_planet}, дружественной вашей душе!")
+        elif user_main_planet and ruling_planet in planet_relationships.get(user_main_planet, {}).get('enemies', []):
+            compatibility_score -= 20
+            challenges.append(f"📅 Сегодня день {ruling_planet}, враждебной вашей душе. Будьте осторожны.")
+        else:
+            compatibility_score += 10
+            positive_aspects.append(f"📅 ДЕНЬ ПЛАНЕТЫ! Сегодня день {ruling_planet}!")
     
-    # Проверяем Rahu Kaal
-    rahu_kaal = schedule.get('inauspicious_periods', {}).get('rahu_kaal', {})
-    if rahu_kaal:
-        challenges.append(f"⚠️ Сегодня Rahu Kaal с {rahu_kaal.get('start', '')} до {rahu_kaal.get('end', '')}. Избегайте важных начинаний в это время.")
-    
-    # Анализ личных циклов
+    # 9. ЛИЧНЫЙ ДЕНЬ (+8)
     personal_year = user_data.get('personal_year', 1)
     personal_month = user_data.get('personal_month', 1)
     personal_day = user_data.get('personal_day', 1)
     
-    # Если личный день совпадает с числом правящей планеты
     if personal_day == ruling_planet_number:
         compatibility_score += 8
         positive_aspects.append(f"🌱 Ваш личный день ({personal_day}) резонирует с {ruling_planet}. Энергия дня поддерживает ваш текущий цикл!")
     
-    # Глобальная гармония планет
+    # 10. ГЛОБАЛЬНАЯ ГАРМОНИЯ (+5/-15)
     user_planets = [k for k, v in planet_counts.items() if v > 0]
     friendly_count = 0
     enemy_count = 0
@@ -858,12 +869,47 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             elif rel_type == 'enemy':
                 enemy_count += planet_counts[user_planet]
     
-    if friendly_count > enemy_count:
+    if friendly_count > enemy_count * 2:
         compatibility_score += 5
         positive_aspects.append(f"🤝 Планеты в вашей карте дружественны к {ruling_planet}. Общая гармония поддерживает вас!")
-    elif enemy_count > friendly_count:
-        compatibility_score -= 3
-        challenges.append(f"⚔️ Некоторые планеты в вашей карте конфликтуют с {ruling_planet}. Будьте терпеливы и гибки.")
+    elif enemy_count > friendly_count * 2:
+        compatibility_score -= 15
+        challenges.append(f"⚔️ Многие планеты в вашей карте конфликтуют с {ruling_planet}. Будьте терпеливы и гибки.")
+    
+    # 11. РЕЗОНАНС С ПРАВЯЩИМ ЧИСЛОМ (+5/-5)
+    if ruling_number == ruling_planet_number:
+        compatibility_score += 5
+        positive_aspects.append(f"✨ Ваше правящее число ({ruling_number}) совпадает с планетой дня!")
+    elif ruling_number:
+        ruling_num_planet = number_to_planet.get(ruling_number)
+        if ruling_num_planet and ruling_planet in planet_relationships.get(ruling_num_planet, {}).get('enemies', []):
+            compatibility_score -= 5
+            challenges.append(f"Ваше правящее число ({ruling_number}) конфликтует с планетой дня.")
+    
+    # 12. РЕЗОНАНС ЛИЧНОГО ЧИСЛА ДНЯ (+2/-4)
+    day_number = date_obj.day % 9 if date_obj.day % 9 != 0 else 9
+    if day_number == ruling_planet_number:
+        compatibility_score += 2
+        positive_aspects.append(f"📆 Число дня ({day_number}) резонирует с планетой дня!")
+    elif number_to_planet.get(day_number) and ruling_planet in planet_relationships.get(number_to_planet.get(day_number), {}).get('enemies', []):
+        compatibility_score -= 4
+        challenges.append(f"Число дня ({day_number}) конфликтует с планетой дня.")
+    
+    # 13. РЕЗОНАНС ЧИСЛА ИМЕНИ (+5/-5)
+    name_number = user_data.get('name_number', 0)
+    if name_number:
+        name_planet = number_to_planet.get(name_number)
+        if name_number == ruling_planet_number:
+            compatibility_score += 5
+            positive_aspects.append(f"📝 Ваше имя ({name_number}) резонирует с планетой дня!")
+        elif name_planet and ruling_planet in planet_relationships.get(name_planet, {}).get('enemies', []):
+            compatibility_score -= 5
+            challenges.append(f"Ваше имя ({name_number}) конфликтует с планетой дня.")
+    
+    # Проверяем Rahu Kaal
+    rahu_kaal = schedule.get('inauspicious_periods', {}).get('rahu_kaal', {})
+    if rahu_kaal:
+        challenges.append(f"⚠️ Сегодня Rahu Kaal с {rahu_kaal.get('start', '')} до {rahu_kaal.get('end', '')}. Избегайте важных начинаний в это время.")
     
     # Ограничиваем score в пределах 0-100
     compatibility_score = max(0, min(100, compatibility_score))
