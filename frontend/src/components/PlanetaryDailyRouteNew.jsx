@@ -571,8 +571,112 @@ const PlanetaryDailyRouteNew = () => {
           </div>
         )}
 
-        {/* Планетарные часы дня */}
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+        {/* График движения по планетам */}
+        {route?.hourly_guide_24h && route.hourly_guide_24h.length > 0 && (
+          <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+            <div className="flex items-center gap-3 mb-6">
+              <TrendingUp className="h-6 w-6 text-cyan-500 drop-shadow-[0_0_10px_rgba(6,182,212,0.5)]" />
+              <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                График движения по планетам
+              </h2>
+            </div>
+            
+            <div className={`p-6 rounded-2xl ${themeConfig.surface}`} style={{
+              borderLeft: `4px solid ${getPlanetColor(route.schedule?.weekday?.ruling_planet)}`,
+              backgroundColor: themeConfig.isDark ? '#0f172a' : '#f8fafc'
+            }}>
+              <div className="space-y-4">
+                {route.hourly_guide_24h.map((hour, index) => {
+                  const isActive = isCurrentHour(hour);
+                  const planetColor = getPlanetColor(hour.planet);
+                  const nextHour = route.hourly_guide_24h[index + 1];
+                  
+                  return (
+                    <div key={index}>
+                      <div 
+                        className={`flex items-center gap-4 p-4 rounded-xl transition-all duration-300 ${
+                          isActive ? 'scale-105' : 'hover:scale-102'
+                        }`}
+                        style={{
+                          backgroundColor: isActive 
+                            ? (themeConfig.isDark ? planetColor + '30' : planetColor + '20')
+                            : (themeConfig.isDark ? planetColor + '10' : planetColor + '08'),
+                          borderLeft: `4px solid ${planetColor}`,
+                          boxShadow: isActive ? `0 0 20px ${planetColor}40` : undefined
+                        }}
+                      >
+                        {/* Время */}
+                        <div className="flex-shrink-0 w-32">
+                          <div className={`text-sm font-bold ${themeConfig.text}`}>
+                            {typeof hour.start === 'string' ? hour.start : hour.start_time?.slice(11, 16) || ''}
+                            {' - '}
+                            {typeof hour.end === 'string' ? hour.end : hour.end_time?.slice(11, 16) || ''}
+                          </div>
+                          {isActive && (
+                            <div className="text-xs font-bold text-cyan-500 mt-1">
+                              ⏰ СЕЙЧАС
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Планета */}
+                        <div className="flex-shrink-0">
+                          <div 
+                            className="w-16 h-16 rounded-full flex items-center justify-center font-bold text-white shadow-lg"
+                            style={{
+                              backgroundColor: planetColor,
+                              boxShadow: `0 0 20px ${planetColor}60`
+                            }}
+                          >
+                            {hour.planet_sanskrit || hour.planet}
+                          </div>
+                        </div>
+
+                        {/* Описание */}
+                        <div className="flex-1">
+                          <div className={`font-bold text-lg mb-1 ${themeConfig.text}`} style={{ color: planetColor }}>
+                            {hour.planet}
+                          </div>
+                          <div className={`text-sm ${themeConfig.mutedText}`}>
+                            {hour.description || `Час планеты ${hour.planet}`}
+                          </div>
+                        </div>
+
+                        {/* Кнопка деталей */}
+                        <button
+                          onClick={() => {
+                            setSelectedHour(hour);
+                            setIsHourDialogOpen(true);
+                          }}
+                          className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
+                            isActive ? 'animate-pulse' : ''
+                          }`}
+                          style={{
+                            backgroundColor: planetColor + '20',
+                            color: planetColor,
+                            border: `2px solid ${planetColor}60`
+                          }}
+                        >
+                          Подробнее
+                        </button>
+                      </div>
+
+                      {/* Стрелка вниз между часами */}
+                      {nextHour && (
+                        <div className="flex justify-center py-2">
+                          <div className={`text-2xl ${themeConfig.mutedText}`}>↓</div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Планетарные часы дня (старый вид - скрыт) */}
+        <div className="hidden rounded-2xl border border-white/10 bg-white/5 p-5">
           <div className="flex items-center gap-3">
             <Clock className="h-5 w-5 text-indigo-300" />
             <h2 className="text-sm font-semibold uppercase tracking-[0.35em] text-indigo-200">
@@ -580,7 +684,7 @@ const PlanetaryDailyRouteNew = () => {
             </h2>
           </div>
           <p className="mt-3 text-sm leading-relaxed text-indigo-100">
-            Показано {route.hourly_guide_24h?.length || 0} планетарных часов.
+            Показано {route?.hourly_guide_24h?.length || 0} планетарных часов.
           </p>
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {route.hourly_guide_24h?.map((hour, index) => {
