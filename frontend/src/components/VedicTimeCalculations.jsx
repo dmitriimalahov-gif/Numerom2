@@ -1242,7 +1242,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div className={`flex items-center justify-center py-12 ${themeConfig.text}`}>
         <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
         <span className="ml-3 text-lg">Загрузка советов...</span>
       </div>
@@ -1251,7 +1251,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
 
   if (!advice) {
     return (
-      <div className="text-center py-12">
+      <div className={`text-center py-12 ${themeConfig.text}`}>
         <AlertTriangle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
         <p className="text-lg">Не удалось загрузить советы</p>
       </div>

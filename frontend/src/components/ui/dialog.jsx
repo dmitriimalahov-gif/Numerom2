@@ -30,14 +30,14 @@ const DialogContent = React.forwardRef(({ className, children, ...props }, ref) 
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-4 right-4 top-[50%] z-50 mx-auto grid w-auto max-w-sm translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:left-[50%] sm:right-auto sm:w-full sm:max-w-lg sm:translate-x-[-50%] rounded-lg",
+        "fixed left-4 right-4 top-[50%] z-50 mx-auto grid w-auto max-w-sm translate-y-[-50%] gap-4 border p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:left-[50%] sm:right-auto sm:w-full sm:max-w-lg sm:translate-x-[-50%] rounded-lg",
         className
       )}
       style={{ pointerEvents: 'auto' }}
       {...props}>
       {children}
       <DialogPrimitive.Close
-        className="absolute right-2 top-2 rounded-full p-1.5 opacity-70 transition-all hover:opacity-100 hover:bg-gray-100 outline-none focus:outline-none active:outline-none focus:shadow-none active:shadow-none shadow-none disabled:pointer-events-none">
+        className="absolute right-2 top-2 rounded-full p-1.5 opacity-70 transition-all hover:opacity-100 hover:bg-white/10 dark:hover:bg-black/10 outline-none focus:outline-none active:outline-none focus:shadow-none active:shadow-none shadow-none disabled:pointer-events-none">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
