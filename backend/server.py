@@ -790,6 +790,9 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
         # Нумерологический анализ дня
         'day_analysis': day_analysis,
         
+        # НОВОЕ: Добавляем schedule для фронтенда
+        'schedule': schedule,
+        
         # Полный 24-часовой гид с детальными советами
         'hourly_guide_24h': full_24h_guide,
         

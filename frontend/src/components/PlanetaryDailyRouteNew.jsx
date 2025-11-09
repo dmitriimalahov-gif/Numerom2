@@ -51,6 +51,9 @@ const PlanetaryDailyRouteNew = () => {
       );
       if (!response.ok) throw new Error('Ошибка загрузки данных');
       const data = await response.json();
+      console.log('📊 Полученные данные:', data);
+      console.log('📊 route:', data.route);
+      console.log('📊 day_analysis:', data.route?.day_analysis);
       setRouteData(data);
     } catch (err) {
       setError(err.message);
@@ -111,10 +114,21 @@ const PlanetaryDailyRouteNew = () => {
     );
   }
 
-  if (!routeData) return null;
+  if (!routeData) {
+    console.log('⚠️ routeData пустой!');
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Info className="h-12 w-12 text-blue-500" />
+        <span className="ml-3 text-lg">Нет данных для отображения</span>
+      </div>
+    );
+  }
 
-  const route = routeData.route || {};
-  const dayAnalysis = route.day_analysis || {};
+  // Данные приходят напрямую, а не в route!
+  const route = routeData;
+  const dayAnalysis = routeData.day_analysis || {};
+  
+  console.log('✅ Рендерим с данными:', { route, dayAnalysis });
 
   return (
     <div className={`min-h-screen ${themeConfig.pageBackground} relative overflow-hidden`}>
