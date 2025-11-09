@@ -724,7 +724,18 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     Анализирует совместимость дня с личными числами пользователя
     Возвращает оценку дня, сильные/слабые стороны и рекомендации
     """
-    from vedic_numerology import get_planet_relationships
+    # Дружественность планет (ведическая нумерология)
+    planet_relationships = {
+        'Surya': {'friends': ['Chandra', 'Mangal', 'Guru'], 'enemies': ['Shukra', 'Shani'], 'neutral': ['Budh']},
+        'Chandra': {'friends': ['Surya', 'Budh'], 'enemies': [], 'neutral': ['Mangal', 'Guru', 'Shukra', 'Shani']},
+        'Mangal': {'friends': ['Surya', 'Chandra', 'Guru'], 'enemies': ['Budh'], 'neutral': ['Shukra', 'Shani']},
+        'Budh': {'friends': ['Surya', 'Shukra'], 'enemies': ['Chandra'], 'neutral': ['Mangal', 'Guru', 'Shani']},
+        'Guru': {'friends': ['Surya', 'Chandra', 'Mangal'], 'enemies': ['Budh', 'Shukra'], 'neutral': ['Shani']},
+        'Shukra': {'friends': ['Budh', 'Shani'], 'enemies': ['Surya', 'Chandra'], 'neutral': ['Mangal', 'Guru']},
+        'Shani': {'friends': ['Budh', 'Shukra', 'Rahu'], 'enemies': ['Surya', 'Chandra', 'Mangal'], 'neutral': ['Guru']},
+        'Rahu': {'friends': ['Budh', 'Shukra', 'Shani'], 'enemies': ['Surya', 'Chandra', 'Mangal'], 'neutral': ['Guru']},
+        'Ketu': {'friends': ['Mangal', 'Guru'], 'enemies': ['Surya', 'Chandra', 'Budh'], 'neutral': ['Shukra', 'Shani']}
+    }
     
     # Получаем правящую планету дня
     ruling_planet = schedule.get('weekday', {}).get('ruling_planet', 'Surya')
@@ -835,14 +846,13 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
         positive_aspects.append(f"🌱 Ваш личный день ({personal_day}) резонирует с {ruling_planet}. Энергия дня поддерживает ваш текущий цикл!")
     
     # Глобальная гармония планет
-    relationships = get_planet_relationships()
     user_planets = [k for k, v in planet_counts.items() if v > 0]
     friendly_count = 0
     enemy_count = 0
     
     for user_planet in user_planets:
-        if user_planet in relationships and ruling_planet in relationships[user_planet]:
-            rel_type = relationships[user_planet][ruling_planet]
+        if user_planet in planet_relationships and ruling_planet in planet_relationships[user_planet]:
+            rel_type = planet_relationships[user_planet][ruling_planet]
             if rel_type == 'friend':
                 friendly_count += planet_counts[user_planet]
             elif rel_type == 'enemy':
