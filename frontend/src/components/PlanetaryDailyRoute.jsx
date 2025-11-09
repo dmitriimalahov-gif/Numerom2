@@ -551,15 +551,21 @@ const PlanetaryDailyRoute = () => {
                     key={index}
                     className={`p-4 rounded-lg border-2 ${
                       isCurrent 
-                        ? 'bg-blue-100 border-blue-400' 
+                        ? themeConfig.isDark 
+                          ? 'bg-blue-500/30 border-blue-400' 
+                          : 'bg-blue-100 border-blue-400'
                         : hour.is_favorable 
-                          ? 'bg-green-50 border-green-300' 
-                          : 'bg-gray-50 border-gray-300'
+                          ? themeConfig.isDark
+                            ? 'bg-green-500/20 border-green-500/40'
+                            : 'bg-green-50 border-green-300'
+                          : themeConfig.isDark
+                            ? 'bg-white/5 border-white/10'
+                            : 'bg-gray-50 border-gray-300'
                     }`}
                   >
                     <div className="flex justify-between items-center mb-2">
                       <div className="flex items-center gap-3">
-                        <span className="font-bold text-lg">Час {hour.hour}</span>
+                        <span className={`font-bold text-lg ${themeConfig.text}`}>Час {hour.hour}</span>
                         {isCurrent && (
                           <span className="bg-blue-500 text-white text-xs px-2 py-1 rounded">
                             СЕЙЧАС
@@ -572,15 +578,15 @@ const PlanetaryDailyRoute = () => {
                         )}
                       </div>
                       <div className="text-right">
-                        <div className="font-semibold">{startTime} - {endTime}</div>
+                        <div className={`font-semibold ${themeConfig.text}`}>{startTime} - {endTime}</div>
                       </div>
                     </div>
                     
                     <div className="flex justify-between items-center">
-                      <div className="font-medium text-gray-800">
+                      <div className={`font-medium ${themeConfig.text}`}>
                         {hour.planet_sanskrit || hour.planet}
                       </div>
-                      <div className="text-sm text-gray-600">
+                      <div className={`text-sm ${themeConfig.mutedText}`}>
                         Планета: {hour.planet}
                       </div>
                     </div>
