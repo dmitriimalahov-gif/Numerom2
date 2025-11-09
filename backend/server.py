@@ -1633,7 +1633,7 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
         )
         
         # Получаем нумерологические данные пользователя
-        from numerology_calculations import parse_birth_date, reduce_to_single_digit_always, reduce_for_ruling_number
+        from numerology import parse_birth_date, reduce_to_single_digit_always, reduce_for_ruling_number
         
         # Рассчитываем личные числа если их нет
         if not hasattr(user, 'soul_number') or user.soul_number is None:
