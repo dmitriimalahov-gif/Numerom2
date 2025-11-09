@@ -527,6 +527,41 @@ async def pythagorean_square(birth_date: str = None, current_user: dict = Depend
     
     d, m, y = parse_birth_date(birth_date)
     results = create_pythagorean_square(d, m, y)
+    
+    # Добавляем личные числа
+    soul_number = reduce_to_single_digit(d)
+    mind_number = reduce_to_single_digit(m)
+    destiny_number = reduce_to_single_digit(d + m + y)
+    helping_mind_number = reduce_to_single_digit(m + y)
+    wisdom_number = reduce_to_single_digit(d + m)
+    ruling_number = reduce_to_single_digit(d + m)
+    
+    # Добавляем личные циклы (текущие)
+    from datetime import datetime
+    now = datetime.now()
+    current_day = now.day
+    current_month = now.month
+    current_year = now.year
+    current_hour = now.hour
+    
+    personal_year = reduce_to_single_digit(d + m + current_year)
+    personal_month = reduce_to_single_digit(personal_year + current_month)
+    personal_day = reduce_to_single_digit(personal_month + current_day)
+    personal_hour = reduce_to_single_digit(personal_day + current_hour)
+    challenge_number = abs(soul_number - destiny_number) if soul_number and destiny_number else 0
+    
+    results['soul_number'] = soul_number
+    results['mind_number'] = mind_number
+    results['destiny_number'] = destiny_number
+    results['helping_mind_number'] = helping_mind_number
+    results['wisdom_number'] = wisdom_number
+    results['ruling_number'] = ruling_number
+    results['personal_year'] = personal_year
+    results['personal_month'] = personal_month
+    results['personal_day'] = personal_day
+    results['personal_hour'] = personal_hour
+    results['challenge_number'] = challenge_number
+    
     calc = NumerologyCalculation(user_id=user_id, birth_date=birth_date, calculation_type='pythagorean_square', results=results)
     await db.numerology_calculations.insert_one(calc.dict())
     return results

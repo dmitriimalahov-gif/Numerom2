@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useAuth } from './AuthContext';
 import { Loader2, Moon, Sun } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -870,6 +870,14 @@ const bottomPersonal = [
   { key: 'ruling_number', label: 'п/ч', type: 'ruling' }
 ];
 
+const personalCycles = [
+  { key: 'personal_year', label: 'Л/Г', type: 'personalYear' },
+  { key: 'personal_month', label: 'Л/М', type: 'personalMonth' },
+  { key: 'personal_day', label: 'Л/Д', type: 'personalDay' },
+  { key: 'personal_hour', label: 'Л/Ч', type: 'personalHour' },
+  { key: 'challenge_number', label: 'Ч/П', type: 'challengeNumber' }
+];
+
   const energyRangeConfig = useMemo(() => {
     if (energyRangeMode === 'month') {
       const parsed = parseMonthInput(selectedMonth) || {
@@ -1407,6 +1415,26 @@ const bottomPersonal = [
     ruling: {
       title: 'Правящее Число (п/ч)',
       text: 'Сочетает влияние дня и месяца рождения, реагирует на обстоятельства и помогает использовать сильные стороны в каждом моменте. Часто проявляется в повседневных решениях.'
+    },
+    personalYear: {
+      title: 'Личный Год',
+      text: 'Показывает основную энергию и тему текущего года в вашей жизни. Каждый год имеет свой ритм и задачи.'
+    },
+    personalMonth: {
+      title: 'Личный Месяц',
+      text: 'Отражает энергию текущего месяца и помогает понять, на что сейчас стоит обратить внимание.'
+    },
+    personalDay: {
+      title: 'Личный День',
+      text: 'Энергия сегодняшнего дня. Помогает выбрать правильные действия и настроиться на нужную волну.'
+    },
+    personalHour: {
+      title: 'Личный Час',
+      text: 'Текущая энергия часа. Показывает, какие дела сейчас будут наиболее эффективны.'
+    },
+    challengeNumber: {
+      title: 'Число Проблемы',
+      text: 'Показывает внутренний конфликт между желаниями души и жизненным предназначением. Работа с этим числом помогает найти гармонию.'
     }
   };
 
@@ -1665,6 +1693,35 @@ const bottomPersonal = [
               ))}
               <Placeholder />
               <Placeholder />
+              
+              {/* НОВОЕ: Личные циклы */}
+              {personalCycles.map((item) => (
+                <SquareShell
+                  key={item.key}
+                  borderClass={squareBorderClass}
+                  className={`bg-gradient-to-br ${
+                    item.type === 'personalYear' ? 'from-yellow-400 via-orange-400 to-yellow-500' :
+                    item.type === 'personalMonth' ? 'from-blue-400 via-indigo-400 to-blue-500' :
+                    item.type === 'personalDay' ? 'from-green-400 via-emerald-400 to-green-500' :
+                    item.type === 'personalHour' ? 'from-purple-400 via-pink-400 to-purple-500' :
+                    'from-red-400 via-orange-400 to-red-500'
+                  } flex-col text-white`}
+                  interactive
+                  onMouseEnter={() => setHoveredNumbers([])}
+                  onMouseLeave={() => setHoveredNumbers([])}
+                  onClick={() =>
+                    openDetail(
+                      PERSONAL_DETAILS[item.type].title,
+                      PERSONAL_DETAILS[item.type].text
+                    )
+                  }
+                >
+                  <span className="text-sm uppercase tracking-[0.4em] text-white/80">{item.label}</span>
+                  <span className="mt-1 text-3xl font-semibold">
+                    {personalData?.[item.key] ?? '-'}
+                  </span>
+                </SquareShell>
+              ))}
               </div>
               <div className={`border-t ${borderClass} pt-8`}>
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
@@ -1982,6 +2039,7 @@ const bottomPersonal = [
         <DialogContent className={`max-w-xl ${dialogClassName} ${textPrimaryClass} max-h-[80vh]`}>
           <DialogHeader>
             <DialogTitle className="text-2xl font-semibold">{detail.title}</DialogTitle>
+            <DialogDescription className="sr-only">Подробная информация о нумерологическом значении</DialogDescription>
           </DialogHeader>
           <div
             className={`mt-4 space-y-4 overflow-y-auto pr-2 text-sm leading-relaxed ${textSecondaryClass}`}
