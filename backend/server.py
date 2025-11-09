@@ -813,7 +813,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     
     if planet_weekday_energy == 0:
         # Это КРИТИЧЕСКИ СЛОЖНЫЙ день - энергия планеты отсутствует!
-        compatibility_score -= 25  # Сильное снижение
+        compatibility_score -= 10  # Снижение баллов
         challenges.append({
             'type': 'zero_weekday_energy',
             'icon': '🚨',
@@ -854,7 +854,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
         })
     elif planet_weekday_energy >= 7:
         # Высокая энергия - день благоприятный!
-        compatibility_score += 10
+        compatibility_score += 15  # Повышение баллов
         positive_aspects.append({
             'type': 'high_weekday_energy',
             'icon': '⚡',
@@ -871,10 +871,10 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"Личная энергия {ruling_planet} = {planet_weekday_energy}/9 - МАКСИМУМ!"
         })
     
-    # 2. РЕЗОНАНС ЧИСЛА ДУШИ (+5/+2/0)
+    # 2. РЕЗОНАНС ЧИСЛА ДУШИ (+15/-10/0)
     soul_planet = number_to_planet.get(soul_number)
     if soul_number == ruling_planet_number:
-        compatibility_score += 5
+        compatibility_score += 15
         positive_aspects.append({
             'type': 'soul_resonance',
             'icon': '🌟',
@@ -890,7 +890,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"{ruling_planet} управляет вашей душой и днём одновременно, создавая мощный резонанс"
         })
     elif soul_planet and ruling_planet in planet_relationships.get(soul_planet, {}).get('friends', []):
-        compatibility_score += 2
+        compatibility_score += 10
         positive_aspects.append({
             'type': 'soul_harmony',
             'icon': '✨',
@@ -904,25 +904,26 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             ],
             'planet_info': f"{soul_planet} (ваша душа) дружит с {ruling_planet} (планета дня)"
         })
-    else:
+    elif soul_planet and ruling_planet in planet_relationships.get(soul_planet, {}).get('enemies', []):
+        compatibility_score -= 10
         challenges.append({
-            'type': 'soul_dissonance',
+            'type': 'soul_conflict',
             'icon': '⚠️',
-            'title': 'Диссонанс числа души',
-            'short_text': f"Число души ({soul_number}) не резонирует с {ruling_planet}. Будьте внимательны к своим истинным желаниям.",
-            'detailed_info': f"Ваше число души {soul_number} (планета {soul_planet}) не имеет прямой связи с {ruling_planet}. Это создаёт некоторое напряжение между вашими внутренними желаниями и энергией дня.",
+            'title': 'КОНФЛИКТ ДУШИ!',
+            'short_text': f"Число души ({soul_number}) конфликтует с {ruling_planet}. День может быть эмоционально сложным.",
+            'detailed_info': f"Ваша планета души {soul_planet} враждебна к {ruling_planet}. Это создаёт внутренний конфликт между вашими истинными желаниями и энергией дня.",
             'advice': [
-                "Прислушивайтесь к своим истинным желаниям, не игнорируйте внутренний голос",
-                "Избегайте импульсивных решений, основанных только на внешних обстоятельствах",
-                "Найдите время для медитации и самоанализа",
-                f"Работайте с энергией {soul_planet} через мантры и визуализации",
-                "Не форсируйте события - действуйте в своём темпе"
+                "Избегайте важных эмоциональных решений",
+                "Не форсируйте события, действуйте осторожно",
+                "Уделите время самоанализу и медитации",
+                f"Работайте с энергией {soul_planet} для гармонизации",
+                "Отложите важные начинания на более благоприятный день"
             ],
-            'planet_info': f"Нейтральные отношения: {soul_planet} (душа) ↔ {ruling_planet} (день)",
+            'planet_info': f"Враждебные отношения: {soul_planet} (душа) ⚔ {ruling_planet} (день)",
             'solution': f"Используйте планетарные часы {soul_planet} для важных дел"
         })
     
-    # 3. РЕЗОНАНС ЧИСЛА УМА (+12/+6/-5)
+    # 3. РЕЗОНАНС ЧИСЛА УМА (+12/+6/-15)
     mind_planet = number_to_planet.get(mind_number)
     if mind_number == ruling_planet_number:
         compatibility_score += 12
@@ -956,7 +957,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"{mind_planet} (ваш ум) дружит с {ruling_planet} (планета дня)"
         })
     elif mind_planet and ruling_planet in planet_relationships.get(mind_planet, {}).get('enemies', []):
-        compatibility_score -= 5
+        compatibility_score -= 15
         challenges.append({
             'type': 'mind_conflict',
             'icon': '🧠',
@@ -975,10 +976,10 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'solution': f"Перенесите важные решения на день {mind_planet} или используйте её планетарные часы"
         })
     
-    # 4. РЕЗОНАНС ЧИСЛА СУДЬБЫ (+10)
+    # 4. РЕЗОНАНС ЧИСЛА СУДЬБЫ (+8/-5)
     destiny_planet = number_to_planet.get(destiny_number)
     if destiny_number == ruling_planet_number:
-        compatibility_score += 10
+        compatibility_score += 8
         positive_aspects.append({
             'type': 'destiny_resonance',
             'icon': '🎯',
@@ -992,6 +993,23 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
                 "Это время, когда судьба работает в вашу пользу"
             ],
             'planet_info': f"{ruling_planet} направляет вас по пути вашего предназначения"
+        })
+    elif destiny_planet and ruling_planet in planet_relationships.get(destiny_planet, {}).get('enemies', []):
+        compatibility_score -= 5
+        challenges.append({
+            'type': 'destiny_conflict',
+            'icon': '🎯',
+            'title': 'КОНФЛИКТ СУДЬБЫ!',
+            'short_text': f"Число судьбы ({destiny_number}) конфликтует с {ruling_planet}. Препятствия на пути к целям.",
+            'detailed_info': f"Планета вашей судьбы {destiny_planet} враждебна к {ruling_planet}. Это создаёт препятствия на пути к вашим долгосрочным целям.",
+            'advice': [
+                "Не форсируйте движение к долгосрочным целям",
+                "Сосредоточьтесь на текущих задачах",
+                "Отложите важные стратегические решения",
+                f"Работайте с энергией {destiny_planet} для гармонизации"
+            ],
+            'planet_info': f"Враждебные отношения: {destiny_planet} (судьба) ⚔ {ruling_planet} (день)",
+            'solution': f"Используйте планетарные часы {destiny_planet} для важных дел"
         })
     
     # 5. ЕДИНСТВО ДУШИ И УМА (+10)
@@ -1013,10 +1031,10 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"Тройной резонанс: Душа + Ум + {ruling_planet} = Максимальная сила!"
         })
     
-    # 6. СИЛА ПЛАНЕТЫ В КАРТЕ (+12/+6/-10)
+    # 6. СИЛА ПЛАНЕТЫ В КАРТЕ (+10/+5/-10)
     planet_count = planet_counts.get(ruling_planet, 0)
     if planet_count >= 4:
-        compatibility_score += 12
+        compatibility_score += 10
         positive_aspects.append({
             'type': 'planet_strength_high',
             'icon': '⚖️',
@@ -1033,7 +1051,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"Сила {ruling_planet} в вашей карте: {planet_count}/9 = {(planet_count/9)*100:.0f}% мощности"
         })
     elif planet_count >= 2:
-        compatibility_score += 6
+        compatibility_score += 5
         positive_aspects.append({
             'type': 'planet_strength_balanced',
             'icon': '⚡',
