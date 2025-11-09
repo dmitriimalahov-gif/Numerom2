@@ -541,28 +541,32 @@ const PlanetaryDailyRoute = () => {
           </Card>
         )}
 
-        {/* Почасовой план дня */}
+        {/* Почасовой план дня - 24 часа с детальными советами */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center">
               <Clock className="w-5 h-5 mr-2" />
-              Почасовой план дня
+              Почасовой план дня (24 часа)
             </CardTitle>
             <CardDescription>
-              Первые 8 часов дня с планетарными влияниями
+              Полный планетарный гид с персонализированными советами. Нажмите на час для подробностей.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {route.hourly_guide?.map((hour, index) => {
-                const startTime = hour.start_time?.slice(11, 16);
-                const endTime = hour.end_time?.slice(11, 16);
+              {route.hourly_guide_24h?.map((hour, index) => {
+                const startTime = hour.time?.split(' - ')[0];
+                const endTime = hour.time?.split(' - ')[1];
                 const isCurrent = isCurrentHour(startTime, endTime);
                 
                 return (
                   <div
                     key={index}
-                    className={`p-4 rounded-lg border-2 ${
+                    onClick={() => {
+                      setModalData(hour);
+                      setShowDetailsModal(true);
+                    }}
+                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all hover:scale-[1.02] ${
                       isCurrent 
                         ? themeConfig.isDark 
                           ? 'bg-blue-500/30 border-blue-400' 
@@ -572,8 +576,8 @@ const PlanetaryDailyRoute = () => {
                             ? 'bg-green-500/20 border-green-500/40'
                             : 'bg-green-50 border-green-300'
                           : themeConfig.isDark
-                            ? 'bg-white/5 border-white/10'
-                            : 'bg-gray-50 border-gray-300'
+                            ? 'bg-white/5 border-white/10 hover:bg-white/10'
+                            : 'bg-gray-50 border-gray-300 hover:bg-gray-100'
                     }`}
                   >
                     <div className="flex justify-between items-center mb-2">
@@ -589,19 +593,35 @@ const PlanetaryDailyRoute = () => {
                             БЛАГОПРИЯТНО
                           </span>
                         )}
+                        {hour.period === 'night' && (
+                          <span className={`text-xs px-2 py-1 rounded ${themeConfig.isDark ? 'bg-indigo-500/30 text-indigo-200' : 'bg-indigo-100 text-indigo-700'}`}>
+                            🌙 Ночь
+                          </span>
+                        )}
                       </div>
                       <div className="text-right">
-                        <div className={`font-semibold ${themeConfig.text}`}>{startTime} - {endTime}</div>
+                        <div className={`font-semibold ${themeConfig.text}`}>{hour.time}</div>
                       </div>
                     </div>
                     
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center mb-2">
                       <div className={`font-medium ${themeConfig.text}`}>
                         {hour.planet_sanskrit || hour.planet}
                       </div>
                       <div className={`text-sm ${themeConfig.mutedText}`}>
-                        Планета: {hour.planet}
+                        Энергия: {hour.energy_level}/10
                       </div>
+                    </div>
+                    
+                    {/* Краткая информация */}
+                    <div className={`text-sm ${themeConfig.mutedText} mt-2`}>
+                      {hour.general_recommendation}
+                    </div>
+                    
+                    {/* Индикатор кликабельности */}
+                    <div className={`text-xs ${themeConfig.mutedText} mt-2 flex items-center gap-1`}>
+                      <Info className="w-3 h-3" />
+                      Нажмите для подробностей
                     </div>
                   </div>
                 );
@@ -1091,14 +1111,113 @@ const PlanetaryDailyRoute = () => {
           <DialogHeader>
             <DialogTitle className={`text-2xl font-bold ${themeConfig.text} flex items-center gap-2`}>
               <Sparkles className="w-6 h-6" />
-              Детальная расшифровка планетарного анализа
+              {modalData && modalData.hour ? `Час ${modalData.hour}: ${modalData.planet_sanskrit || modalData.planet}` : 'Детальная расшифровка планетарного анализа'}
             </DialogTitle>
             <DialogDescription className={themeConfig.mutedText}>
-              Полный анализ совместимости дня с вашей личной нумерологической картой
+              {modalData && modalData.hour ? `${modalData.time} - Персонализированные советы` : 'Полный анализ совместимости дня с вашей личной нумерологической картой'}
             </DialogDescription>
           </DialogHeader>
 
-          {modalData && (
+          {modalData && modalData.hour ? (
+            // Модальное окно для часа
+            <div className="space-y-6 mt-4">
+              {/* Основная информация о часе */}
+              <div className={`p-6 rounded-xl border-2 ${
+                modalData.energy_level >= 7 ? getColorClasses('green').bg + ' ' + getColorClasses('green').border :
+                modalData.energy_level >= 5 ? getColorClasses('blue').bg + ' ' + getColorClasses('blue').border :
+                getColorClasses('gray').bg + ' ' + getColorClasses('gray').border
+              }`}>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className={`text-3xl font-bold ${themeConfig.text}`}>
+                      {modalData.planet_sanskrit || modalData.planet}
+                    </h3>
+                    <p className={`text-lg ${themeConfig.mutedText} mt-2`}>
+                      {modalData.time}
+                    </p>
+                  </div>
+                  <div className={`text-6xl font-bold ${
+                    modalData.energy_level >= 7 ? getColorClasses('green').text :
+                    modalData.energy_level >= 5 ? getColorClasses('blue').text :
+                    getColorClasses('gray').text
+                  }`}>
+                    {modalData.energy_level}/10
+                  </div>
+                </div>
+                <p className={`text-lg ${themeConfig.text}`}>
+                  {modalData.general_recommendation}
+                </p>
+              </div>
+
+              {/* Лучшие активности */}
+              {modalData.best_activities && modalData.best_activities.length > 0 && (
+                <div className={`p-6 rounded-lg ${getColorClasses('green').bg}`}>
+                  <h4 className={`text-xl font-bold ${themeConfig.text} mb-4`}>✅ Рекомендуемые активности</h4>
+                  <ul className={`space-y-2 ${themeConfig.text}`}>
+                    {modalData.best_activities.map((activity, idx) => (
+                      <li key={idx} className="flex items-start gap-2">
+                        <span>•</span>
+                        <span>{activity}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Чего избегать */}
+              {modalData.avoid_activities && modalData.avoid_activities.length > 0 && (
+                <div className={`p-6 rounded-lg ${getColorClasses('red').bg}`}>
+                  <h4 className={`text-xl font-bold ${themeConfig.text} mb-4`}>❌ Чего следует избегать</h4>
+                  <ul className={`space-y-2 ${themeConfig.text}`}>
+                    {modalData.avoid_activities.map((activity, idx) => (
+                      <li key={idx} className="flex items-start gap-2">
+                        <span>•</span>
+                        <span>{activity}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Персонализированные советы */}
+              {modalData.personalized_advice && modalData.personalized_advice.length > 0 && (
+                <div className={`p-6 rounded-lg ${themeConfig.surface}`}>
+                  <h4 className={`text-xl font-bold ${themeConfig.text} mb-4 flex items-center gap-2`}>
+                    <Sparkles className="w-5 h-5" />
+                    Персональные советы для вас
+                  </h4>
+                  <div className={`space-y-3 ${themeConfig.text}`}>
+                    {modalData.personalized_advice.map((advice, idx) => (
+                      <div key={idx} className={`p-3 rounded-lg ${themeConfig.isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                        {advice}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Информация о силе планеты */}
+              <div className={`p-6 rounded-lg ${themeConfig.surface}`}>
+                <h4 className={`text-xl font-bold ${themeConfig.text} mb-4`}>💪 Ваша сила планеты</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-purple-500/20' : 'bg-purple-50'}`}>
+                    <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Сила в карте</div>
+                    <div className={`text-3xl font-bold ${themeConfig.isDark ? 'text-purple-300' : 'text-purple-700'}`}>
+                      {modalData.personal_strength}
+                      {modalData.personal_strength >= 5 && ' 💪'}
+                      {modalData.personal_strength === 0 && ' ⚠️'}
+                    </div>
+                  </div>
+                  <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-indigo-500/20' : 'bg-indigo-50'}`}>
+                    <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Тип активности</div>
+                    <div className={`text-lg font-bold ${themeConfig.isDark ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                      {modalData.activity_type}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : modalData && (
             <div className="space-y-6 mt-4">
               {/* Общая оценка */}
               <div className={`p-6 rounded-xl border-2 ${
