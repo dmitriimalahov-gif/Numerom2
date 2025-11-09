@@ -535,6 +535,25 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
   }
 
   const planetColor = getPlanetColor(advice.planet);
+  
+  // Функция для получения правильного фона в зависимости от темы
+  const getBackgroundStyle = (opacity = '20') => {
+    if (themeConfig.isDark) {
+      return { backgroundColor: planetColor + opacity };
+    } else {
+      // Для светлой темы используем более насыщенные цвета
+      return { backgroundColor: planetColor + '30' };
+    }
+  };
+  
+  const getBorderStyle = (opacity = '60') => {
+    if (themeConfig.isDark) {
+      return { borderColor: planetColor + opacity };
+    } else {
+      // Для светлой темы используем более насыщенные границы
+      return { borderColor: planetColor + '80' };
+    }
+  };
 
   return (
     <>
@@ -554,41 +573,60 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
             {advice.planet === 'Rahu' && '🌑'}
             {advice.planet === 'Ketu' && '⚪'}
           </span>
-          {advice.planet}
+          {advice.planet_sanskrit || advice.planetSanskrit || advice.planet}
         </DialogTitle>
         <DialogDescription className={themeConfig.mutedText}>
           Планетарный час: {advice.time}
-          {advice.energy_level && (
-            <span className="ml-3">
-              Энергия: {advice.energy_level}/10
+          {advice.isFavorable && (
+            <span className="ml-3 inline-flex items-center gap-1 text-emerald-500">
+              <CheckCircle2 className="h-4 w-4" />
+              Благоприятное время
             </span>
           )}
         </DialogDescription>
       </DialogHeader>
 
       <div className="mt-6 space-y-6">
-        {/* Общая рекомендация */}
-        {advice.general_recommendation && (
-          <div className={`p-4 rounded-lg ${themeConfig.surface}`}>
-            <h3 className={`font-semibold mb-2 ${themeConfig.text}`}>
-              Общая рекомендация
-            </h3>
-            <p className={themeConfig.mutedText}>{advice.general_recommendation}</p>
+        {/* Персонализированные заметки */}
+        {advice.personalized_notes && advice.personalized_notes.length > 0 && (
+          <div className="space-y-3">
+            {advice.personalized_notes.map((note, idx) => (
+              <div 
+                key={idx}
+                className={`p-4 rounded-lg border-2 ${themeConfig.text}`}
+                style={{
+                  ...getBackgroundStyle('20'),
+                  ...getBorderStyle('60')
+                }}
+              >
+                <p className="font-bold text-sm mb-1">{note.title}</p>
+                <p className="text-sm">{note.advice}</p>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* Лучшие активности */}
-        {advice.best_activities && advice.best_activities.length > 0 && (
-          <div className={`p-4 rounded-lg ${themeConfig.surface}`}>
-            <h3 className={`font-semibold mb-3 flex items-center gap-2 ${themeConfig.text}`}>
-              <CheckCircle className="h-5 w-5 text-green-500" />
-              Рекомендуемые активности
+        {/* Общая характеристика */}
+        <div>
+          <h3 className={`font-bold text-lg mb-2 flex items-center gap-2 ${themeConfig.text}`}>
+            <Sparkles className="h-5 w-5" style={{ color: planetColor }} />
+            Общая характеристика
+          </h3>
+          <p className={themeConfig.mutedText}>{advice.general_advice || advice.general || advice.general_recommendation}</p>
+        </div>
+
+        {/* Благоприятные действия */}
+        {(advice.activities || advice.best_activities) && (
+          <div>
+            <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
+              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+              Благоприятные действия
             </h3>
             <ul className="space-y-2">
-              {advice.best_activities.map((activity, idx) => (
-                <li key={idx} className={`flex items-start gap-2 ${themeConfig.mutedText}`}>
-                  <span className="text-green-500 mt-1">✓</span>
-                  <span>{activity}</span>
+              {(advice.activities || advice.best_activities || []).map((activity, idx) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <span className="text-emerald-500 mt-1">✓</span>
+                  <span className={themeConfig.mutedText}>{activity}</span>
                 </li>
               ))}
             </ul>
@@ -596,85 +634,55 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
         )}
 
         {/* Чего избегать */}
-        {advice.avoid_activities && advice.avoid_activities.length > 0 && (
-          <div className={`p-4 rounded-lg ${themeConfig.surface}`}>
-            <h3 className={`font-semibold mb-3 flex items-center gap-2 ${themeConfig.text}`}>
-              <AlertTriangle className="h-5 w-5 text-orange-500" />
+        {(advice.avoid || advice.avoid_activities) && (
+          <div>
+            <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
               Чего избегать
             </h3>
             <ul className="space-y-2">
-              {advice.avoid_activities.map((activity, idx) => (
-                <li key={idx} className={`flex items-start gap-2 ${themeConfig.mutedText}`}>
-                  <span className="text-orange-500 mt-1">✗</span>
-                  <span>{activity}</span>
+              {(advice.avoid || advice.avoid_activities || []).map((item, idx) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <span className="text-amber-500 mt-1">⚠</span>
+                  <span className={themeConfig.mutedText}>{item}</span>
                 </li>
               ))}
             </ul>
           </div>
         )}
 
-        {/* Персонализированные советы */}
-        {advice.personalized_advice && (
-          <div className={`p-4 rounded-lg border-2 ${themeConfig.surface}`} style={{ borderColor: planetColor + '40' }}>
-            <h3 className={`font-semibold mb-3 flex items-center gap-2 ${themeConfig.text}`}>
-              <Sparkles className="h-5 w-5" style={{ color: planetColor }} />
-              Персональные рекомендации
-            </h3>
-            <div className="space-y-3">
-              {advice.personalized_advice.soul_advice && (
-                <div>
-                  <p className={`text-sm font-medium ${themeConfig.text}`}>
-                    Для вашего числа души ({advice.personalized_advice.soul_number}):
-                  </p>
-                  <p className={`text-sm mt-1 ${themeConfig.mutedText}`}>
-                    {advice.personalized_advice.soul_advice}
-                  </p>
-                </div>
-              )}
-              {advice.personalized_advice.destiny_advice && (
-                <div>
-                  <p className={`text-sm font-medium ${themeConfig.text}`}>
-                    Для вашего числа судьбы ({advice.personalized_advice.destiny_number}):
-                  </p>
-                  <p className={`text-sm mt-1 ${themeConfig.mutedText}`}>
-                    {advice.personalized_advice.destiny_advice}
-                  </p>
-                </div>
-              )}
-              {advice.personalized_advice.mind_advice && (
-                <div>
-                  <p className={`text-sm font-medium ${themeConfig.text}`}>
-                    Для вашего числа ума ({advice.personalized_advice.mind_number}):
-                  </p>
-                  <p className={`text-sm mt-1 ${themeConfig.mutedText}`}>
-                    {advice.personalized_advice.mind_advice}
-                  </p>
-                </div>
-              )}
-            </div>
+        {/* Здоровье */}
+        {advice.health && (
+          <div 
+            className={`p-4 rounded-lg ${themeConfig.text}`}
+            style={{
+              ...getBackgroundStyle('15'),
+              borderLeft: `4px solid ${planetColor}`
+            }}
+          >
+            <h3 className="font-bold text-lg mb-2">💊 Здоровье</h3>
+            <p className={themeConfig.mutedText}>{advice.health}</p>
           </div>
         )}
 
-        {/* Сила планеты в вашей карте */}
-        {advice.planet_strength !== undefined && (
-          <div className={`p-4 rounded-lg ${themeConfig.surface}`}>
-            <h3 className={`font-semibold mb-2 ${themeConfig.text}`}>
-              Сила планеты в вашей карте
-            </h3>
-            <div className="flex items-center gap-3">
-              <div className="text-3xl font-bold" style={{ color: planetColor }}>
-                {advice.planet_strength}
-              </div>
-              <div className="text-2xl">
-                {'⭐'.repeat(Math.min(advice.planet_strength, 5))}
-              </div>
-            </div>
-            <p className={`text-sm mt-2 ${themeConfig.mutedText}`}>
-              {advice.planet_strength >= 4 ? 'Очень сильная планета в вашей карте!' :
-               advice.planet_strength >= 2 ? 'Планета присутствует в вашей карте' :
-               advice.planet_strength === 1 ? 'Слабая планета - возможность для развития' :
-               'Планета отсутствует - время познакомиться с этой энергией'}
-            </p>
+        {/* Мантра */}
+        {advice.mantra && (
+          <div 
+            className={`p-4 rounded-lg text-center ${themeConfig.text}`}
+            style={{
+              ...getBackgroundStyle('20'),
+              border: `2px solid ${planetColor}${themeConfig.isDark ? '60' : '80'}`
+            }}
+          >
+            <h3 className="font-bold text-lg mb-2">🕉️ Мантра</h3>
+            <p className="text-xl font-bold" style={{ color: planetColor }}>{advice.mantra}</p>
+          </div>
+        )}
+
+        {/* Совет для времени суток */}
+        {advice.time_advice && (
+          <div className={`p-4 rounded-lg border ${themeConfig.text} ${themeConfig.isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-100 border-blue-300'}`}>
+            <p className="text-sm italic">{advice.time_advice}</p>
           </div>
         )}
       </div>
