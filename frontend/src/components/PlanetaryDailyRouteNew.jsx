@@ -117,16 +117,22 @@ const PlanetaryDailyRouteNew = () => {
   const dayAnalysis = route.day_analysis || {};
 
   return (
-    <div className={`min-h-screen p-6 ${themeConfig.pageBackground}`}>
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className={`min-h-screen ${themeConfig.pageBackground} relative overflow-hidden`}>
+      {/* Фоновый градиент */}
+      <div 
+        className="fixed inset-0 pointer-events-none"
+        style={{ background: themeConfig.overlayGradient }}
+      />
+      
+      <div className="relative z-10 max-w-7xl mx-auto p-6 space-y-6">
         {/* Заголовок */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className={`text-3xl font-bold ${themeConfig.text}`}>
+            <h1 className={`text-3xl font-bold ${themeConfig.text} drop-shadow-lg`}>
               Планетарный маршрут на день
             </h1>
             <p className={`mt-2 ${themeConfig.mutedText}`}>
-              Подробный анализ дня с рекомендациями
+              Подробный анализ дня с персональными рекомендациями
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -134,9 +140,9 @@ const PlanetaryDailyRouteNew = () => {
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className={themeConfig.surface}
+              className={`${themeConfig.surface} backdrop-blur-xl`}
             />
-            <Button onClick={loadRouteData} variant="outline">
+            <Button onClick={loadRouteData} className="backdrop-blur-xl">
               <Calendar className="h-4 w-4 mr-2" />
               Обновить
             </Button>
@@ -144,158 +150,274 @@ const PlanetaryDailyRouteNew = () => {
         </div>
 
         {/* Общая оценка дня */}
-        <Card className={themeConfig.glass}>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Sparkles className="h-6 w-6 text-indigo-500" />
+        <div 
+          className={`rounded-3xl border p-8 transition-all duration-500 hover:-translate-y-1 ${themeConfig.glass}`}
+          style={{
+            borderColor: getPlanetColor(route.schedule?.weekday?.ruling_planet) + '40',
+            boxShadow: `0 0 40px ${getPlanetColor(route.schedule?.weekday?.ruling_planet)}20`
+          }}
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <Sparkles 
+              className="h-6 w-6 drop-shadow-[0_0_10px_rgba(255,255,255,0.45)]" 
+              style={{ color: getPlanetColor(route.schedule?.weekday?.ruling_planet) }}
+            />
+            <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
               Персональный анализ дня
-            </CardTitle>
-            <CardDescription>
-              {route.schedule?.weekday?.name_ru} • {route.schedule?.weekday?.ruling_planet}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-4xl font-bold" style={{ color: getPlanetColor(route.schedule?.weekday?.ruling_planet) }}>
-                  {dayAnalysis.overall_score || 0} баллов
+            </h2>
+          </div>
+          
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+            <div className="flex-1">
+              <div className="flex items-baseline gap-3">
+                <div 
+                  className="text-6xl font-bold drop-shadow-lg"
+                  style={{ 
+                    color: getPlanetColor(route.schedule?.weekday?.ruling_planet),
+                    textShadow: `0 0 20px ${getPlanetColor(route.schedule?.weekday?.ruling_planet)}80`
+                  }}
+                >
+                  {dayAnalysis.overall_score || 0}
                 </div>
-                <div className="text-lg mt-1">{dayAnalysis.overall_rating}</div>
+                <div className={`text-2xl ${themeConfig.mutedText}`}>баллов</div>
               </div>
-              <div className={`px-4 py-2 rounded-lg ${
-                dayAnalysis.color_class === 'green' ? 'bg-green-500/20 text-green-300' :
-                dayAnalysis.color_class === 'blue' ? 'bg-blue-500/20 text-blue-300' :
-                dayAnalysis.color_class === 'orange' ? 'bg-orange-500/20 text-orange-300' :
-                'bg-gray-500/20 text-gray-300'
+              <div className="mt-3 flex items-center gap-3">
+                <div className={`text-xl font-semibold ${themeConfig.text}`}>
+                  {dayAnalysis.overall_rating}
+                </div>
+                <div className="text-sm text-gray-500">•</div>
+                <div className={`text-sm ${themeConfig.mutedText}`}>
+                  {route.schedule?.weekday?.name_ru}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex flex-col gap-3">
+              <div 
+                className="px-6 py-3 rounded-2xl font-semibold text-center backdrop-blur-xl"
+                style={{
+                  backgroundColor: getPlanetColor(route.schedule?.weekday?.ruling_planet) + '30',
+                  color: getPlanetColor(route.schedule?.weekday?.ruling_planet),
+                  boxShadow: `0 0 20px ${getPlanetColor(route.schedule?.weekday?.ruling_planet)}40`
+                }}
+              >
+                {route.schedule?.weekday?.ruling_planet}
+              </div>
+              <div className={`px-4 py-2 rounded-xl text-sm font-medium text-center ${
+                dayAnalysis.color_class === 'green' ? 'bg-green-500/20 text-green-300 border border-green-500/40' :
+                dayAnalysis.color_class === 'blue' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40' :
+                dayAnalysis.color_class === 'orange' ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40' :
+                'bg-gray-500/20 text-gray-300 border border-gray-500/40'
               }`}>
                 {dayAnalysis.influence?.dynamic || 'Сбалансированное'}
               </div>
             </div>
-            <p className={themeConfig.mutedText}>{dayAnalysis.overall_description}</p>
-          </CardContent>
-        </Card>
+          </div>
+          
+          <p className={`mt-6 text-base leading-relaxed ${themeConfig.mutedText}`}>
+            {dayAnalysis.overall_description}
+          </p>
+        </div>
 
         {/* Ваши сильные стороны */}
-        <Card className={themeConfig.glass}>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Star className="h-6 w-6 text-yellow-500" />
+        <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+          <div className="flex items-center gap-3 mb-6">
+            <Star className="h-6 w-6 text-yellow-500 drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]" />
+            <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
               Ваши сильные стороны сегодня
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {dayAnalysis.positive_aspects?.slice(0, 6).map((aspect, idx) => (
-                <div key={idx} className={`p-4 rounded-lg border ${themeConfig.surface}`}>
-                  <div className="flex items-start gap-3">
-                    <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0" />
-                    <p className={themeConfig.text}>{aspect}</p>
-                  </div>
+            </h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {dayAnalysis.positive_aspects?.slice(0, 6).map((aspect, idx) => (
+              <div 
+                key={idx} 
+                className={`p-5 rounded-2xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${themeConfig.surface}`}
+                style={{
+                  borderColor: '#10b98140',
+                  backgroundColor: themeConfig.isDark ? '#10b98110' : '#10b98108'
+                }}
+              >
+                <div className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0 drop-shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
+                  <p className={`text-sm leading-relaxed ${themeConfig.text}`}>{aspect}</p>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* Области для развития */}
         {dayAnalysis.challenges && dayAnalysis.challenges.length > 0 && (
-          <Card className={themeConfig.glass}>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Target className="h-6 w-6 text-orange-500" />
+          <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+            <div className="flex items-center gap-3 mb-6">
+              <Target className="h-6 w-6 text-orange-500 drop-shadow-[0_0_10px_rgba(249,115,22,0.5)]" />
+              <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
                 Области для развития
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {dayAnalysis.challenges.map((challenge, idx) => (
-                  <div key={idx} className={`p-4 rounded-lg border ${themeConfig.surface}`}>
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="h-5 w-5 text-orange-500 mt-0.5 flex-shrink-0" />
-                      <p className={themeConfig.text}>{challenge}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Сила планет в вашей карте */}
-        <Card className={themeConfig.glass}>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="h-6 w-6 text-indigo-500" />
-              Сила планет в вашей карте
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              {dayAnalysis.all_planet_counts && Object.entries(dayAnalysis.all_planet_counts).map(([planet, count]) => (
-                <div key={planet} className={`p-4 rounded-lg border text-center ${themeConfig.surface}`}>
-                  <div className="text-2xl mb-2" style={{ color: getPlanetColor(planet) }}>
-                    {planet}
-                  </div>
-                  <div className="text-3xl font-bold">{count}</div>
-                  <div className="text-sm mt-1 text-gray-500">
-                    {'⭐'.repeat(Math.min(count, 5))}
+              </h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {dayAnalysis.challenges.map((challenge, idx) => (
+                <div 
+                  key={idx} 
+                  className={`p-5 rounded-2xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${themeConfig.surface}`}
+                  style={{
+                    borderColor: '#f9731640',
+                    backgroundColor: themeConfig.isDark ? '#f9731610' : '#f9731608'
+                  }}
+                >
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-orange-500 mt-0.5 flex-shrink-0 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)]" />
+                    <p className={`text-sm leading-relaxed ${themeConfig.text}`}>{challenge}</p>
                   </div>
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        )}
+
+        {/* Сила планет в вашей карте */}
+        <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+          <div className="flex items-center gap-3 mb-6">
+            <Shield className="h-6 w-6 text-indigo-500 drop-shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
+            <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+              Сила планет в вашей карте
+            </h2>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {dayAnalysis.all_planet_counts && Object.entries(dayAnalysis.all_planet_counts).map(([planet, count]) => {
+              const planetColor = getPlanetColor(planet);
+              return (
+                <div 
+                  key={planet} 
+                  className={`p-5 rounded-2xl border text-center transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${themeConfig.surface}`}
+                  style={{
+                    borderColor: planetColor + '40',
+                    backgroundColor: themeConfig.isDark ? planetColor + '10' : planetColor + '08'
+                  }}
+                >
+                  <div 
+                    className="text-xl font-bold mb-2 drop-shadow-lg"
+                    style={{ 
+                      color: planetColor,
+                      textShadow: `0 0 10px ${planetColor}60`
+                    }}
+                  >
+                    {planet}
+                  </div>
+                  <div 
+                    className="text-4xl font-bold mb-2"
+                    style={{ color: planetColor }}
+                  >
+                    {count}
+                  </div>
+                  <div className="text-sm">
+                    {[...Array(Math.min(count, 5))].map((_, i) => (
+                      <span 
+                        key={i} 
+                        className="inline-block"
+                        style={{ 
+                          color: planetColor,
+                          filter: `drop-shadow(0 0 4px ${planetColor}60)`
+                        }}
+                      >
+                        ⭐
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Почасовой план дня */}
-        <Card className={themeConfig.glass}>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-6 w-6 text-indigo-500" />
+        <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+          <div className="flex items-center gap-3 mb-4">
+            <Clock className="h-6 w-6 text-indigo-500 drop-shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
+            <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
               Почасовой план дня (24 часа)
-            </CardTitle>
-            <CardDescription>
-              Нажмите на час для подробных рекомендаций
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-              {route.hourly_guide_24h?.map((hour, idx) => {
-                const isCurrent = isCurrentHour(hour);
-                const planetColor = getPlanetColor(hour.planet);
-                
-                return (
-                  <div
-                    key={idx}
-                    onClick={() => {
-                      setSelectedHour(hour);
-                      setIsHourDialogOpen(true);
-                    }}
-                    className={`p-4 rounded-lg border cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${
-                      isCurrent 
-                        ? 'ring-2 ring-indigo-500 bg-indigo-500/20' 
-                        : themeConfig.surface
-                    }`}
-                    style={isCurrent ? { borderColor: planetColor } : {}}
-                  >
-                    <div className="text-center">
-                      <div className="text-sm font-medium mb-2" style={{ color: planetColor }}>
-                        {hour.planet}
-                      </div>
-                      <div className={`text-xs ${themeConfig.mutedText}`}>
-                        {hour.start} - {hour.end}
-                      </div>
-                      {isCurrent && (
-                        <div className="mt-2 text-xs font-bold text-indigo-400">
-                          СЕЙЧАС
-                        </div>
-                      )}
+            </h2>
+          </div>
+          <p className={`mb-6 text-sm ${themeConfig.mutedText}`}>
+            Нажмите на час для подробных персональных рекомендаций
+          </p>
+          
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+            {route.hourly_guide_24h?.map((hour, idx) => {
+              const isCurrent = isCurrentHour(hour);
+              const planetColor = getPlanetColor(hour.planet);
+              
+              return (
+                <div
+                  key={idx}
+                  onClick={() => {
+                    setSelectedHour(hour);
+                    setIsHourDialogOpen(true);
+                  }}
+                  className={`rounded-2xl border p-4 transition-all duration-500 hover:-translate-y-1 relative cursor-pointer ${
+                    isCurrent ? 'shadow-2xl scale-110 ring-4 ring-offset-4' : 'shadow-sm hover:shadow-lg'
+                  }`}
+                  style={{
+                    borderColor: isCurrent ? planetColor : planetColor + '40',
+                    backgroundColor: isCurrent ? planetColor + '40' : planetColor + '10',
+                    boxShadow: isCurrent 
+                      ? `0 0 60px ${planetColor}80, 0 0 120px ${planetColor}60, 0 20px 80px ${planetColor}40, inset 0 0 40px ${planetColor}20` 
+                      : undefined,
+                    ringColor: isCurrent ? planetColor : undefined,
+                    borderWidth: isCurrent ? '3px' : '1px',
+                    ringOffsetColor: themeConfig.isDark ? '#0f1214' : '#f6f9fc'
+                  }}
+                >
+                  {isCurrent && (
+                    <div 
+                      className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest whitespace-nowrap animate-pulse shadow-lg"
+                      style={{
+                        backgroundColor: planetColor,
+                        color: '#ffffff',
+                        boxShadow: `0 0 20px ${planetColor}80, 0 0 40px ${planetColor}60`
+                      }}
+                    >
+                      ⏰ СЕЙЧАС
                     </div>
+                  )}
+                  
+                  <div className="text-center">
+                    <div 
+                      className={`font-bold mb-2 ${isCurrent ? 'text-lg' : 'text-sm'}`}
+                      style={{ 
+                        color: isCurrent ? '#ffffff' : planetColor,
+                        textShadow: isCurrent ? `0 0 10px ${planetColor}, 0 0 20px ${planetColor}80` : undefined
+                      }}
+                    >
+                      {hour.planet}
+                    </div>
+                    <div 
+                      className={`text-xs ${isCurrent ? 'font-bold text-white' : themeConfig.mutedText}`}
+                      style={{
+                        textShadow: isCurrent ? `0 0 10px ${planetColor}80` : undefined
+                      }}
+                    >
+                      {hour.start} — {hour.end}
+                    </div>
+                    {isCurrent && (
+                      <div 
+                        className="mt-2 inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold text-white animate-pulse"
+                        style={{
+                          backgroundColor: '#ffffff30',
+                          backdropFilter: 'blur(10px)',
+                          boxShadow: `0 0 20px ${planetColor}40`
+                        }}
+                      >
+                        <Activity className="h-3 w-3" />
+                        Активно
+                      </div>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* Модальное окно с советами для планетарного часа */}
