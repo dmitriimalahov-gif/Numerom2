@@ -20,6 +20,8 @@ const PlanetaryDailyRouteNew = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedHour, setSelectedHour] = useState(null);
   const [isHourDialogOpen, setIsHourDialogOpen] = useState(false);
+  const [selectedAspect, setSelectedAspect] = useState(null);
+  const [isAspectDialogOpen, setIsAspectDialogOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const { user } = useAuth();
   const apiBaseUrl = getApiBaseUrl();
@@ -285,21 +287,45 @@ const PlanetaryDailyRouteNew = () => {
             </h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {dayAnalysis.positive_aspects?.slice(0, 6).map((aspect, idx) => (
-              <div 
-                key={idx} 
-                className={`p-5 rounded-2xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${themeConfig.surface}`}
-                style={{
-                  borderColor: '#10b98140',
-                  backgroundColor: themeConfig.isDark ? '#10b98110' : '#10b98108'
-                }}
-              >
-                <div className="flex items-start gap-3">
-                  <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0 drop-shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
-                  <p className={`text-sm leading-relaxed ${themeConfig.text}`}>{aspect}</p>
+            {dayAnalysis.positive_aspects?.slice(0, 6).map((aspect, idx) => {
+              // Проверяем, является ли аспект объектом с детальной информацией
+              const isDetailedAspect = typeof aspect === 'object' && aspect.type;
+              const displayText = isDetailedAspect ? aspect.short_text : aspect;
+              const icon = isDetailedAspect ? aspect.icon : '';
+              
+              return (
+                <div 
+                  key={idx} 
+                  onClick={() => {
+                    if (isDetailedAspect) {
+                      setSelectedAspect(aspect);
+                      setIsAspectDialogOpen(true);
+                    }
+                  }}
+                  className={`p-5 rounded-2xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${
+                    isDetailedAspect ? 'cursor-pointer hover:border-green-500/60' : ''
+                  } ${themeConfig.surface}`}
+                  style={{
+                    borderColor: '#10b98140',
+                    backgroundColor: themeConfig.isDark ? '#10b98110' : '#10b98108'
+                  }}
+                >
+                  <div className="flex items-start gap-3">
+                    {icon && <span className="text-2xl flex-shrink-0">{icon}</span>}
+                    {!icon && <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0 drop-shadow-[0_0_8px_rgba(34,197,94,0.5)]" />}
+                    <div className="flex-1">
+                      <p className={`text-sm leading-relaxed ${themeConfig.text}`}>{displayText}</p>
+                      {isDetailedAspect && (
+                        <div className="mt-2 flex items-center gap-1 text-xs text-green-500">
+                          <Info className="h-3 w-3" />
+                          <span>Нажмите для подробностей</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -698,6 +724,128 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
           </div>
         )}
       </div>
+
+      {/* Модальное окно для детальной информации об аспекте */}
+      <Dialog open={isAspectDialogOpen} onOpenChange={setIsAspectDialogOpen}>
+        <DialogContent 
+          className={`max-w-2xl max-h-[80vh] overflow-y-auto ${themeConfig.surface} ${themeConfig.text}`}
+          style={{
+            backgroundColor: themeConfig.isDark ? '#1a1a2e' : '#ffffff',
+            borderColor: selectedAspect?.icon ? getPlanetColor(route?.schedule?.weekday?.ruling_planet) + '40' : undefined
+          }}
+        >
+          {selectedAspect ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-3 text-2xl">
+                  {selectedAspect.icon && <span className="text-3xl">{selectedAspect.icon}</span>}
+                  <span style={{ color: getPlanetColor(route?.schedule?.weekday?.ruling_planet) }}>
+                    {selectedAspect.title}
+                  </span>
+                </DialogTitle>
+                <DialogDescription className={themeConfig.mutedText}>
+                  Детальная информация о вашем преимуществе
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6 mt-6">
+                {/* Краткое описание */}
+                <div 
+                  className="p-4 rounded-lg border"
+                  style={{
+                    backgroundColor: themeConfig.isDark ? '#10b98115' : '#10b98108',
+                    borderColor: '#10b98140'
+                  }}
+                >
+                  <p className={`text-base leading-relaxed ${themeConfig.text}`}>
+                    {selectedAspect.short_text}
+                  </p>
+                </div>
+
+                {/* Детальная информация */}
+                {selectedAspect.detailed_info && (
+                  <div className="space-y-2">
+                    <h3 className="font-bold text-lg flex items-center gap-2">
+                      <Info className="h-5 w-5 text-blue-500" />
+                      Подробнее
+                    </h3>
+                    <p className={`text-sm leading-relaxed ${themeConfig.mutedText}`}>
+                      {selectedAspect.detailed_info}
+                    </p>
+                  </div>
+                )}
+
+                {/* Информация о планетах */}
+                {selectedAspect.planet_info && (
+                  <div 
+                    className="p-4 rounded-lg"
+                    style={{
+                      backgroundColor: themeConfig.isDark 
+                        ? `${getPlanetColor(route?.schedule?.weekday?.ruling_planet)}15`
+                        : `${getPlanetColor(route?.schedule?.weekday?.ruling_planet)}08`,
+                      borderLeft: `4px solid ${getPlanetColor(route?.schedule?.weekday?.ruling_planet)}`
+                    }}
+                  >
+                    <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
+                      <Sparkles className="h-5 w-5" style={{ color: getPlanetColor(route?.schedule?.weekday?.ruling_planet) }} />
+                      Планетарная информация
+                    </h3>
+                    <p className={themeConfig.text}>{selectedAspect.planet_info}</p>
+                  </div>
+                )}
+
+                {/* Советы */}
+                {selectedAspect.advice && selectedAspect.advice.length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="font-bold text-lg flex items-center gap-2">
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                      Рекомендации
+                    </h3>
+                    <div className="space-y-2">
+                      {selectedAspect.advice.map((tip, idx) => (
+                        <div 
+                          key={idx}
+                          className={`p-3 rounded-lg border transition-all duration-300 hover:-translate-y-0.5 ${themeConfig.surface}`}
+                          style={{
+                            borderColor: '#10b98130',
+                            backgroundColor: themeConfig.isDark ? '#10b98108' : '#10b98105'
+                          }}
+                        >
+                          <div className="flex items-start gap-2">
+                            <span className="text-green-500 mt-0.5">✓</span>
+                            <p className={`text-sm ${themeConfig.text}`}>{tip}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <Button 
+                  onClick={() => setIsAspectDialogOpen(false)}
+                  className="backdrop-blur-xl"
+                  style={{
+                    backgroundColor: getPlanetColor(route?.schedule?.weekday?.ruling_planet) + '20',
+                    color: getPlanetColor(route?.schedule?.weekday?.ruling_planet),
+                    borderColor: getPlanetColor(route?.schedule?.weekday?.ruling_planet) + '40'
+                  }}
+                >
+                  Закрыть
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Информация</DialogTitle>
+                <DialogDescription>Загрузка...</DialogDescription>
+              </DialogHeader>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 };
