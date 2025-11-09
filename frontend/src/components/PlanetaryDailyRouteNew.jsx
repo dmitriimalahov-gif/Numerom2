@@ -304,7 +304,7 @@ const PlanetaryDailyRouteNew = () => {
         </div>
 
         {/* Ваши сильные стороны */}
-        <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+        <div className={`hidden rounded-3xl border p-8 ${themeConfig.glass}`}>
           <div className="flex items-center gap-3 mb-6">
             <Star className="h-6 w-6 text-yellow-500 drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]" />
             <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
@@ -348,7 +348,7 @@ const PlanetaryDailyRouteNew = () => {
 
         {/* Области для развития */}
         {dayAnalysis.challenges && dayAnalysis.challenges.length > 0 && (
-          <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+          <div className={`hidden rounded-3xl border p-8 ${themeConfig.glass}`}>
             <div className="flex items-center gap-3 mb-6">
               <Target className="h-6 w-6 text-orange-500 drop-shadow-[0_0_10px_rgba(249,115,22,0.5)]" />
               <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
@@ -392,7 +392,7 @@ const PlanetaryDailyRouteNew = () => {
         )}
 
         {/* Сила планет в вашей карте */}
-        <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+        <div className={`hidden rounded-3xl border p-8 ${themeConfig.glass}`}>
           <div className="flex items-center gap-3 mb-6">
             <Shield className="h-6 w-6 text-indigo-500 drop-shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
             <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
