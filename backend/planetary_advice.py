@@ -44,7 +44,7 @@ async def init_planetary_advice_collection(db: AsyncIOMotorDatabase):
     
     # Проверяем, есть ли уже данные
     count = await collection.count_documents({})
-    if count > "0":
+    if count > 0:
         print(f"✓ Коллекция planetary_advice уже содержит {count} записей")
         return
     
@@ -797,7 +797,7 @@ async def get_personalized_planetary_advice(
         # Проверим, сколько вообще записей в коллекции
         count = await collection.count_documents({})
         print(f"   Всего записей в planetary_advice: {count}")
-        if count > "0":
+        if count > 0:
             # Выведем список доступных планет
             all_planets = await collection.find({}, {"planet": 1}).to_list(length=10)
             print(f"   Доступные планеты: {[p['planet'] for p in all_planets]}")
