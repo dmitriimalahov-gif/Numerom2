@@ -1520,24 +1520,17 @@ const personalCycles = [
             <div className="flex flex-col gap-12">
               <div
                 className="inline-grid gap-4 md:gap-5"
-                style={{ gridTemplateColumns: 'repeat(6, minmax(90px, 1fr))' }}
+                style={{ gridTemplateColumns: 'repeat(5, minmax(90px, 1fr))' }}
               >
               {topPersonal.map((item, rowIndex) => {
                 const value = personalData?.[item.key] ?? '-';
                 return (
                   <React.Fragment key={item.key}>
-                    <SquareShell borderClass={squareBorderClass} className={`${pillGradient} flex-col gap-1`}>
-                      <span
-                        className={`${textSecondaryClass} text-sm md:text-base uppercase tracking-[0.4em]`}
-                      >
-                        {item.label}
-                      </span>
-                    </SquareShell>
                     <SquareShell
                       borderClass={squareBorderClass}
                       className={`${valueGradient} ${
                         item.accent ? 'from-[#9cb4ab] via-[#88a099] to-[#5c6a65]' : ''
-                      } ${textPrimaryClass} text-3xl font-semibold`}
+                      } ${textPrimaryClass} flex-col`}
                       interactive
                       onMouseEnter={() => setHoveredNumbers([])}
                       onMouseLeave={() => setHoveredNumbers([])}
@@ -1548,7 +1541,8 @@ const personalCycles = [
                         )
                       }
                     >
-                      {value}
+                      <span className={`text-sm uppercase tracking-[0.4em] ${textMutedClass}`}>{item.label}</span>
+                      <span className="mt-1 text-3xl font-semibold">{value}</span>
                     </SquareShell>
                     {NUMBER_LAYOUT[rowIndex].map((numberId) => {
                       const [originRow, originCol] = INDEX_BY_NUMBER[numberId];
