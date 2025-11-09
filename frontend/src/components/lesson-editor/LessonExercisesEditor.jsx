@@ -194,7 +194,7 @@ const LessonExercisesEditor = ({
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Список существующих упражнений */}
-        {lessonContent.exercises?.map((exercise, index) => (
+        {Array.isArray(lessonContent.exercises) && lessonContent.exercises.map((exercise, index) => (
           <div key={exercise.id || index} className="space-y-4">
             <Card className="border border-gray-200">
               <CardContent className="p-4">

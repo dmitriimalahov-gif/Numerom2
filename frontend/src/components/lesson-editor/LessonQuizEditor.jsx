@@ -199,7 +199,7 @@ const LessonQuizEditor = ({
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Список существующих вопросов */}
-        {lessonContent.quiz?.questions?.map((question, index) => (
+        {Array.isArray(lessonContent.quiz?.questions) && lessonContent.quiz.questions.map((question, index) => (
           <div key={question.id || index} className="space-y-4">
             <Card className="border border-gray-200">
               <CardContent className="p-4">
@@ -215,7 +215,7 @@ const LessonQuizEditor = ({
                 </div>
                 <p className="text-sm text-gray-700 mb-2">{question.question}</p>
                 <div className="text-xs text-gray-500 space-y-1">
-                  {question.options && question.options.map((opt, idx) => (
+                  {Array.isArray(question.options) && question.options.map((opt, idx) => (
                     <p key={idx}>{opt}</p>
                   ))}
                   <p className="font-semibold mt-2">

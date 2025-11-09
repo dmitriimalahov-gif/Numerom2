@@ -180,7 +180,7 @@ const LessonChallengeEditor = ({
             </Button>
           </div>
 
-          {challenge.daily_tasks?.map((dayTask, index) => (
+          {Array.isArray(challenge.daily_tasks) && challenge.daily_tasks.map((dayTask, index) => (
             <div key={index} className="mb-3">
               <Card className="border-blue-200">
                 <CardContent className="p-4">
@@ -197,7 +197,7 @@ const LessonChallengeEditor = ({
                     </Button>
                   </div>
                   <ul className="text-sm text-gray-600 space-y-1">
-                    {dayTask.tasks?.map((task, taskIdx) => (
+                    {Array.isArray(dayTask.tasks) && dayTask.tasks.map((task, taskIdx) => (
                       <li key={taskIdx}>• {task}</li>
                     ))}
                   </ul>
