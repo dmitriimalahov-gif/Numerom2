@@ -790,8 +790,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     # Получаем день правящей планеты
     is_planet_day = schedule.get('weekday', {}).get('ruling_planet') == ruling_planet
     
-    # 1. БАЗОВЫЙ СЧЁТ (20-30) - зависит от суммы личных чисел
-    base_score = 20 + (soul_number + mind_number + destiny_number) % 11
+    # 1. БАЗОВЫЙ СЧЁТ (20) - фиксированный базовый счёт
+    base_score = 20
     compatibility_score = base_score
     
     # Списки для позитивных аспектов и вызовов
@@ -813,7 +813,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     
     if planet_weekday_energy == 0:
         # Это КРИТИЧЕСКИ СЛОЖНЫЙ день - энергия планеты отсутствует!
-        compatibility_score -= 10  # Снижение баллов
+        compatibility_score -= 15  # Снижение баллов
         challenges.append({
             'type': 'zero_weekday_energy',
             'icon': '🚨',
@@ -854,7 +854,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
         })
     elif planet_weekday_energy >= 7:
         # Высокая энергия - день благоприятный!
-        compatibility_score += 15  # Повышение баллов
+        compatibility_score += 10  # Повышение баллов
         positive_aspects.append({
             'type': 'high_weekday_energy',
             'icon': '⚡',
@@ -871,10 +871,10 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"Личная энергия {ruling_planet} = {planet_weekday_energy}/9 - МАКСИМУМ!"
         })
     
-    # 2. РЕЗОНАНС ЧИСЛА ДУШИ (+15/-10/0)
+    # 2. РЕЗОНАНС ЧИСЛА ДУШИ (+1/+5/-10)
     soul_planet = number_to_planet.get(soul_number)
     if soul_number == ruling_planet_number:
-        compatibility_score += 15
+        compatibility_score += 1
         positive_aspects.append({
             'type': 'soul_resonance',
             'icon': '🌟',
@@ -890,7 +890,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"{ruling_planet} управляет вашей душой и днём одновременно, создавая мощный резонанс"
         })
     elif soul_planet and ruling_planet in planet_relationships.get(soul_planet, {}).get('friends', []):
-        compatibility_score += 10
+        compatibility_score += 5
         positive_aspects.append({
             'type': 'soul_harmony',
             'icon': '✨',
@@ -923,10 +923,10 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'solution': f"Используйте планетарные часы {soul_planet} для важных дел"
         })
     
-    # 3. РЕЗОНАНС ЧИСЛА УМА (+12/+6/-15)
+    # 3. РЕЗОНАНС ЧИСЛА УМА (+1/+6/-20)
     mind_planet = number_to_planet.get(mind_number)
     if mind_number == ruling_planet_number:
-        compatibility_score += 12
+        compatibility_score += 1
         positive_aspects.append({
             'type': 'mind_resonance',
             'icon': '🧠',
@@ -957,7 +957,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"{mind_planet} (ваш ум) дружит с {ruling_planet} (планета дня)"
         })
     elif mind_planet and ruling_planet in planet_relationships.get(mind_planet, {}).get('enemies', []):
-        compatibility_score -= 15
+        compatibility_score -= 20
         challenges.append({
             'type': 'mind_conflict',
             'icon': '🧠',
@@ -976,10 +976,10 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'solution': f"Перенесите важные решения на день {mind_planet} или используйте её планетарные часы"
         })
     
-    # 4. РЕЗОНАНС ЧИСЛА СУДЬБЫ (+8/-5)
+    # 4. РЕЗОНАНС ЧИСЛА СУДЬБЫ (+1/-30)
     destiny_planet = number_to_planet.get(destiny_number)
     if destiny_number == ruling_planet_number:
-        compatibility_score += 8
+        compatibility_score += 1
         positive_aspects.append({
             'type': 'destiny_resonance',
             'icon': '🎯',
@@ -995,7 +995,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"{ruling_planet} направляет вас по пути вашего предназначения"
         })
     elif destiny_planet and ruling_planet in planet_relationships.get(destiny_planet, {}).get('enemies', []):
-        compatibility_score -= 5
+        compatibility_score -= 30
         challenges.append({
             'type': 'destiny_conflict',
             'icon': '🎯',
@@ -1031,10 +1031,10 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"Тройной резонанс: Душа + Ум + {ruling_planet} = Максимальная сила!"
         })
     
-    # 6. СИЛА ПЛАНЕТЫ В КАРТЕ (+10/+5/-10)
+    # 6. СИЛА ПЛАНЕТЫ В КАРТЕ (+12/+1/-10)
     planet_count = planet_counts.get(ruling_planet, 0)
     if planet_count >= 4:
-        compatibility_score += 10
+        compatibility_score += 12
         positive_aspects.append({
             'type': 'planet_strength_high',
             'icon': '⚖️',
@@ -1051,7 +1051,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"Сила {ruling_planet} в вашей карте: {planet_count}/9 = {(planet_count/9)*100:.0f}% мощности"
         })
     elif planet_count >= 2:
-        compatibility_score += 5
+        compatibility_score += 1
         positive_aspects.append({
             'type': 'planet_strength_balanced',
             'icon': '⚡',
