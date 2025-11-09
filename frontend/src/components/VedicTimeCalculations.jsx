@@ -69,7 +69,7 @@ const WEEKDAY_MANTRAS = {
     description: 'Укрепляет внутренний свет, уверенность и лидерские качества.'
   },
   sunday: {
-    planet: 'Sun',
+    planet: 'Surya',
     mantra: 'ॐ सूर्याय नमः',
     transliteration: 'Om Sūryāya Namaḥ',
     description: 'Strengthens vitality, confidence, and leadership.'
@@ -81,7 +81,7 @@ const WEEKDAY_MANTRAS = {
     description: 'Гармонизирует эмоции, развивает интуицию и мягкость.'
   },
   monday: {
-    planet: 'Moon',
+    planet: 'Chandra',
     mantra: 'ॐ चंद्राय नमः',
     transliteration: 'Om Chandrāya Namaḥ',
     description: 'Harmonises emotions, nurtures intuition and empathy.'
@@ -93,7 +93,7 @@ const WEEKDAY_MANTRAS = {
     description: 'Наполняет решительностью, смелостью и силой действий.'
   },
   tuesday: {
-    planet: 'Mars',
+    planet: 'Mangal',
     mantra: 'ॐ मंगलाय नमः',
     transliteration: 'Om Maṅgalāya Namaḥ',
     description: 'Infuses courage, determination, and drive.'
@@ -105,7 +105,7 @@ const WEEKDAY_MANTRAS = {
     description: 'Активирует интеллект, коммуникацию и гибкое мышление.'
   },
   wednesday: {
-    planet: 'Mercury',
+    planet: 'Budh',
     mantra: 'ॐ बुधाय नमः',
     transliteration: 'Om Budhāya Namaḥ',
     description: 'Sharpens intellect, communication, and adaptability.'
@@ -117,7 +117,7 @@ const WEEKDAY_MANTRAS = {
     description: 'Раскрывает мудрость, духовность и наставнические качества.'
   },
   thursday: {
-    planet: 'Jupiter',
+    planet: 'Guru',
     mantra: 'ॐ बृहस्पतये नमः',
     transliteration: 'Om Bṛhaspataye Namaḥ',
     description: 'Expands wisdom, spirituality, and guidance.'
@@ -129,7 +129,7 @@ const WEEKDAY_MANTRAS = {
     description: 'Притягивает гармонию, любовь и творческое вдохновение.'
   },
   friday: {
-    planet: 'Venus',
+    planet: 'Shukra',
     mantra: 'ॐ शुक्राय नमः',
     transliteration: 'Om Śukrāya Namaḥ',
     description: 'Attracts harmony, love, and creative inspiration.'
@@ -141,7 +141,7 @@ const WEEKDAY_MANTRAS = {
     description: 'Укрепляет терпение, дисциплину и устойчивость.'
   },
   saturday: {
-    planet: 'Saturn',
+    planet: 'Shani',
     mantra: 'ॐ शनैश्चराय नमः',
     transliteration: 'Om Śanaiścarāya Namaḥ',
     description: 'Builds patience, discipline, and resilience.'
@@ -1268,13 +1268,13 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
           style={{ color: planetColor }}
         >
           <span className="text-3xl">
-            {advice.planet === 'Sun' && '☀️'}
-            {advice.planet === 'Moon' && '🌙'}
-            {advice.planet === 'Mars' && '🔴'}
-            {advice.planet === 'Mercury' && '💚'}
-            {advice.planet === 'Jupiter' && '🟠'}
-            {advice.planet === 'Venus' && '💗'}
-            {advice.planet === 'Saturn' && '🔵'}
+            {advice.planet === 'Surya' && '☀️'}
+            {advice.planet === 'Chandra' && '🌙'}
+            {advice.planet === 'Mangal' && '🔴'}
+            {advice.planet === 'Budh' && '💚'}
+            {advice.planet === 'Guru' && '🟠'}
+            {advice.planet === 'Shukra' && '💗'}
+            {advice.planet === 'Shani' && '🔵'}
             {advice.planet === 'Rahu' && '🌑'}
             {advice.planet === 'Ketu' && '⚪'}
           </span>

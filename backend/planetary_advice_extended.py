@@ -28,15 +28,15 @@ def get_advanced_personalized_advice(
     
     # Маппинг планет на их числа
     planet_numbers = {
-        "Sun": 1,
-        "Moon": 2,
-        "Jupiter": 3,
+        "Surya": 1,
+        "Chandra": 2,
+        "Guru": 3,
         "Rahu": 4,
-        "Mercury": 5,
-        "Venus": 6,
+        "Budh": 5,
+        "Shukra": 6,
         "Ketu": 7,
-        "Saturn": 8,
-        "Mars": 9
+        "Shani": 8,
+        "Mangal": 9
     }
     
     planet_num = planet_numbers.get(planet, 0)
@@ -147,13 +147,13 @@ def get_advanced_personalized_advice(
     
     # Маппинг дней недели на планеты
     weekday_planets = {
-        0: "Moon",      # Понедельник
-        1: "Mars",      # Вторник
-        2: "Mercury",   # Среда
-        3: "Jupiter",   # Четверг
-        4: "Venus",     # Пятница
-        5: "Saturn",    # Суббота
-        6: "Sun"        # Воскресенье
+        0: "Chandra",      # Понедельник
+        1: "Mangal",      # Вторник
+        2: "Budh",   # Среда
+        3: "Guru",   # Четверг
+        4: "Shukra",     # Пятница
+        5: "Shani",    # Суббота
+        6: "Surya"        # Воскресенье
     }
     
     # 11. ДЕНЬ НЕДЕЛИ РОЖДЕНИЯ = СЕГОДНЯ
@@ -313,34 +313,34 @@ def get_compatibility_advice(planet: str, soul_num: int, destiny_num: int) -> st
     """
     # Дружественные планеты
     planet_friends = {
-        "Sun": ["Moon", "Mars", "Jupiter"],
-        "Moon": ["Sun", "Mercury"],
-        "Mars": ["Sun", "Moon", "Jupiter"],
-        "Mercury": ["Sun", "Venus"],
-        "Jupiter": ["Sun", "Moon", "Mars"],
-        "Venus": ["Mercury", "Saturn"],
-        "Saturn": ["Mercury", "Venus"],
-        "Rahu": ["Mercury", "Venus", "Saturn"],
-        "Ketu": ["Mars", "Jupiter"]
+        "Surya": ["Chandra", "Mangal", "Guru"],
+        "Chandra": ["Surya", "Budh"],
+        "Mangal": ["Surya", "Chandra", "Guru"],
+        "Budh": ["Surya", "Shukra"],
+        "Guru": ["Surya", "Chandra", "Mangal"],
+        "Shukra": ["Budh", "Shani"],
+        "Shani": ["Budh", "Shukra"],
+        "Rahu": ["Budh", "Shukra", "Shani"],
+        "Ketu": ["Mangal", "Guru"]
     }
     
     # Враждебные планеты
     planet_enemies = {
-        "Sun": ["Venus", "Saturn"],
-        "Moon": ["Rahu", "Ketu"],
-        "Mars": ["Mercury"],
-        "Mercury": ["Moon"],
-        "Jupiter": ["Mercury", "Venus"],
-        "Venus": ["Sun", "Moon"],
-        "Saturn": ["Sun", "Moon", "Mars"],
-        "Rahu": ["Sun", "Moon"],
-        "Ketu": ["Sun", "Moon"]
+        "Surya": ["Shukra", "Shani"],
+        "Chandra": ["Rahu", "Ketu"],
+        "Mangal": ["Budh"],
+        "Budh": ["Chandra"],
+        "Guru": ["Budh", "Shukra"],
+        "Shukra": ["Surya", "Chandra"],
+        "Shani": ["Surya", "Chandra", "Mangal"],
+        "Rahu": ["Surya", "Chandra"],
+        "Ketu": ["Surya", "Chandra"]
     }
     
     # Маппинг чисел на планеты
     number_to_planet = {
-        1: "Sun", 2: "Moon", 3: "Jupiter", 4: "Rahu", 5: "Mercury",
-        6: "Venus", 7: "Ketu", 8: "Saturn", 9: "Mars"
+        1: "Surya", 2: "Chandra", 3: "Guru", 4: "Rahu", 5: "Budh",
+        6: "Shukra", 7: "Ketu", 8: "Shani", 9: "Mangal"
     }
     
     soul_planet = number_to_planet.get(soul_num)

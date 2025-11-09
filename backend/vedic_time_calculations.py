@@ -195,7 +195,7 @@ def calculate_planetary_hours(sunrise: datetime, sunset: datetime, weekday: int)
     hour_duration = day_duration / 12  # День делится на 12 планетарных часов
     
     # Планеты в порядке по дням недели (понедельник -> Луна, вторник -> Марс, ..., воскресенье -> Солнце)
-    planets_order = ['Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn', 'Sun']
+    planets_order = ['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya']
     
     # Определяем планету дня
     ruling_planet = planets_order[weekday]
@@ -234,7 +234,7 @@ def calculate_night_planetary_hours(sunset: datetime, next_sunrise: datetime, we
     hour_duration = night_duration / 12  # Ночь делится на 12 планетарных часов
     
     # Планеты в порядке по дням недели
-    planets_order = ['Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn', 'Sun']
+    planets_order = ['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya']
     
     # Ночные часы начинаются с 5-го часа дня (продолжение последовательности)
     ruling_planet = planets_order[weekday]
@@ -267,13 +267,13 @@ def calculate_night_planetary_hours(sunset: datetime, next_sunrise: datetime, we
 def get_planet_sanskrit(planet: str) -> str:
     """Возвращает санскритское название планеты"""
     sanskrit_names = {
-        'Sun': 'Surya (सूर्य)',
-        'Moon': 'Chandra (चन्द्र)', 
-        'Mars': 'Mangal (मंगल)',
-        'Mercury': 'Budha (बुध)',
-        'Jupiter': 'Guru (गुरु)',
-        'Venus': 'Shukra (शुक्र)',
-        'Saturn': 'Shani (शनि)'
+        'Surya': 'Surya (सूर्य)',
+        'Chandra': 'Chandra (चन्द्र)', 
+        'Mangal': 'Mangal (मंगल)',
+        'Budh': 'Budha (बुध)',
+        'Guru': 'Guru (गुरु)',
+        'Shukra': 'Shukra (शुक्र)',
+        'Shani': 'Shani (शनि)'
     }
     return sanskrit_names.get(planet, planet)
 
@@ -286,13 +286,13 @@ def is_favorable_time(planet: str, time: datetime) -> bool:
     hour = time.hour
     
     favorable_hours = {
-        'Sun': [6, 7, 8, 9, 10, 11, 12, 13],  # Утро и полдень
-        'Moon': [18, 19, 20, 21, 22],         # Вечер
-        'Mars': [6, 7, 8, 14, 15, 16],        # Утро и послеполуденное время
-        'Mercury': [9, 10, 11, 15, 16, 17],   # Середина утра и после обеда
-        'Jupiter': [6, 7, 8, 9, 10, 11],      # Утренние часы
-        'Venus': [16, 17, 18, 19, 20],        # Вечерние часы  
-        'Saturn': [14, 15, 16, 17]            # Послеполуденное время
+        'Surya': [6, 7, 8, 9, 10, 11, 12, 13],  # Утро и полдень
+        'Chandra': [18, 19, 20, 21, 22],         # Вечер
+        'Mangal': [6, 7, 8, 14, 15, 16],        # Утро и послеполуденное время
+        'Budh': [9, 10, 11, 15, 16, 17],   # Середина утра и после обеда
+        'Guru': [6, 7, 8, 9, 10, 11],      # Утренние часы
+        'Shukra': [16, 17, 18, 19, 20],        # Вечерние часы  
+        'Shani': [14, 15, 16, 17]            # Послеполуденное время
     }
     
     return hour in favorable_hours.get(planet, [])
@@ -348,7 +348,7 @@ def get_vedic_day_schedule(city: str, date: datetime, birth_date: str = None) ->
             "date": date.strftime("%Y-%m-%d"),
             "weekday": {
                 "name": sanskrit_days[weekday],
-                "ruling_planet": get_planet_sanskrit(['Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn', 'Sun'][weekday])
+                "ruling_planet": get_planet_sanskrit(['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya'][weekday])
             },
             "sun_times": {
                 "sunrise": sunrise.strftime("%H:%M"),
@@ -404,48 +404,48 @@ def get_daily_recommendations(weekday: int, planetary_hours: List[Dict], birth_d
     """
     Генерирует персональные рекомендации на день
     """
-    day_planets = ['Moon', 'Mars', 'Mercury', 'Jupiter', 'Venus', 'Saturn', 'Sun']
+    day_planets = ['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya']
     ruling_planet = day_planets[weekday]
     
     # Общие рекомендации по дню недели
     day_recommendations = {
-        'Sun': {
+        'Surya': {
             'activities': ['Лидерство', 'Принятие важных решений', 'Публичные выступления', 'Работа с властью'],
             'avoid': ['Споры с начальством', 'Эгоистичные поступки'],
             'colors': ['Золотой', 'Оранжевый', 'Красный'],
             'gems': ['Рубин', 'Гранат']
         },
-        'Moon': {
+        'Chandra': {
             'activities': ['Семейные дела', 'Забота о близких', 'Интуитивные решения', 'Творчество'],
             'avoid': ['Конфликты в семье', 'Важные финансовые решения'],
             'colors': ['Белый', 'Серебристый', 'Молочный'],
             'gems': ['Жемчуг', 'Лунный камень']
         },
-        'Mars': {
+        'Mangal': {
             'activities': ['Спорт', 'Активные действия', 'Решение проблем', 'Защита интересов'],
             'avoid': ['Агрессивное поведение', 'Конфликты'],
             'colors': ['Красный', 'Алый'],
             'gems': ['Коралл', 'Красная яшма']
         },
-        'Mercury': {
+        'Budh': {
             'activities': ['Обучение', 'Коммуникации', 'Торговля', 'Путешествия'],
             'avoid': ['Обман', 'Поверхностные суждения'],
             'colors': ['Зеленый', 'Изумрудный'],
             'gems': ['Изумруд', 'Зеленый турмалин']
         },
-        'Jupiter': {
+        'Guru': {
             'activities': ['Духовная практика', 'Образование', 'Благотворительность', 'Мудрые советы'],
             'avoid': ['Материализм', 'Невежество'],
             'colors': ['Желтый', 'Золотистый'],
             'gems': ['Желтый сапфир', 'Топаз']
         },
-        'Venus': {
+        'Shukra': {
             'activities': ['Искусство', 'Красота', 'Романтика', 'Финансы'],
             'avoid': ['Излишества', 'Поверхностность'],
             'colors': ['Розовый', 'Белый', 'Пастельные тона'],
             'gems': ['Алмаз', 'Белый сапфир']
         },
-        'Saturn': {
+        'Shani': {
             'activities': ['Планирование', 'Дисциплина', 'Упорный труд', 'Структурирование'],
             'avoid': ['Лень', 'Откладывание дел'],
             'colors': ['Синий', 'Черный', 'Фиолетовый'],
@@ -478,13 +478,13 @@ def get_daily_recommendations(weekday: int, planetary_hours: List[Dict], birth_d
 def get_planet_mantra(planet: str) -> str:
     """Возвращает мантру планеты"""
     mantras = {
-        'Sun': 'ॐ सूर्याय नमः (Om Suryaya Namaha)',
-        'Moon': 'ॐ चन्द्राय नमः (Om Chandraya Namaha)',
-        'Mars': 'ॐ मंगलाय नमः (Om Mangalaya Namaha)', 
-        'Mercury': 'ॐ बुधाय नमः (Om Budhaya Namaha)',
-        'Jupiter': 'ॐ गुरवे नमः (Om Gurave Namaha)',
-        'Venus': 'ॐ शुक्राय नमः (Om Shukraya Namaha)',
-        'Saturn': 'ॐ शनैश्चराय नमः (Om Shanaishcharaya Namaha)'
+        'Surya': 'ॐ सूर्याय नमः (Om Suryaya Namaha)',
+        'Chandra': 'ॐ चन्द्राय नमः (Om Chandraya Namaha)',
+        'Mangal': 'ॐ मंगलाय नमः (Om Mangalaya Namaha)', 
+        'Budh': 'ॐ बुधाय नमः (Om Budhaya Namaha)',
+        'Guru': 'ॐ गुरवे नमः (Om Gurave Namaha)',
+        'Shukra': 'ॐ शुक्राय नमः (Om Shukraya Namaha)',
+        'Shani': 'ॐ शनैश्चराय नमः (Om Shanaishcharaya Namaha)'
     }
     return mantras.get(planet, 'ॐ (Om)')
 

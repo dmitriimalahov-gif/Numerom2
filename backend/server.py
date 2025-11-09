@@ -917,15 +917,15 @@ async def get_planetary_hour_advice(
             
             # Маппинг цифр на планеты
             planet_digit_map = {
-                "Sun": "1",
-                "Moon": "2",
-                "Jupiter": "3",
+                "Surya": "1",
+                "Chandra": "2",
+                "Guru": "3",
                 "Rahu": "4",
-                "Mercury": "5",
-                "Venus": "6",
+                "Budh": "5",
+                "Shukra": "6",
                 "Ketu": "7",
-                "Saturn": "8",
-                "Mars": "9"
+                "Shani": "8",
+                "Mangal": "9"
             }
             
             for planet_name, digit in planet_digit_map.items():

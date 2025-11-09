@@ -53,7 +53,7 @@ async def init_planetary_advice_collection(db: AsyncIOMotorDatabase):
     # Базовые советы для каждой планеты
     base_advice = [
         {
-            "planet": "Sun",
+            "planet": "Surya",
             "planet_sanskrit": "Сурья (सूर्य)",
             "general_advice": "Время Солнца благоприятно для лидерства, важных решений и работы с властью. Солнце дает уверенность, силу воли и авторитет.",
             "activities": [
@@ -131,7 +131,7 @@ async def init_planetary_advice_collection(db: AsyncIOMotorDatabase):
             "night_hour_advice": "Ночной час Солнца - время для планирования завтрашних достижений и восстановления сил."
         },
         {
-            "planet": "Moon",
+            "planet": "Chandra",
             "planet_sanskrit": "Чандра (चन्द्र)",
             "general_advice": "Время Луны идеально для эмоциональных дел, семьи и интуиции. Луна управляет умом, эмоциями и материнской энергией.",
             "activities": [
@@ -210,7 +210,7 @@ async def init_planetary_advice_collection(db: AsyncIOMotorDatabase):
         },
         # Добавим остальные планеты...
         {
-            "planet": "Mars",
+            "planet": "Mangal",
             "planet_sanskrit": "Мангал (मंगल)",
             "general_advice": "Время Марса дает энергию для действий, спорта и преодоления препятствий. Марс управляет силой, храбростью и решительностью.",
             "activities": [
@@ -288,7 +288,7 @@ async def init_planetary_advice_collection(db: AsyncIOMotorDatabase):
             "night_hour_advice": "Ночной час Марса - планируйте завтрашние победы."
         },
         {
-            "planet": "Mercury",
+            "planet": "Budh",
             "planet_sanskrit": "Будха (बुध)",
             "general_advice": "Время Меркурия благоприятно для общения, обучения и торговли. Меркурий управляет интеллектом, коммуникацией и бизнесом.",
             "activities": [
@@ -366,7 +366,7 @@ async def init_planetary_advice_collection(db: AsyncIOMotorDatabase):
             "night_hour_advice": "Ночной час Меркурия - время для чтения и обработки информации."
         },
         {
-            "planet": "Jupiter",
+            "planet": "Guru",
             "planet_sanskrit": "Гуру (गुरु)",
             "general_advice": "Время Юпитера идеально для духовных практик, обучения и благотворительности. Юпитер управляет мудростью, удачей и экспансией.",
             "activities": [
@@ -444,7 +444,7 @@ async def init_planetary_advice_collection(db: AsyncIOMotorDatabase):
             "night_hour_advice": "Ночной час Юпитера - время для медитации и философских размышлений."
         },
         {
-            "planet": "Venus",
+            "planet": "Shukra",
             "planet_sanskrit": "Шукра (शुक्र)",
             "general_advice": "Время Венеры благоприятно для любви, творчества и красоты. Венера управляет отношениями, искусством и материальными удовольствиями.",
             "activities": [
@@ -522,7 +522,7 @@ async def init_planetary_advice_collection(db: AsyncIOMotorDatabase):
             "night_hour_advice": "Ночной час Венеры - время для любви и наслаждения красотой."
         },
         {
-            "planet": "Saturn",
+            "planet": "Shani",
             "planet_sanskrit": "Шани (शनि)",
             "general_advice": "Время Сатурна требует дисциплины, терпения и работы над долгосрочными целями. Сатурн управляет кармой, дисциплиной и ограничениями.",
             "activities": [
