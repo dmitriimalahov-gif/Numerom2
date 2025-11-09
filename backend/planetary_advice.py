@@ -4,6 +4,7 @@
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from planetary_advice_extended import get_advanced_personalized_advice, get_compatibility_advice
 
 
 # Структура данных для советов
@@ -799,85 +800,61 @@ async def get_personalized_planetary_advice(
         "personalized_notes": []
     }
     
-    # Добавляем персонализацию по числу души
-    if "soul_number" in user_data and user_data["soul_number"]:
-        soul_num = user_data["soul_number"]
-        if soul_num in base_advice.get("soul_number_advice", {}):
+    # Извлекаем данные пользователя
+    soul_num = user_data.get("soul_number")
+    destiny_num = user_data.get("destiny_number")
+    mind_num = user_data.get("mind_number")
+    ruling_num = user_data.get("ruling_number")
+    planet_counts = user_data.get("planet_counts", {})
+    planet_count = planet_counts.get(planet, 0)
+    
+    # Получаем информацию о дне недели
+    birth_weekday = -1
+    current_weekday = datetime.now().weekday()
+    
+    if "birth_date" in user_data and user_data["birth_date"]:
+        try:
+            birth_date = datetime.fromisoformat(str(user_data["birth_date"]))
+            birth_weekday = birth_date.weekday()
+        except:
+            pass
+    
+    # === ИСПОЛЬЗУЕМ РАСШИРЕННУЮ СИСТЕМУ АНАЛИЗА ===
+    if soul_num and destiny_num and mind_num and ruling_num:
+        advanced_notes = get_advanced_personalized_advice(
+            planet=planet,
+            soul_num=soul_num,
+            destiny_num=destiny_num,
+            mind_num=mind_num,
+            ruling_num=ruling_num,
+            planet_count=planet_count,
+            birth_weekday=birth_weekday,
+            current_weekday=current_weekday,
+            is_night=is_night
+        )
+        
+        # Добавляем расширенные заметки
+        response["personalized_notes"].extend(advanced_notes)
+        
+        # Добавляем анализ совместимости
+        compatibility = get_compatibility_advice(planet, soul_num, destiny_num)
+        if compatibility:
+            response["personalized_notes"].append({
+                "type": "compatibility",
+                "title": "🤝 Совместимость планет",
+                "advice": compatibility
+            })
+    
+    # Если расширенный анализ не сработал, используем базовые советы
+    if not response["personalized_notes"]:
+        # Добавляем персонализацию по числу души
+        if soul_num and soul_num in base_advice.get("soul_number_advice", {}):
             response["personalized_notes"].append({
                 "type": "soul_number",
                 "title": f"Для вашего числа души ({soul_num})",
                 "advice": base_advice["soul_number_advice"][soul_num]
             })
     
-    # Добавляем персонализацию по числу судьбы
-    if "destiny_number" in user_data and user_data["destiny_number"]:
-        destiny_num = user_data["destiny_number"]
-        if destiny_num in base_advice.get("destiny_number_advice", {}):
-            response["personalized_notes"].append({
-                "type": "destiny_number",
-                "title": f"Для вашего числа судьбы ({destiny_num})",
-                "advice": base_advice["destiny_number_advice"][destiny_num]
-            })
-    
-    # Добавляем персонализацию по числу ума
-    if "mind_number" in user_data and user_data["mind_number"]:
-        mind_num = user_data["mind_number"]
-        if mind_num in base_advice.get("mind_number_advice", {}):
-            response["personalized_notes"].append({
-                "type": "mind_number",
-                "title": f"Для вашего числа ума ({mind_num})",
-                "advice": base_advice["mind_number_advice"][mind_num]
-            })
-    
-    # Добавляем персонализацию по правящему числу
-    if "ruling_number" in user_data and user_data["ruling_number"]:
-        ruling_num = user_data["ruling_number"]
-        if ruling_num in base_advice.get("ruling_number_advice", {}):
-            response["personalized_notes"].append({
-                "type": "ruling_number",
-                "title": f"Для вашего правящего числа ({ruling_num})",
-                "advice": base_advice["ruling_number_advice"][ruling_num]
-            })
-    
-    # Добавляем персонализацию по дню недели рождения
-    if "birth_date" in user_data and user_data["birth_date"]:
-        try:
-            birth_date = datetime.fromisoformat(str(user_data["birth_date"]))
-            birth_weekday = birth_date.weekday()
-            current_weekday = datetime.now().weekday()
-            
-            if birth_weekday in base_advice.get("birth_day_advice", {}):
-                response["personalized_notes"].append({
-                    "type": "birth_day",
-                    "title": "День недели рождения",
-                    "advice": base_advice["birth_day_advice"][birth_weekday]
-                })
-            
-            # Особая заметка если сегодня день недели рождения
-            if birth_weekday == current_weekday:
-                response["personalized_notes"].insert(0, {
-                    "type": "special",
-                    "title": "🌟 ОСОБЫЙ ДЕНЬ!",
-                    "advice": f"Сегодня ваш день недели рождения! Энергия {base_advice['planet_sanskrit']} особенно сильна для вас."
-                })
-        except:
-            pass
-    
-    # Добавляем персонализацию по силе планет в квадрате Пифагора
-    if "planet_counts" in user_data:
-        planet_count = user_data["planet_counts"].get(planet, 0)
-        if planet_count <= 1:
-            response["personalized_notes"].append({
-                "type": "weak_planet",
-                "title": "⚠️ Слабая планета в вашем квадрате",
-                "advice": base_advice.get("weak_planet_advice", "")
-            })
-        elif planet_count >= 5:
-            response["personalized_notes"].append({
-                "type": "strong_planet",
-                "title": "💪 Сильная планета в вашем квадрате",
-                "advice": base_advice.get("strong_planet_advice", "")
-            })
     
     # Добавляем совет в зависимости от времени суток
     if is_night:
