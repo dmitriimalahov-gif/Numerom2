@@ -5,7 +5,8 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Calendar, CalendarDays, Clock, TrendingUp, AlertTriangle, CheckCircle, Sparkles, Activity, Target } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { Calendar, CalendarDays, Clock, TrendingUp, AlertTriangle, CheckCircle, Sparkles, Activity, Target, Info, X } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { getApiBaseUrl } from '../utils/backendUrl';
 import { useTheme } from '../hooks/useTheme';
@@ -43,6 +44,8 @@ const PlanetaryDailyRoute = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [activeTab, setActiveTab] = useState('daily');
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [modalData, setModalData] = useState(null);
   const { user } = useAuth();
   const apiBaseUrl = getApiBaseUrl();
 
@@ -279,9 +282,19 @@ const PlanetaryDailyRoute = () => {
                       {route.day_analysis.overall_score}
                     </div>
                   </div>
-                  <p className={`text-base ${themeConfig.text}`}>
+                  <p className={`text-base ${themeConfig.text} mb-4`}>
                     {route.day_analysis.overall_description}
                   </p>
+                  <Button
+                    onClick={() => {
+                      setModalData(route.day_analysis);
+                      setShowDetailsModal(true);
+                    }}
+                    className="mt-2 w-full bg-indigo-500 hover:bg-indigo-600 text-white"
+                  >
+                    <Info className="w-4 h-4 mr-2" />
+                    Подробная расшифровка
+                  </Button>
                 </div>
 
                 {/* Детали анализа */}
@@ -1071,6 +1084,285 @@ const PlanetaryDailyRoute = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* Модальное окно с детальной расшифровкой */}
+      <Dialog open={showDetailsModal} onOpenChange={setShowDetailsModal}>
+        <DialogContent className={`max-w-4xl max-h-[90vh] overflow-y-auto ${themeConfig.card}`}>
+          <DialogHeader>
+            <DialogTitle className={`text-2xl font-bold ${themeConfig.text} flex items-center gap-2`}>
+              <Sparkles className="w-6 h-6" />
+              Детальная расшифровка планетарного анализа
+            </DialogTitle>
+            <DialogDescription className={themeConfig.mutedText}>
+              Полный анализ совместимости дня с вашей личной нумерологической картой
+            </DialogDescription>
+          </DialogHeader>
+
+          {modalData && (
+            <div className="space-y-6 mt-4">
+              {/* Общая оценка */}
+              <div className={`p-6 rounded-xl border-2 ${
+                modalData.overall_score >= 80 ? getColorClasses('green').bg + ' ' + getColorClasses('green').border :
+                modalData.overall_score >= 65 ? getColorClasses('green').bg + ' ' + getColorClasses('green').border :
+                modalData.overall_score >= 50 ? getColorClasses('blue').bg + ' ' + getColorClasses('blue').border :
+                modalData.overall_score >= 35 ? getColorClasses('gray').bg + ' ' + getColorClasses('gray').border :
+                getColorClasses('red').bg + ' ' + getColorClasses('red').border
+              }`}>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className={`text-3xl font-bold ${themeConfig.text}`}>
+                      {modalData.overall_rating} день
+                    </h3>
+                    <p className={`text-lg ${themeConfig.mutedText} mt-2`}>
+                      Оценка совместимости: {modalData.overall_score}/100
+                    </p>
+                  </div>
+                  <div className={`text-6xl font-bold ${
+                    modalData.overall_score >= 65 ? getColorClasses('green').text :
+                    modalData.overall_score >= 50 ? getColorClasses('blue').text :
+                    modalData.overall_score >= 35 ? getColorClasses('gray').text :
+                    getColorClasses('red').text
+                  }`}>
+                    {modalData.overall_score}
+                  </div>
+                </div>
+                <p className={`text-lg ${themeConfig.text}`}>
+                  {modalData.overall_description}
+                </p>
+              </div>
+
+              {/* Ваши личные числа */}
+              {modalData.user_planets && (
+                <div className={`p-6 rounded-lg ${themeConfig.surface}`}>
+                  <h4 className={`text-xl font-bold ${themeConfig.text} mb-4 flex items-center gap-2`}>
+                    <Target className="w-5 h-5" />
+                    Ваши личные числа
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-purple-500/20' : 'bg-purple-50'}`}>
+                      <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Число Души</div>
+                      <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-purple-300' : 'text-purple-700'}`}>
+                        {modalData.user_planets.soul.number}
+                      </div>
+                      {modalData.user_planets.soul.planet && (
+                        <div className={`text-sm ${themeConfig.mutedText} mt-1`}>
+                          Планета: {modalData.user_planets.soul.planet}
+                        </div>
+                      )}
+                    </div>
+                    <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-indigo-500/20' : 'bg-indigo-50'}`}>
+                      <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Число Судьбы</div>
+                      <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                        {modalData.user_planets.destiny.number}
+                      </div>
+                      {modalData.user_planets.destiny.planet && (
+                        <div className={`text-sm ${themeConfig.mutedText} mt-1`}>
+                          Планета: {modalData.user_planets.destiny.planet}
+                        </div>
+                      )}
+                    </div>
+                    <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-cyan-500/20' : 'bg-cyan-50'}`}>
+                      <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Число Ума</div>
+                      <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-cyan-300' : 'text-cyan-700'}`}>
+                        {modalData.user_planets.mind.number}
+                      </div>
+                      {modalData.user_planets.mind.planet && (
+                        <div className={`text-sm ${themeConfig.mutedText} mt-1`}>
+                          Планета: {modalData.user_planets.mind.planet}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Планета дня */}
+              <div className={`p-6 rounded-lg ${themeConfig.surface}`}>
+                <h4 className={`text-xl font-bold ${themeConfig.text} mb-4`}>
+                  Планета дня
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-orange-500/20' : 'bg-orange-50'}`}>
+                    <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Управляющая планета</div>
+                    <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-orange-300' : 'text-orange-700'}`}>
+                      {modalData.ruling_planet}
+                    </div>
+                  </div>
+                  <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-amber-500/20' : 'bg-amber-50'}`}>
+                    <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Число планеты</div>
+                    <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-amber-300' : 'text-amber-700'}`}>
+                      {modalData.ruling_number}
+                    </div>
+                  </div>
+                  <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-teal-500/20' : 'bg-teal-50'}`}>
+                    <div className={`text-sm ${themeConfig.mutedText} mb-1`}>Сила в вашей карте</div>
+                    <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-teal-300' : 'text-teal-700'}`}>
+                      {modalData.planet_strength}
+                      {modalData.planet_strength >= 4 && ' 💪'}
+                      {modalData.planet_strength === 0 && ' ⚠️'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Ваше окружение */}
+              {modalData.user_environment && (
+                <div className={`p-6 rounded-lg ${themeConfig.surface}`}>
+                  <h4 className={`text-xl font-bold ${themeConfig.text} mb-4 flex items-center gap-2`}>
+                    <Activity className="w-5 h-5" />
+                    Влияние вашего окружения
+                  </h4>
+                  <div className="space-y-4">
+                    {modalData.user_environment.name && modalData.user_environment.name.text && (
+                      <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-pink-500/20' : 'bg-pink-50'} border-l-4 ${themeConfig.isDark ? 'border-pink-500' : 'border-pink-400'}`}>
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <div className={`text-sm ${themeConfig.mutedText} mb-1`}>📝 Ваше имя</div>
+                            <div className={`font-semibold ${themeConfig.text}`}>{modalData.user_environment.name.text}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-pink-300' : 'text-pink-700'}`}>
+                              {modalData.user_environment.name.number}
+                            </div>
+                            {modalData.user_environment.name.planet && (
+                              <div className={`text-sm ${themeConfig.mutedText}`}>
+                                {modalData.user_environment.name.planet}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {modalData.user_environment.address && modalData.user_environment.address.text && (
+                      <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-emerald-500/20' : 'bg-emerald-50'} border-l-4 ${themeConfig.isDark ? 'border-emerald-500' : 'border-emerald-400'}`}>
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <div className={`text-sm ${themeConfig.mutedText} mb-1`}>🏠 Ваш адрес</div>
+                            <div className={`font-semibold ${themeConfig.text}`}>{modalData.user_environment.address.text}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
+                              {modalData.user_environment.address.number}
+                            </div>
+                            {modalData.user_environment.address.planet && (
+                              <div className={`text-sm ${themeConfig.mutedText}`}>
+                                {modalData.user_environment.address.planet}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {modalData.user_environment.car && modalData.user_environment.car.text && (
+                      <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-sky-500/20' : 'bg-sky-50'} border-l-4 ${themeConfig.isDark ? 'border-sky-500' : 'border-sky-400'}`}>
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <div className={`text-sm ${themeConfig.mutedText} mb-1`}>🚗 Ваш автомобиль</div>
+                            <div className={`font-semibold ${themeConfig.text}`}>{modalData.user_environment.car.text}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className={`text-2xl font-bold ${themeConfig.isDark ? 'text-sky-300' : 'text-sky-700'}`}>
+                              {modalData.user_environment.car.number}
+                            </div>
+                            {modalData.user_environment.car.planet && (
+                              <div className={`text-sm ${themeConfig.mutedText}`}>
+                                {modalData.user_environment.car.planet}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className={`mt-4 p-3 rounded-lg ${themeConfig.isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                    <p className={`text-sm ${themeConfig.mutedText}`}>
+                      💡 Эти элементы вашего окружения также влияют на совместимость дня и учитываются в общей оценке
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Детальный анализ совместимости */}
+              {modalData.compatibility_notes && modalData.compatibility_notes.length > 0 && (
+                <div className={`p-6 rounded-lg ${themeConfig.surface}`}>
+                  <h4 className={`text-xl font-bold ${themeConfig.text} mb-4 flex items-center gap-2`}>
+                    <CheckCircle className="w-5 h-5" />
+                    Ключевые факторы совместимости
+                  </h4>
+                  <div className="space-y-3">
+                    {modalData.compatibility_notes.map((note, idx) => (
+                      <div 
+                        key={idx} 
+                        className={`p-4 rounded-lg border-l-4 ${
+                          note.includes('ИДЕАЛЬНЫЙ') || note.includes('🌟') 
+                            ? themeConfig.isDark 
+                              ? 'bg-green-500/20 border-green-500' 
+                              : 'bg-green-50 border-green-500'
+                            : note.includes('дружественна') || note.includes('✨')
+                              ? themeConfig.isDark
+                                ? 'bg-blue-500/20 border-blue-500'
+                                : 'bg-blue-50 border-blue-500'
+                              : note.includes('враждебна') || note.includes('⚠️')
+                                ? themeConfig.isDark
+                                  ? 'bg-red-500/20 border-red-500'
+                                  : 'bg-red-50 border-red-500'
+                                : themeConfig.isDark
+                                  ? 'bg-white/5 border-white/20'
+                                  : 'bg-gray-50 border-gray-300'
+                        }`}
+                      >
+                        <p className={`${themeConfig.text} text-base leading-relaxed`}>
+                          {note}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Рекомендации */}
+              <div className={`p-6 rounded-lg ${themeConfig.isDark ? 'bg-indigo-500/20' : 'bg-indigo-50'} border-2 ${themeConfig.isDark ? 'border-indigo-500/40' : 'border-indigo-200'}`}>
+                <h4 className={`text-xl font-bold ${themeConfig.isDark ? 'text-indigo-300' : 'text-indigo-700'} mb-3`}>
+                  💡 Рекомендации на день
+                </h4>
+                <div className={`space-y-2 ${themeConfig.text}`}>
+                  {modalData.overall_score >= 65 && (
+                    <>
+                      <p>✓ Используйте этот день для важных начинаний и решений</p>
+                      <p>✓ Ваша энергия находится на пике - действуйте уверенно</p>
+                      <p>✓ Медитируйте на мантру планеты {modalData.ruling_planet} для усиления эффекта</p>
+                    </>
+                  )}
+                  {modalData.overall_score >= 50 && modalData.overall_score < 65 && (
+                    <>
+                      <p>✓ Хороший день для повседневных дел и планирования</p>
+                      <p>✓ Следуйте интуиции и будьте внимательны к деталям</p>
+                      <p>✓ Избегайте рискованных решений</p>
+                    </>
+                  )}
+                  {modalData.overall_score < 50 && modalData.overall_score >= 35 && (
+                    <>
+                      <p>⚠️ Сосредоточьтесь на рутинных задачах</p>
+                      <p>⚠️ Отложите важные решения на более благоприятное время</p>
+                      <p>⚠️ Уделите время отдыху и восстановлению сил</p>
+                    </>
+                  )}
+                  {modalData.overall_score < 35 && (
+                    <>
+                      <p>⚠️ День для внутренней работы и саморазвития</p>
+                      <p>⚠️ Работайте над развитием энергии {modalData.ruling_planet}</p>
+                      <p>⚠️ Практикуйте мантры и медитации</p>
+                      <p>⚠️ Избегайте конфликтов и стрессовых ситуаций</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

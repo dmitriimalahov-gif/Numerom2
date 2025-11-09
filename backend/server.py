@@ -722,7 +722,7 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
         await record_credit_transaction(user_id, CREDIT_COSTS['planetary_daily'], 'Возврат за ошибку планетарного маршрута', 'refund')
         await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': CREDIT_COSTS['planetary_daily']}})
         raise HTTPException(status_code=400, detail=schedule['error'])
-    
+        
     # Получаем нумерологические данные пользователя
     user_data = await get_user_numerology_data(user_id)
     
@@ -903,7 +903,7 @@ async def get_planetary_hour_advice(
                 # Формат YYYY-MM-DD
                 birth_date_obj = datetime.fromisoformat(birth_date_str)
                 day, month, year = birth_date_obj.day, birth_date_obj.month, birth_date_obj.year
-            else:
+    else:
                 # Пробуем ISO формат
                 birth_date_obj = datetime.fromisoformat(birth_date_str)
                 day, month, year = birth_date_obj.day, birth_date_obj.month, birth_date_obj.year
@@ -1000,7 +1000,7 @@ async def get_planetary_hour_advice(
             # Сохраняем дату рождения в user_data для дальнейшего анализа
             user_data["birth_date"] = birth_date_obj
                 
-        except Exception as e:
+    except Exception as e:
             print(f"❌ Ошибка при вычислении чисел: {e}")
             import traceback
             traceback.print_exc()
@@ -1940,6 +1940,33 @@ async def delete_material(material_id: str, current_user: dict = Depends(get_cur
 
 # ========== Вспомогательные функции для планетарного маршрута ==========
 
+def calculate_string_number(text: str) -> int:
+    """Вычисляет нумерологическое число из текста (имя, адрес, номер авто)"""
+    if not text:
+        return 0
+    
+    # Таблица соответствия букв и цифр (ведическая нумерология)
+    letter_values = {
+        'А': 1, 'И': 1, 'С': 1, 'Ъ': 1, 'A': 1, 'I': 1, 'J': 1, 'Q': 1, 'Y': 1,
+        'Б': 2, 'Й': 2, 'Т': 2, 'Ы': 2, 'B': 2, 'K': 2, 'R': 2,
+        'В': 3, 'К': 3, 'У': 3, 'Ь': 3, 'C': 3, 'G': 3, 'L': 3, 'S': 3,
+        'Г': 4, 'Л': 4, 'Ф': 4, 'Э': 4, 'D': 4, 'M': 4, 'T': 4,
+        'Д': 5, 'М': 5, 'Х': 5, 'Ю': 5, 'E': 5, 'H': 5, 'N': 5, 'X': 5,
+        'Е': 6, 'Н': 6, 'Ц': 6, 'Я': 6, 'U': 6, 'V': 6, 'W': 6,
+        'Ё': 7, 'О': 7, 'Ч': 7, 'F': 7, 'O': 7, 'Z': 7,
+        'Ж': 8, 'П': 8, 'Ш': 8, 'P': 8,
+        'З': 9, 'Р': 9, 'Щ': 9
+    }
+    
+    total = 0
+    for char in text.upper():
+        if char.isdigit():
+            total += int(char)
+        elif char in letter_values:
+            total += letter_values[char]
+    
+    return reduce_to_single_digit(total) if total > 0 else 0
+
 async def get_user_numerology_data(user_id: str) -> dict:
     """Получает все нумерологические данные пользователя"""
     user_dict = await db.users.find_one({'id': user_id})
@@ -2000,6 +2027,21 @@ async def get_user_numerology_data(user_id: str) -> dict:
     for planet, digit in planet_digit_map.items():
         planet_counts[planet] = all_digits.count(digit)
     
+    # Вычисляем числа из имени, адреса и автомобиля
+    name_number = calculate_string_number(user.full_name)
+    
+    # Полный адрес
+    full_address = f"{user.street or ''} {user.house_number or ''} {user.apartment_number or ''}"
+    address_number = calculate_string_number(full_address.strip())
+    
+    car_number = calculate_string_number(user.car_number or '')
+    
+    # Определяем планеты для имени, адреса и автомобиля
+    number_to_planet = {v: k for k, v in planet_digit_map.items()}
+    name_planet = number_to_planet.get(name_number)
+    address_planet = number_to_planet.get(address_number)
+    car_planet = number_to_planet.get(car_number)
+    
     return {
         'soul_number': soul_number,
         'destiny_number': destiny_number,
@@ -2008,11 +2050,34 @@ async def get_user_numerology_data(user_id: str) -> dict:
         'wisdom_number': fourth_working,
         'ruling_number': reduce_to_single_digit(soul_number + destiny_number),
         'planet_counts': planet_counts,
-        'birth_date': birth_date_obj
+        'birth_date': birth_date_obj,
+        # Дополнительные данные
+        'name_number': name_number,
+        'name_planet': name_planet,
+        'address_number': address_number,
+        'address_planet': address_planet,
+        'car_number': car_number,
+        'car_planet': car_planet,
+        'full_name': user.full_name,
+        'full_address': full_address.strip(),
+        'car_plate': user.car_number or ''
     }
 
 def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dict) -> dict:
     """Анализирует совместимость дня с личными числами пользователя"""
+    
+    # Дружественность планет (ведическая нумерология)
+    planet_friendships = {
+        'Surya': {'friends': ['Chandra', 'Mangal', 'Guru'], 'enemies': ['Shukra', 'Shani'], 'neutral': ['Budh']},
+        'Chandra': {'friends': ['Surya', 'Budh'], 'enemies': [], 'neutral': ['Mangal', 'Guru', 'Shukra', 'Shani']},
+        'Mangal': {'friends': ['Surya', 'Chandra', 'Guru'], 'enemies': ['Budh'], 'neutral': ['Shukra', 'Shani']},
+        'Budh': {'friends': ['Surya', 'Shukra'], 'enemies': ['Chandra'], 'neutral': ['Mangal', 'Guru', 'Shani']},
+        'Guru': {'friends': ['Surya', 'Chandra', 'Mangal'], 'enemies': ['Budh', 'Shukra'], 'neutral': ['Shani']},
+        'Shukra': {'friends': ['Budh', 'Shani'], 'enemies': ['Surya', 'Chandra'], 'neutral': ['Mangal', 'Guru']},
+        'Shani': {'friends': ['Budh', 'Shukra', 'Rahu'], 'enemies': ['Surya', 'Chandra', 'Mangal'], 'neutral': ['Guru']},
+        'Rahu': {'friends': ['Budh', 'Shukra', 'Shani'], 'enemies': ['Surya', 'Chandra', 'Mangal'], 'neutral': ['Guru']},
+        'Ketu': {'friends': ['Mangal', 'Guru'], 'enemies': ['Surya', 'Chandra', 'Budh'], 'neutral': ['Shukra', 'Shani']}
+    }
     
     # Число дня
     day_number = reduce_to_single_digit(date_obj.day)
@@ -2030,68 +2095,178 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
         'Surya': 1, 'Chandra': 2, 'Guru': 3, 'Rahu': 4,
         'Budh': 5, 'Shukra': 6, 'Ketu': 7, 'Shani': 8, 'Mangal': 9
     }
+    number_to_planet = {v: k for k, v in planet_to_number.items()}
     
     ruling_number = planet_to_number.get(ruling_planet, 0)
     
     # Анализ совместимости
-    compatibility_score = 0
+    compatibility_score = 50  # Базовый нейтральный балл
     compatibility_notes = []
+    detailed_analysis = {}
     
-    # Совместимость с числом души
+    # 1. Совместимость с числом души (самое важное)
+    soul_planet = number_to_planet.get(soul_number)
     if soul_number == ruling_number:
-        compatibility_score += 30
-        compatibility_notes.append(f"Планета дня ({ruling_planet}) резонирует с вашим числом души ({soul_number})")
-    elif soul_number == day_number:
+        compatibility_score += 35
+        compatibility_notes.append(f"🌟 ИДЕАЛЬНЫЙ РЕЗОНАНС! Планета дня ({ruling_planet}) полностью совпадает с вашим числом души ({soul_number})")
+        detailed_analysis['soul_match'] = 'perfect'
+    elif soul_planet and ruling_planet in planet_friendships.get(soul_planet, {}).get('friends', []):
         compatibility_score += 20
-        compatibility_notes.append(f"Число дня ({day_number}) совпадает с вашим числом души")
+        compatibility_notes.append(f"✨ Планета дня ({ruling_planet}) дружественна вашему числу души ({soul_number} - {soul_planet})")
+        detailed_analysis['soul_match'] = 'friendly'
+    elif soul_planet and ruling_planet in planet_friendships.get(soul_planet, {}).get('enemies', []):
+        compatibility_score -= 15
+        compatibility_notes.append(f"⚠️ Планета дня ({ruling_planet}) враждебна вашему числу души ({soul_number} - {soul_planet})")
+        detailed_analysis['soul_match'] = 'hostile'
+    else:
+        detailed_analysis['soul_match'] = 'neutral'
     
-    # Совместимость с числом судьбы
+    # 2. Совместимость с числом судьбы
+    destiny_planet = number_to_planet.get(destiny_number)
     if destiny_number == ruling_number:
         compatibility_score += 25
-        compatibility_notes.append(f"Планета дня поддерживает ваше число судьбы ({destiny_number})")
-    elif destiny_number == day_number:
+        compatibility_notes.append(f"🎯 Планета дня резонирует с вашим числом судьбы ({destiny_number})")
+        detailed_analysis['destiny_match'] = 'perfect'
+    elif destiny_planet and ruling_planet in planet_friendships.get(destiny_planet, {}).get('friends', []):
         compatibility_score += 15
-        compatibility_notes.append(f"Число дня гармонирует с вашим числом судьбы")
+        compatibility_notes.append(f"Планета дня дружественна вашему числу судьбы ({destiny_number} - {destiny_planet})")
+        detailed_analysis['destiny_match'] = 'friendly'
+    elif destiny_planet and ruling_planet in planet_friendships.get(destiny_planet, {}).get('enemies', []):
+        compatibility_score -= 10
+        compatibility_notes.append(f"Планета дня создаёт напряжение с числом судьбы ({destiny_number} - {destiny_planet})")
+        detailed_analysis['destiny_match'] = 'hostile'
+    else:
+        detailed_analysis['destiny_match'] = 'neutral'
     
-    # Совместимость с числом ума
+    # 3. Совместимость с числом ума
+    mind_planet = number_to_planet.get(mind_number)
     if mind_number == ruling_number:
-        compatibility_score += 15
-        compatibility_notes.append(f"Планета дня усиливает ваше число ума ({mind_number})")
+        compatibility_score += 20
+        compatibility_notes.append(f"🧠 Планета дня усиливает ваше число ума ({mind_number})")
+        detailed_analysis['mind_match'] = 'perfect'
+    elif mind_planet and ruling_planet in planet_friendships.get(mind_planet, {}).get('friends', []):
+        compatibility_score += 10
+        compatibility_notes.append(f"Планета дня поддерживает ваш ум ({mind_number} - {mind_planet})")
+        detailed_analysis['mind_match'] = 'friendly'
+    else:
+        detailed_analysis['mind_match'] = 'neutral'
     
-    # Сила планеты в личной карте
+    # 4. Сила планеты в личной карте
     planet_counts = user_data.get('planet_counts', {})
     planet_strength = planet_counts.get(ruling_planet, 0)
     
-    if planet_strength > 3:
-        compatibility_score += 20
-        compatibility_notes.append(f"У вас сильная {ruling_planet} в карте ({planet_strength})")
-    elif planet_strength == 0:
-        compatibility_score -= 10
-        compatibility_notes.append(f"У вас отсутствует {ruling_planet} в карте - день может быть вызовом")
+    if planet_strength >= 4:
+        compatibility_score += 25
+        compatibility_notes.append(f"💪 У вас очень сильная {ruling_planet} в карте ({planet_strength} раз)")
+        detailed_analysis['planet_strength'] = 'very_strong'
+    elif planet_strength >= 2:
+        compatibility_score += 15
+        compatibility_notes.append(f"✓ У вас присутствует {ruling_planet} в карте ({planet_strength} раз)")
+        detailed_analysis['planet_strength'] = 'strong'
+    elif planet_strength == 1:
+        compatibility_score += 5
+        compatibility_notes.append(f"У вас слабая {ruling_planet} в карте ({planet_strength} раз)")
+        detailed_analysis['planet_strength'] = 'weak'
+    else:
+        compatibility_score -= 20
+        compatibility_notes.append(f"⚠️ У вас отсутствует {ruling_planet} в карте - день может быть вызовом для развития этой энергии")
+        detailed_analysis['planet_strength'] = 'absent'
+    
+    # 5. Совместимость с именем
+    name_planet = user_data.get('name_planet')
+    name_number = user_data.get('name_number', 0)
+    if name_planet == ruling_planet:
+        compatibility_score += 15
+        compatibility_notes.append(f"📝 Ваше имя ({name_number} - {name_planet}) резонирует с планетой дня!")
+        detailed_analysis['name_match'] = 'perfect'
+    elif name_planet and ruling_planet in planet_friendships.get(name_planet, {}).get('friends', []):
+        compatibility_score += 8
+        compatibility_notes.append(f"Ваше имя ({name_number} - {name_planet}) дружественно планете дня")
+        detailed_analysis['name_match'] = 'friendly'
+    elif name_planet and ruling_planet in planet_friendships.get(name_planet, {}).get('enemies', []):
+        compatibility_score -= 5
+        compatibility_notes.append(f"Ваше имя создаёт напряжение с планетой дня")
+        detailed_analysis['name_match'] = 'hostile'
+    else:
+        detailed_analysis['name_match'] = 'neutral'
+    
+    # 6. Совместимость с адресом
+    address_planet = user_data.get('address_planet')
+    address_number = user_data.get('address_number', 0)
+    if address_planet and address_planet == ruling_planet:
+        compatibility_score += 10
+        compatibility_notes.append(f"🏠 Ваш адрес ({address_number} - {address_planet}) гармонирует с планетой дня!")
+        detailed_analysis['address_match'] = 'perfect'
+    elif address_planet and ruling_planet in planet_friendships.get(address_planet, {}).get('friends', []):
+        compatibility_score += 5
+        compatibility_notes.append(f"Ваш адрес поддерживает энергию дня")
+        detailed_analysis['address_match'] = 'friendly'
+    elif address_planet and ruling_planet in planet_friendships.get(address_planet, {}).get('enemies', []):
+        compatibility_score -= 3
+        detailed_analysis['address_match'] = 'hostile'
+    else:
+        detailed_analysis['address_match'] = 'neutral'
+    
+    # 7. Совместимость с автомобилем
+    car_planet = user_data.get('car_planet')
+    car_number = user_data.get('car_number', 0)
+    if car_planet and car_planet == ruling_planet:
+        compatibility_score += 10
+        compatibility_notes.append(f"🚗 Номер вашего автомобиля ({car_number} - {car_planet}) усиливает день!")
+        detailed_analysis['car_match'] = 'perfect'
+    elif car_planet and ruling_planet in planet_friendships.get(car_planet, {}).get('friends', []):
+        compatibility_score += 5
+        compatibility_notes.append(f"Ваш автомобиль поддерживает энергию дня")
+        detailed_analysis['car_match'] = 'friendly'
+    elif car_planet and ruling_planet in planet_friendships.get(car_planet, {}).get('enemies', []):
+        compatibility_score -= 3
+        detailed_analysis['car_match'] = 'hostile'
+    else:
+        detailed_analysis['car_match'] = 'neutral'
     
     # Определяем общую оценку дня
-    if compatibility_score >= 60:
+    if compatibility_score >= 80:
+        overall_rating = "Превосходный"
+        overall_description = "Этот день ИДЕАЛЕН для вас! Максимальная гармония с вашей личной картой. Используйте его для самых важных дел!"
+        color_class = "green"
+    elif compatibility_score >= 65:
         overall_rating = "Отличный"
-        overall_description = "Этот день очень благоприятен для вас! Используйте его энергию по максимуму."
-    elif compatibility_score >= 40:
+        overall_description = "Очень благоприятный день! Высокая совместимость с вашими числами. Действуйте уверенно!"
+        color_class = "green"
+    elif compatibility_score >= 50:
         overall_rating = "Хороший"
         overall_description = "День обещает быть продуктивным. Следуйте рекомендациям для лучших результатов."
-    elif compatibility_score >= 20:
+        color_class = "blue"
+    elif compatibility_score >= 35:
         overall_rating = "Нейтральный"
         overall_description = "Обычный день. Будьте внимательны к деталям и избегайте рискованных решений."
+        color_class = "gray"
     else:
         overall_rating = "Сложный"
-        overall_description = "День может быть непростым. Сосредоточьтесь на рутинных задачах и отдыхе."
+        overall_description = "День может быть непростым. Сосредоточьтесь на рутинных задачах, отдыхе и внутренней работе."
+        color_class = "red"
     
     return {
         'overall_score': compatibility_score,
         'overall_rating': overall_rating,
         'overall_description': overall_description,
+        'color_class': color_class,
         'day_number': day_number,
         'ruling_planet': ruling_planet,
         'ruling_number': ruling_number,
         'compatibility_notes': compatibility_notes,
-        'planet_strength': planet_strength
+        'planet_strength': planet_strength,
+        'detailed_analysis': detailed_analysis,
+        'user_planets': {
+            'soul': {'number': soul_number, 'planet': soul_planet},
+            'destiny': {'number': destiny_number, 'planet': destiny_planet},
+            'mind': {'number': mind_number, 'planet': mind_planet}
+        },
+        'user_environment': {
+            'name': {'number': name_number, 'planet': name_planet, 'text': user_data.get('full_name', '')},
+            'address': {'number': address_number, 'planet': address_planet, 'text': user_data.get('full_address', '')},
+            'car': {'number': car_number, 'planet': car_planet, 'text': user_data.get('car_plate', '')}
+        }
     }
 
 def calculate_hourly_planetary_energy(planetary_hours: list, user_data: dict) -> list:
@@ -6217,7 +6392,7 @@ async def update_lesson(
                 "updated_at": datetime.utcnow().isoformat(),
                 "updated_by": admin_user["id"]
             }
-            
+
             # Добавляем exercises, quiz и challenges если они есть в lesson_data
             if "exercises" in lesson_data:
                 update_data["exercises"] = lesson_data.get("exercises")
