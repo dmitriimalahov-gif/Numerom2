@@ -20,6 +20,20 @@ const UserDashboard = () => {
   // State hooks - должны быть до любых условных возвратов
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [theme, setTheme] = useState(() => {
+    // Загружаем тему из localStorage
+    return localStorage.getItem('theme') || 'light';
+  });
+
+  // Сохраняем тему в localStorage и применяем к документу
+  useEffect(() => {
+    localStorage.setItem('theme', theme);
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
 
   // Получить текущую секцию из URL
   const activeSection = location.pathname.split('/')[2] || 'home';
@@ -86,14 +100,15 @@ const UserDashboard = () => {
     { id: 'quiz', label: 'Тест личности', icon: <HelpCircle className="w-4 h-4" /> },
     { id: 'learning', label: 'Обучение', icon: <BookOpen className="w-4 h-4" /> },
     { id: 'consultations', label: 'Личные консультации', icon: <Video className="w-4 h-4" /> },
-    { id: 'report-export', label: 'Загрузка отчётов', icon: <FileText className="w-4 h-4" /> }
+    { id: 'report-export', label: 'Загрузка отчётов', icon: <FileText className="w-4 h-4" /> },
+    { id: 'settings', label: 'Настройки', icon: <Settings className="w-4 h-4" /> }
   ];
 
   // Добавить админские пункты меню для администраторов
   const adminItems = [];
 
   const navigationItems = (user?.is_super_admin || user?.is_admin)
-    ? [...baseItems.slice(0, 12), { id: 'admin', label: 'Админ панель', icon: <Settings className="w-4 h-4" /> }, ...baseItems.slice(12), ...adminItems]
+    ? [...baseItems.slice(0, 12), { id: 'admin', label: 'Админ панель', icon: <Grid3X3 className="w-4 h-4" /> }, ...baseItems.slice(12), ...adminItems]
     : [...baseItems, ...adminItems];
 
   const switchTo = (id) => { 
@@ -153,7 +168,7 @@ const UserDashboard = () => {
         
         {/* Content */}
         <div className="fixed inset-0 pt-12 pb-6 px-3 overflow-auto">
-          <Outlet />
+          <Outlet context={{ theme, setTheme }} />
         </div>
         
         {/* Enhanced Mobile menu - унифицированное для всех секций */}
@@ -345,7 +360,7 @@ const UserDashboard = () => {
           </div>
         </aside>
 
-        <div className="flex-1 p-4 md:p-6"><Outlet /></div>
+        <div className="flex-1 p-4 md:p-6"><Outlet context={{ theme, setTheme }} /></div>
       </div>
 
       <PaymentModal isOpen={paymentOpen} onClose={() => setPaymentOpen(false)} />

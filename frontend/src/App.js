@@ -22,6 +22,7 @@ import PersonalConsultations from './components/PersonalConsultations';
 import CreditHistory from './components/CreditHistory';
 import HomeContent from './components/HomeContent';
 import PythagoreanSquareNew from './components/PythagoreanSquareNew';
+import Settings from './components/Settings';
 
 function App() {
   return (
@@ -51,6 +52,7 @@ function App() {
               <Route path="materials" element={<Materials />} />
               <Route path="admin" element={<AdminPanel />} />
               <Route path="numerology-design" element={<PythagoreanSquareNew />} />
+              <Route path="settings" element={<Settings />} />
             </Route>
 
             {/* Платежи */}
