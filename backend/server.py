@@ -1307,22 +1307,31 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     
     # Анализ взаимодействия планет
     user_main_planet = number_to_planet.get(soul_number)
-    planet_relation = "нейтральна"
-    if user_main_planet and ruling_planet in planet_relationships.get(user_main_planet, {}).get('friends', []):
-        planet_relation = "дружественна"
-    elif user_main_planet and ruling_planet in planet_relationships.get(user_main_planet, {}).get('enemies', []):
-        planet_relation = "враждебна"
     
-    overall_description += f"Планета дня {planet_relation} к вашей планете души {user_main_planet}. "
+    # Проверяем реальные отношения между планетами
+    if user_main_planet:
+        user_planet_data = planet_relationships.get(user_main_planet, {})
+        
+        if ruling_planet in user_planet_data.get('friends', []):
+            planet_relation = "дружественна"
+            overall_description += f"Планета дня {ruling_planet} дружественна к вашей планете души {user_main_planet}. "
+        elif ruling_planet in user_planet_data.get('enemies', []):
+            planet_relation = "враждебна"
+            overall_description += f"Планета дня {ruling_planet} враждебна к вашей планете души {user_main_planet}. "
+        else:
+            planet_relation = "нейтральна"
+            overall_description += f"Планета дня {ruling_planet} нейтральна к вашей планете души {user_main_planet}. "
+    else:
+        planet_relation = "нейтральна"
     
-    # Добавляем информацию о силе планеты в карте
+    # Добавляем информацию о силе планеты в карте (ТОЛЬКО если она есть в карте)
     if planet_count >= 4:
-        overall_description += f"У вас очень сильная энергия {ruling_planet} ({planet_count} цифр), что даёт вам преимущество. "
+        overall_description += f"У вас очень сильная энергия {ruling_planet} ({planet_count} {'цифр' if planet_count >= 5 else 'цифры'}), что даёт вам преимущество. "
     elif planet_count >= 2:
         overall_description += f"У вас сбалансированная энергия {ruling_planet} ({planet_count} цифры). "
     elif planet_count == 1:
         overall_description += f"Энергия {ruling_planet} слабая в вашей карте ({planet_count} цифра), будьте осторожны. "
-    else:
+    elif planet_count == 0:
         overall_description += f"Энергия {ruling_planet} отсутствует в вашей карте - это ваша зона роста. "
     
     # Добавляем рекомендации по времени
