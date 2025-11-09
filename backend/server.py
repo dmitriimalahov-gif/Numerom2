@@ -756,6 +756,10 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
         # Полный 24-часовой гид с детальными советами
         'hourly_guide_24h': full_24h_guide,
         
+        # Обратная совместимость со старым фронтендом
+        'hourly_energy': full_24h_guide,  # Для графика
+        'hourly_guide': schedule.get('planetary_hours', []),  # Для почасового плана (только дневные часы)
+        
         # Лучшие часы для конкретных активностей
         'best_hours_by_activity': best_hours,
         
