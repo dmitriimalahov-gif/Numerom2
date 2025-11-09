@@ -856,8 +856,23 @@ async def get_planetary_hour_advice(
     # Если есть дата рождения, вычисляем числа
     if user.birth_date:
         try:
-            birth_date_obj = datetime.fromisoformat(str(user.birth_date))
-            day, month, year = birth_date_obj.day, birth_date_obj.month, birth_date_obj.year
+            # Парсим дату в разных форматах
+            birth_date_str = str(user.birth_date)
+            
+            # Пробуем разные форматы
+            if '.' in birth_date_str:
+                # Формат DD.MM.YYYY
+                parts = birth_date_str.split('.')
+                day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
+                birth_date_obj = datetime(year, month, day)
+            elif '-' in birth_date_str and len(birth_date_str) == 10:
+                # Формат YYYY-MM-DD
+                birth_date_obj = datetime.fromisoformat(birth_date_str)
+                day, month, year = birth_date_obj.day, birth_date_obj.month, birth_date_obj.year
+            else:
+                # Пробуем ISO формат
+                birth_date_obj = datetime.fromisoformat(birth_date_str)
+                day, month, year = birth_date_obj.day, birth_date_obj.month, birth_date_obj.year
             
             print(f"📅 Дата рождения пользователя: {day}.{month}.{year}")
             
