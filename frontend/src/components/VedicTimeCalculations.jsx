@@ -222,8 +222,55 @@ const VedicTimeCalculations = () => {
 
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
 
-  // Функция для генерации персонализированных советов
-  const getPersonalizedAdvice = useCallback((hour, userData) => {
+  // Функция для загрузки персонализированных советов через API
+  const getPersonalizedAdvice = useCallback(async (hour) => {
+    if (!hour) return null;
+
+    const planet = hour.planet;
+    const planetSanskrit = hour.planet_sanskrit || planet;
+    const isNight = hour.period === 'night';
+    
+    try {
+      // Загружаем советы через API
+      const response = await fetch(
+        `${apiBaseUrl}/vedic-time/planetary-advice/${planet}?is_night=${isNight}`,
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error('Не удалось загрузить советы');
+      }
+      
+      const advice = await response.json();
+      
+      // Добавляем информацию о времени
+      advice.time = `${hour.start_time?.slice(11, 16) || ''} - ${hour.end_time?.slice(11, 16) || ''}`;
+      advice.isFavorable = hour.is_favorable;
+      
+      return advice;
+    } catch (error) {
+      console.error('Ошибка загрузки советов:', error);
+      
+      // Fallback: возвращаем базовые советы
+      return {
+        planet,
+        planetSanskrit,
+        general_advice: `Время ${planetSanskrit} благоприятно для соответствующих планете действий.`,
+        activities: ['Следуйте интуиции', 'Будьте внимательны к знакам'],
+        avoid: ['Спешка', 'Необдуманные решения'],
+        health: 'Заботьтесь о своем здоровье.',
+        mantra: `Мантра планеты ${planetSanskrit}`,
+        personalized_notes: [],
+        time: `${hour.start_time?.slice(11, 16) || ''} - ${hour.end_time?.slice(11, 16) || ''}`,
+        isFavorable: hour.is_favorable
+      };
+    }
+  }, [apiBaseUrl]);
+
+  // Старая функция (оставляем для совместимости, но не используем)
+  const getPersonalizedAdviceOld = useCallback((hour, userData) => {
     if (!hour || !userData) return null;
 
     const planet = hour.planet;
@@ -972,7 +1019,11 @@ const VedicTimeCalculations = () => {
                   return (
                     <div
                       key={index}
-                      className={`rounded-2xl border p-5 transition-all duration-500 hover:-translate-y-1 relative ${
+                      onClick={() => {
+                        setSelectedHour(hour);
+                        setIsHourDialogOpen(true);
+                      }}
+                      className={`rounded-2xl border p-5 transition-all duration-500 hover:-translate-y-1 relative cursor-pointer ${
                         isActive ? 'shadow-2xl scale-110 ring-4 ring-offset-4 ring-offset-slate-900' : 'shadow-sm hover:shadow-lg'
                       }`}
                       style={{
@@ -1166,111 +1217,175 @@ const VedicTimeCalculations = () => {
       {/* Модальное окно с советами для планетарного часа */}
       <Dialog open={isHourDialogOpen} onOpenChange={setIsHourDialogOpen}>
         <DialogContent className={`max-w-2xl max-h-[80vh] overflow-y-auto ${themeConfig.card}`}>
-          {selectedHour && (() => {
-            const advice = getPersonalizedAdvice(selectedHour, user);
-            if (!advice) return null;
-            
-            const planetColor = getPlanetColor(advice.planet);
-            
-            return (
-              <>
-                <DialogHeader>
-                  <DialogTitle 
-                    className="text-2xl font-bold flex items-center gap-3"
-                    style={{ color: planetColor }}
-                  >
-                    <span className="text-3xl">
-                      {advice.planet === 'Sun' && '☀️'}
-                      {advice.planet === 'Moon' && '🌙'}
-                      {advice.planet === 'Mars' && '🔴'}
-                      {advice.planet === 'Mercury' && '💚'}
-                      {advice.planet === 'Jupiter' && '🟠'}
-                      {advice.planet === 'Venus' && '💗'}
-                      {advice.planet === 'Saturn' && '🔵'}
-                      {advice.planet === 'Rahu' && '🌑'}
-                      {advice.planet === 'Ketu' && '⚪'}
-                    </span>
-                    {advice.planetSanskrit}
-                  </DialogTitle>
-                  <DialogDescription className={themeConfig.mutedText}>
-                    Планетарный час: {advice.time}
-                    {advice.isFavorable && (
-                      <span className="ml-3 inline-flex items-center gap-1 text-emerald-500">
-                        <CheckCircle2 className="h-4 w-4" />
-                        Благоприятное время
-                      </span>
-                    )}
-                  </DialogDescription>
-                </DialogHeader>
-
-                <div className="mt-6 space-y-6">
-                  {advice.personalNote && (
-                    <div 
-                      className="p-4 rounded-lg border-2"
-                      style={{
-                        backgroundColor: planetColor + '20',
-                        borderColor: planetColor + '60'
-                      }}
-                    >
-                      <p className="font-semibold text-center">{advice.personalNote}</p>
-                    </div>
-                  )}
-
-                  <div>
-                    <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
-                      <Sparkles className="h-5 w-5" style={{ color: planetColor }} />
-                      Общая характеристика
-                    </h3>
-                    <p className={themeConfig.mutedText}>{advice.general}</p>
-                  </div>
-
-                  <div>
-                    <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
-                      <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                      Благоприятные действия
-                    </h3>
-                    <ul className="space-y-2">
-                      {advice.activities.map((activity, idx) => (
-                        <li key={idx} className="flex items-start gap-2">
-                          <span className="text-emerald-500 mt-1">✓</span>
-                          <span className={themeConfig.mutedText}>{activity}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div>
-                    <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
-                      <AlertTriangle className="h-5 w-5 text-amber-500" />
-                      Чего избегать
-                    </h3>
-                    <ul className="space-y-2">
-                      {advice.avoid.map((item, idx) => (
-                        <li key={idx} className="flex items-start gap-2">
-                          <span className="text-amber-500 mt-1">⚠</span>
-                          <span className={themeConfig.mutedText}>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div 
-                    className="p-4 rounded-lg"
-                    style={{
-                      backgroundColor: planetColor + '15',
-                      borderLeft: `4px solid ${planetColor}`
-                    }}
-                  >
-                    <h3 className="font-bold text-lg mb-2">💊 Здоровье</h3>
-                    <p className={themeConfig.mutedText}>{advice.health}</p>
-                  </div>
-                </div>
-              </>
-            );
-          })()}
+          {selectedHour && <HourAdviceContent hour={selectedHour} getAdvice={getPersonalizedAdvice} themeConfig={themeConfig} />}
         </DialogContent>
       </Dialog>
     </div>
+  );
+};
+
+// Компонент для отображения советов в модальном окне
+const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
+  const [advice, setAdvice] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadAdvice = async () => {
+      setLoading(true);
+      const data = await getAdvice(hour);
+      setAdvice(data);
+      setLoading(false);
+    };
+    
+    loadAdvice();
+  }, [hour, getAdvice]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+        <span className="ml-3 text-lg">Загрузка советов...</span>
+      </div>
+    );
+  }
+
+  if (!advice) {
+    return (
+      <div className="text-center py-12">
+        <AlertTriangle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+        <p className="text-lg">Не удалось загрузить советы</p>
+      </div>
+    );
+  }
+
+  const planetColor = getPlanetColor(advice.planet);
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle 
+          className="text-2xl font-bold flex items-center gap-3"
+          style={{ color: planetColor }}
+        >
+          <span className="text-3xl">
+            {advice.planet === 'Sun' && '☀️'}
+            {advice.planet === 'Moon' && '🌙'}
+            {advice.planet === 'Mars' && '🔴'}
+            {advice.planet === 'Mercury' && '💚'}
+            {advice.planet === 'Jupiter' && '🟠'}
+            {advice.planet === 'Venus' && '💗'}
+            {advice.planet === 'Saturn' && '🔵'}
+            {advice.planet === 'Rahu' && '🌑'}
+            {advice.planet === 'Ketu' && '⚪'}
+          </span>
+          {advice.planet_sanskrit || advice.planetSanskrit}
+        </DialogTitle>
+        <DialogDescription className={themeConfig.mutedText}>
+          Планетарный час: {advice.time}
+          {advice.isFavorable && (
+            <span className="ml-3 inline-flex items-center gap-1 text-emerald-500">
+              <CheckCircle2 className="h-4 w-4" />
+              Благоприятное время
+            </span>
+          )}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="mt-6 space-y-6">
+        {/* Персонализированные заметки */}
+        {advice.personalized_notes && advice.personalized_notes.length > 0 && (
+          <div className="space-y-3">
+            {advice.personalized_notes.map((note, idx) => (
+              <div 
+                key={idx}
+                className="p-4 rounded-lg border-2"
+                style={{
+                  backgroundColor: planetColor + '20',
+                  borderColor: planetColor + '60'
+                }}
+              >
+                <p className="font-bold text-sm mb-1">{note.title}</p>
+                <p className="text-sm">{note.advice}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Общая характеристика */}
+        <div>
+          <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
+            <Sparkles className="h-5 w-5" style={{ color: planetColor }} />
+            Общая характеристика
+          </h3>
+          <p className={themeConfig.mutedText}>{advice.general_advice || advice.general}</p>
+        </div>
+
+        {/* Благоприятные действия */}
+        <div>
+          <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
+            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+            Благоприятные действия
+          </h3>
+          <ul className="space-y-2">
+            {advice.activities.map((activity, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <span className="text-emerald-500 mt-1">✓</span>
+                <span className={themeConfig.mutedText}>{activity}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Чего избегать */}
+        <div>
+          <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            Чего избегать
+          </h3>
+          <ul className="space-y-2">
+            {advice.avoid.map((item, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <span className="text-amber-500 mt-1">⚠</span>
+                <span className={themeConfig.mutedText}>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Здоровье */}
+        <div 
+          className="p-4 rounded-lg"
+          style={{
+            backgroundColor: planetColor + '15',
+            borderLeft: `4px solid ${planetColor}`
+          }}
+        >
+          <h3 className="font-bold text-lg mb-2">💊 Здоровье</h3>
+          <p className={themeConfig.mutedText}>{advice.health}</p>
+        </div>
+
+        {/* Мантра */}
+        {advice.mantra && (
+          <div 
+            className="p-4 rounded-lg text-center"
+            style={{
+              backgroundColor: planetColor + '20',
+              border: `2px solid ${planetColor}60`
+            }}
+          >
+            <h3 className="font-bold text-lg mb-2">🕉️ Мантра</h3>
+            <p className="text-xl font-bold" style={{ color: planetColor }}>{advice.mantra}</p>
+          </div>
+        )}
+
+        {/* Совет для времени суток */}
+        {advice.time_advice && (
+          <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
+            <p className="text-sm italic">{advice.time_advice}</p>
+          </div>
+        )}
+      </div>
+    </>
   );
 };
 
