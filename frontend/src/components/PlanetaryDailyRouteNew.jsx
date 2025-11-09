@@ -65,18 +65,47 @@ const PlanetaryDailyRouteNew = () => {
 
   // Функция для получения персонализированных советов для часа
   const getPersonalizedAdvice = async (hour) => {
+    if (!hour || !hour.planet) return null;
+    
     try {
+      const planet = hour.planet;
+      const isNight = hour.period === 'night' || false;
+      
       const response = await fetch(
-        `${apiBaseUrl}/vedic-time/hourly-advice?planet=${hour.planet}&date=${selectedDate}&city=${encodeURIComponent(user.city)}`,
+        `${apiBaseUrl}/vedic-time/planetary-advice/${planet}?is_night=${isNight}`,
         {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
         }
       );
+      
       if (!response.ok) throw new Error('Ошибка загрузки советов');
-      return await response.json();
+      
+      const advice = await response.json();
+      
+      // Добавляем информацию о времени
+      const startTime = typeof hour.start === 'string' ? hour.start : hour.start_time?.slice(11, 16) || '';
+      const endTime = typeof hour.end === 'string' ? hour.end : hour.end_time?.slice(11, 16) || '';
+      advice.time = `${startTime} - ${endTime}`;
+      advice.isFavorable = hour.is_favorable;
+      
+      return advice;
     } catch (err) {
       console.error('Ошибка загрузки советов:', err);
-      return null;
+      
+      // Fallback: возвращаем базовые советы
+      const startTime = typeof hour.start === 'string' ? hour.start : hour.start_time?.slice(11, 16) || '';
+      const endTime = typeof hour.end === 'string' ? hour.end : hour.end_time?.slice(11, 16) || '';
+      
+      return {
+        planet: hour.planet,
+        planet_sanskrit: hour.planet_sanskrit || hour.planet,
+        general_recommendation: `Время ${hour.planet} благоприятно для соответствующих планете действий.`,
+        best_activities: ['Следуйте интуиции', 'Будьте внимательны к знакам'],
+        avoid_activities: ['Спешка', 'Необдуманные решения'],
+        time: `${startTime} - ${endTime}`,
+        isFavorable: hour.is_favorable,
+        energy_level: 5
+      };
     }
   };
 
