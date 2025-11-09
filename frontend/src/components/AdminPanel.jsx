@@ -114,6 +114,12 @@ const AdminPanel = () => {
   const [selectedLessonVideo, setSelectedLessonVideo] = useState(null);
   const [selectedLessonPDF, setSelectedLessonPDF] = useState(null);
 
+  // State for scoring configuration
+  const [scoringConfig, setScoringConfig] = useState(null);
+  const [loadingScoringConfig, setLoadingScoringConfig] = useState(false);
+  const [savingScoringConfig, setSavingScoringConfig] = useState(false);
+  const [editedScoringConfig, setEditedScoringConfig] = useState(null);
+
   // Поиск пользователей
   const [userSearchTerm, setUserSearchTerm] = useState('');
   const [consultationUserSearchTerm, setConsultationUserSearchTerm] = useState('');
@@ -175,6 +181,84 @@ const AdminPanel = () => {
       }
     } catch (error) {
       console.error('Ошибка обновления кредитов:', error);
+    }
+  };
+
+  // Загрузка конфигурации системы баллов
+  const fetchScoringConfig = async () => {
+    setLoadingScoringConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/scoring-config`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setScoringConfig(data);
+        setEditedScoringConfig(data);
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки конфигурации баллов:', error);
+    } finally {
+      setLoadingScoringConfig(false);
+    }
+  };
+
+  // Сохранение конфигурации системы баллов
+  const saveScoringConfig = async () => {
+    setSavingScoringConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/scoring-config`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(editedScoringConfig)
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setScoringConfig(data.config);
+        setEditedScoringConfig(data.config);
+        alert('Конфигурация успешно сохранена!');
+      }
+    } catch (error) {
+      console.error('Ошибка сохранения конфигурации баллов:', error);
+      alert('Ошибка сохранения конфигурации');
+    } finally {
+      setSavingScoringConfig(false);
+    }
+  };
+
+  // Сброс конфигурации к дефолтным значениям
+  const resetScoringConfig = async () => {
+    if (!window.confirm('Вы уверены, что хотите сбросить конфигурацию к дефолтным значениям?')) {
+      return;
+    }
+    
+    setSavingScoringConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/scoring-config/reset`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setScoringConfig(data.config);
+        setEditedScoringConfig(data.config);
+        alert('Конфигурация сброшена к дефолтным значениям!');
+      }
+    } catch (error) {
+      console.error('Ошибка сброса конфигурации баллов:', error);
+      alert('Ошибка сброса конфигурации');
+    } finally {
+      setSavingScoringConfig(false);
     }
   };
 
@@ -1453,7 +1537,12 @@ const AdminPanel = () => {
   // Сохранять активную вкладку в localStorage при изменении
   useEffect(() => {
     localStorage.setItem('adminPanel_activeTab', activeTab);
-  }, [activeTab]);
+    
+    // Загружаем конфигурацию баллов при переключении на вкладку
+    if (activeTab === 'scoring' && !scoringConfig) {
+      fetchScoringConfig();
+    }
+  }, [activeTab, scoringConfig]);
 
   useEffect(() => {
     if (activeTab === 'users') {
@@ -1720,6 +1809,252 @@ const AdminPanel = () => {
   };
 
   // Function to render consultations tab
+  const renderScoringTab = () => {
+    if (loadingScoringConfig) {
+      return (
+        <Card>
+          <CardContent className="p-12 text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-4 text-gray-600">Загрузка конфигурации...</p>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    if (!editedScoringConfig) {
+      return (
+        <Card>
+          <CardContent className="p-12 text-center">
+            <p className="text-gray-600">Конфигурация не загружена</p>
+            <Button onClick={fetchScoringConfig} className="mt-4">
+              Загрузить конфигурацию
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    const scoringFields = [
+      {
+        category: '⚙️ Базовые настройки',
+        fields: [
+          { key: 'base_score', label: 'Базовый счёт', description: 'Начальное количество баллов для каждого дня' }
+        ]
+      },
+      {
+        category: '⚡ Личная энергия планеты дня (DDMM × YYYY)',
+        fields: [
+          { key: 'personal_energy_high', label: 'Высокая энергия (≥7)', description: 'Бонус за высокую личную энергию' },
+          { key: 'personal_energy_low', label: 'Низкая энергия (1-3)', description: 'Штраф за низкую личную энергию' },
+          { key: 'personal_energy_zero', label: 'Нулевая энергия (0)', description: 'Штраф за отсутствие энергии' }
+        ]
+      },
+      {
+        category: '💫 Резонанс числа души',
+        fields: [
+          { key: 'soul_resonance', label: 'Полное совпадение', description: 'Число души = планета дня' },
+          { key: 'soul_friendship', label: 'Дружественные планеты', description: 'Планета души дружественна планете дня' },
+          { key: 'soul_hostility', label: 'Враждебные планеты', description: 'Планета души враждебна планете дня' }
+        ]
+      },
+      {
+        category: '🧠 Резонанс числа ума',
+        fields: [
+          { key: 'mind_resonance', label: 'Полное совпадение', description: 'Число ума = планета дня' },
+          { key: 'mind_friendship', label: 'Дружественные планеты', description: 'Планета ума дружественна планете дня' },
+          { key: 'mind_hostility', label: 'Враждебные планеты', description: 'Планета ума враждебна планете дня' }
+        ]
+      },
+      {
+        category: '🎯 Резонанс числа судьбы',
+        fields: [
+          { key: 'destiny_resonance', label: 'Полное совпадение', description: 'Число судьбы = планета дня' },
+          { key: 'destiny_hostility', label: 'Враждебные планеты', description: 'Планета судьбы враждебна планете дня' }
+        ]
+      },
+      {
+        category: '🔢 Сила планеты в квадрате Пифагора',
+        fields: [
+          { key: 'planet_strength_high', label: 'Высокая сила (≥4)', description: 'Планета сильно представлена в карте' },
+          { key: 'planet_strength_medium', label: 'Средняя сила (2-3)', description: 'Планета умеренно представлена' },
+          { key: 'planet_strength_low', label: 'Низкая сила (0)', description: 'Планета отсутствует в карте' }
+        ]
+      },
+      {
+        category: '🎁 Специальные бонусы',
+        fields: [
+          { key: 'birthday_bonus', label: 'День рождения', description: 'День недели совпадает с днём рождения' },
+          { key: 'planet_friendship', label: 'Дружественность планет', description: 'Общая дружественность планет' },
+          { key: 'planet_hostility', label: 'Враждебность планет', description: 'Общая враждебность планет' }
+        ]
+      },
+      {
+        category: '📝 Нумерология имени/адреса/машины',
+        fields: [
+          { key: 'name_resonance', label: 'Резонанс', description: 'Совпадение с планетой дня' },
+          { key: 'name_conflict', label: 'Конфликт', description: 'Конфликт с планетой дня' }
+        ]
+      },
+      {
+        category: '🕐 Ведические периоды',
+        fields: [
+          { key: 'rahu_kaal_penalty', label: 'Раху Каал', description: 'Штраф за неблагоприятный период' },
+          { key: 'favorable_period_bonus', label: 'Благоприятный период', description: 'Бонус за благоприятное время' }
+        ]
+      },
+      {
+        category: '🌍 Глобальная гармония',
+        fields: [
+          { key: 'global_harmony_bonus', label: 'Гармония', description: 'Больше дружественных планет' },
+          { key: 'global_harmony_penalty', label: 'Дисгармония', description: 'Больше враждебных планет' }
+        ]
+      },
+      {
+        category: '📅 Число дня',
+        fields: [
+          { key: 'day_number_bonus', label: 'Совпадение числа дня', description: 'Число дня совпадает с личными числами' }
+        ]
+      }
+    ];
+
+    return (
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <div className="flex items-center">
+                <Target className="w-6 h-6 mr-2" />
+                Конфигурация системы баллов
+              </div>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={resetScoringConfig} 
+                  variant="outline"
+                  disabled={savingScoringConfig}
+                  className="text-orange-600 border-orange-300 hover:bg-orange-50"
+                >
+                  🔄 Сбросить
+                </Button>
+                <Button 
+                  onClick={saveScoringConfig} 
+                  disabled={savingScoringConfig}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  {savingScoringConfig ? '💾 Сохранение...' : '💾 Сохранить изменения'}
+                </Button>
+              </div>
+            </CardTitle>
+            <CardDescription>
+              Настройте баллы для каждого фактора, влияющего на оценку дня. 
+              Изменения применятся ко всем расчётам после сохранения.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Alert className="mb-6 bg-blue-50 border-blue-200">
+              <AlertDescription className="text-sm">
+                <strong>💡 Как это работает:</strong> Каждый день анализируется по множеству факторов. 
+                Положительные факторы добавляют баллы, негативные - вычитают. 
+                Итоговая оценка определяет, насколько день благоприятен для пользователя.
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-8">
+              {scoringFields.map((category, idx) => (
+                <div key={idx} className="border-l-4 border-blue-500 pl-4">
+                  <h3 className="text-lg font-bold mb-4 text-gray-800">{category.category}</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {category.fields.map((field) => (
+                      <div key={field.key} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                        <Label htmlFor={field.key} className="text-sm font-semibold text-gray-700">
+                          {field.label}
+                        </Label>
+                        <p className="text-xs text-gray-500 mb-2">{field.description}</p>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            id={field.key}
+                            type="number"
+                            value={editedScoringConfig[field.key] || 0}
+                            onChange={(e) => setEditedScoringConfig({
+                              ...editedScoringConfig,
+                              [field.key]: parseInt(e.target.value) || 0
+                            })}
+                            className="w-24 text-center font-bold text-lg"
+                          />
+                          <Badge 
+                            variant={editedScoringConfig[field.key] > 0 ? 'default' : 'destructive'}
+                            className={editedScoringConfig[field.key] > 0 ? 'bg-green-500' : 'bg-red-500'}
+                          >
+                            {editedScoringConfig[field.key] > 0 ? '+' : ''}{editedScoringConfig[field.key]}
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <Alert className="mt-6 bg-yellow-50 border-yellow-200">
+              <AlertDescription className="text-sm">
+                <strong>⚠️ Внимание:</strong> Изменения в конфигурации повлияют на все расчёты планетарного маршрута. 
+                Рекомендуется тестировать изменения перед применением в продакшене.
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
+
+        {/* Предпросмотр диапазона баллов */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <TrendingUp className="w-5 h-5 mr-2" />
+              Предпросмотр диапазона баллов
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-red-50 p-4 rounded-lg border-2 border-red-300">
+                <h4 className="font-bold text-red-700 mb-2">❌ Критически сложный день</h4>
+                <p className="text-3xl font-bold text-red-600">
+                  ~{editedScoringConfig.base_score + 
+                     editedScoringConfig.personal_energy_zero + 
+                     editedScoringConfig.soul_hostility + 
+                     editedScoringConfig.mind_hostility + 
+                     editedScoringConfig.destiny_hostility + 
+                     editedScoringConfig.planet_strength_low}
+                </p>
+                <p className="text-xs text-gray-600 mt-1">Минимальная оценка</p>
+              </div>
+              
+              <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-300">
+                <h4 className="font-bold text-blue-700 mb-2">📊 Обычный день</h4>
+                <p className="text-3xl font-bold text-blue-600">
+                  {editedScoringConfig.base_score} - {editedScoringConfig.base_score + 20}
+                </p>
+                <p className="text-xs text-gray-600 mt-1">Нормальная оценка</p>
+              </div>
+              
+              <div className="bg-green-50 p-4 rounded-lg border-2 border-green-300">
+                <h4 className="font-bold text-green-700 mb-2">✨ Идеальный день</h4>
+                <p className="text-3xl font-bold text-green-600">
+                  ~{editedScoringConfig.base_score + 
+                     editedScoringConfig.personal_energy_high + 
+                     editedScoringConfig.soul_friendship + 
+                     editedScoringConfig.mind_friendship + 
+                     editedScoringConfig.planet_strength_high + 
+                     editedScoringConfig.birthday_bonus + 
+                     editedScoringConfig.planet_friendship + 
+                     editedScoringConfig.global_harmony_bonus}
+                </p>
+                <p className="text-xs text-gray-600 mt-1">Максимальная оценка</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  };
+
   const renderConsultationsTab = () => (
     <div className="space-y-6">
       {/* Header with Create Button */}
@@ -4581,7 +4916,7 @@ const AdminPanel = () => {
       </Card>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="users" className="flex items-center justify-center px-1 sm:px-3" title="Ученики">
             <Users className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Ученики</span>
@@ -4593,6 +4928,10 @@ const AdminPanel = () => {
           <TabsTrigger value="lessons" className="flex items-center justify-center px-1 sm:px-3" title="Уроки">
             <BookOpen className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Уроки</span>
+          </TabsTrigger>
+          <TabsTrigger value="scoring" className="flex items-center justify-center px-1 sm:px-3" title="Система баллов">
+            <Target className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Баллы</span>
           </TabsTrigger>
           <TabsTrigger value="settings" className="flex items-center justify-center px-1 sm:px-3" title="Настройки">
             <Settings className="w-4 h-4 sm:mr-2" />
@@ -4614,6 +4953,10 @@ const AdminPanel = () => {
 
         <TabsContent value="lessons" className="space-y-6">
           <UnifiedLessonEditor showLessonsList={true} />
+        </TabsContent>
+
+        <TabsContent value="scoring" className="space-y-6">
+          {renderScoringTab()}
         </TabsContent>
 
         <TabsContent value="settings" className="space-y-6">
