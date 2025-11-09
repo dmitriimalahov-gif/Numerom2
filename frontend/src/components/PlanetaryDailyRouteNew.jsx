@@ -329,10 +329,6 @@ const PlanetaryDailyRouteNew = () => {
               </div>
             </div>
           </div>
-          
-          <p className={`mt-6 text-base leading-relaxed ${themeConfig.mutedText}`}>
-            {dayAnalysis.overall_description}
-          </p>
         </div>
 
         {/* Ваши сильные стороны */}
