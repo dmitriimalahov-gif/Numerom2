@@ -39,7 +39,7 @@ from numerology import (
     calculate_compatibility,
     parse_birth_date,
     create_pythagorean_square,
-    reduce_to_single
+    reduce_to_single_digit
 )
 from vedic_numerology import (
     calculate_comprehensive_vedic_numerology,
@@ -911,7 +911,7 @@ async def get_planetary_hour_advice(
             print(f"📅 Дата рождения пользователя: {day}.{month}.{year}")
             
             # Вычисляем основные числа (с учетом мастер-чисел)
-            def reduce_to_single(num, keep_master=True):
+            def reduce_to_single_digit(num, keep_master=True):
                 """Редуцирует число до однозначного, сохраняя мастер-числа 11, 22, 33"""
                 if keep_master and num in [11, 22, 33]:
                     return num
@@ -922,18 +922,18 @@ async def get_planetary_hour_advice(
                 return num
             
             # Число души (день рождения)
-            user_data["soul_number"] = reduce_to_single(day)
+            user_data["soul_number"] = reduce_to_single_digit(day)
             
             # Число судьбы (сумма всех цифр даты)
             full_date_sum = day + month + year
-            user_data["destiny_number"] = reduce_to_single(full_date_sum)
+            user_data["destiny_number"] = reduce_to_single_digit(full_date_sum)
             
             # Число ума (месяц)
-            user_data["mind_number"] = reduce_to_single(month)
+            user_data["mind_number"] = reduce_to_single_digit(month)
             
             # Правящее число (сумма числа души и числа судьбы)
             ruling = user_data["soul_number"] + user_data["destiny_number"]
-            user_data["ruling_number"] = reduce_to_single(ruling)
+            user_data["ruling_number"] = reduce_to_single_digit(ruling)
             
             print(f"🔢 Число души: {user_data['soul_number']}")
             print(f"🔢 Число судьбы: {user_data['destiny_number']}")
@@ -1969,18 +1969,18 @@ async def get_user_numerology_data(user_id: str) -> dict:
     month = birth_date_obj.month
     year = birth_date_obj.year
     
-    soul_number = reduce_to_single(day)
-    destiny_number = reduce_to_single(day + month + year)
-    mind_number = reduce_to_single(month)
+    soul_number = reduce_to_single_digit(day)
+    destiny_number = reduce_to_single_digit(day + month + year)
+    mind_number = reduce_to_single_digit(month)
     
     # Вычисляем рабочие числа (метод Александрова)
     birth_date_str = birth_date_obj.strftime("%d%m%Y")
     birth_digits = [int(d) for d in birth_date_str if d != '0']
     first_working = sum(birth_digits)
-    second_working = reduce_to_single(first_working)
+    second_working = reduce_to_single_digit(first_working)
     first_digit = int(birth_date_str[0])
     third_working = first_working - (2 * first_digit)
-    fourth_working = reduce_to_single(abs(third_working))
+    fourth_working = reduce_to_single_digit(abs(third_working))
     
     # Подсчитываем силу планет
     all_digits = (
@@ -2006,7 +2006,7 @@ async def get_user_numerology_data(user_id: str) -> dict:
         'mind_number': mind_number,
         'helping_mind_number': second_working,
         'wisdom_number': fourth_working,
-        'ruling_number': reduce_to_single(soul_number + destiny_number),
+        'ruling_number': reduce_to_single_digit(soul_number + destiny_number),
         'planet_counts': planet_counts,
         'birth_date': birth_date_obj
     }
@@ -2015,7 +2015,7 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
     """Анализирует совместимость дня с личными числами пользователя"""
     
     # Число дня
-    day_number = reduce_to_single(date_obj.day)
+    day_number = reduce_to_single_digit(date_obj.day)
     
     # Управляющая планета дня
     ruling_planet = schedule.get('weekday', {}).get('ruling_planet', '')
