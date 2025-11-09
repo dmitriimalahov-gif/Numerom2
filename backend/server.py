@@ -1,6 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
@@ -729,8 +729,18 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
     # Анализируем день с учётом личных чисел
     day_analysis = analyze_day_compatibility(date_obj, user_data, schedule)
     
-    # Получаем почасовую энергию планет
-    hourly_energy = calculate_hourly_planetary_energy(schedule.get('planetary_hours', []), user_data)
+    # Получаем почасовую энергию планет с детальными советами (дневные часы)
+    day_hours_energy = await calculate_hourly_planetary_energy(schedule.get('planetary_hours', []), user_data, db)
+    
+    # Получаем ночные часы с детальными советами
+    night_hours = schedule.get('night_hours', [])
+    night_hours_energy = await calculate_hourly_planetary_energy(night_hours, user_data, db) if night_hours else []
+    
+    # Объединяем дневные и ночные часы в полный 24-часовой гид
+    full_24h_guide = day_hours_energy + night_hours_energy
+    
+    # Находим лучшие часы для разных активностей
+    best_hours = find_best_hours_for_activities(full_24h_guide, user_data)
     
     # Build detailed route from schedule
     rec = schedule.get('recommendations', {})
@@ -743,11 +753,11 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
         # Нумерологический анализ дня
         'day_analysis': day_analysis,
         
-        # Почасовая энергия
-        'hourly_energy': hourly_energy,
+        # Полный 24-часовой гид с детальными советами
+        'hourly_guide_24h': full_24h_guide,
         
-        # Лучшие часы с персонализированными советами
-        'best_activity_hours': rec.get('best_hours', []),
+        # Лучшие часы для конкретных активностей
+        'best_hours_by_activity': best_hours,
         
         # Периоды, которых стоит избегать
         'avoid_periods': {
@@ -758,9 +768,6 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
         
         # Благоприятный период
         'favorable_period': schedule.get('auspicious_periods', {}).get('abhijit_muhurta', {}),
-        
-        # Полный почасовой гид (24 часа)
-        'hourly_guide': schedule.get('planetary_hours', []),
         
         # Общие рекомендации
         'daily_recommendations': rec,
@@ -2276,16 +2283,81 @@ def analyze_day_compatibility(date_obj: datetime, user_data: dict, schedule: dic
         }
     }
 
-def calculate_hourly_planetary_energy(planetary_hours: list, user_data: dict) -> list:
-    """Вычисляет энергию каждого планетарного часа с учётом личной карты"""
+def find_best_hours_for_activities(hourly_guide: list, user_data: dict) -> dict:
+    """Находит лучшие часы для разных типов активностей"""
+    
+    # Категории активностей по планетам
+    planet_activities = {
+        'Surya': ['Лидерство и управление', 'Важные встречи', 'Публичные выступления', 'Карьерные решения'],
+        'Chandra': ['Творчество', 'Общение с семьёй', 'Эмоциональная работа', 'Интуитивные решения'],
+        'Mangal': ['Спорт и физическая активность', 'Решительные действия', 'Конкуренция', 'Начало проектов'],
+        'Budh': ['Обучение', 'Коммуникация', 'Написание текстов', 'Аналитическая работа'],
+        'Guru': ['Духовные практики', 'Обучение других', 'Финансовое планирование', 'Мудрые решения'],
+        'Shukra': ['Искусство', 'Романтика', 'Красота и стиль', 'Дипломатия'],
+        'Shani': ['Дисциплина', 'Долгосрочное планирование', 'Работа с документами', 'Медитация'],
+        'Rahu': ['Инновации', 'Нестандартные решения', 'Технологии', 'Амбициозные цели'],
+        'Ketu': ['Духовность', 'Освобождение от лишнего', 'Глубокая медитация', 'Исследования']
+    }
+    
+    best_hours = {}
+    
+    # Для каждой планеты находим лучшие часы
+    for planet, activities in planet_activities.items():
+        planet_hours = [h for h in hourly_guide if h['planet'] == planet and h['energy_level'] >= 6]
+        
+        if planet_hours:
+            # Сортируем по уровню энергии
+            planet_hours.sort(key=lambda x: x['energy_level'], reverse=True)
+            best_hour = planet_hours[0]
+            
+            for activity in activities:
+                if activity not in best_hours:
+                    best_hours[activity] = {
+                        'time': best_hour['time'],
+                        'hour': best_hour['hour'],
+                        'planet': planet,
+                        'energy_level': best_hour['energy_level'],
+                        'recommendation': best_hour['general_recommendation']
+                    }
+    
+    # Добавляем общие категории
+    high_energy_hours = [h for h in hourly_guide if h['energy_level'] >= 7]
+    if high_energy_hours:
+        best_hours['Самые энергичные часы'] = [{
+            'time': h['time'],
+            'hour': h['hour'],
+            'planet': h['planet'],
+            'energy_level': h['energy_level']
+        } for h in high_energy_hours[:3]]
+    
+    low_energy_hours = [h for h in hourly_guide if h['energy_level'] <= 3]
+    if low_energy_hours:
+        best_hours['Часы для отдыха'] = [{
+            'time': h['time'],
+            'hour': h['hour'],
+            'planet': h['planet'],
+            'energy_level': h['energy_level'],
+            'advice': 'Время для восстановления и работы над слабыми сторонами'
+        } for h in low_energy_hours[:3]]
+    
+    return best_hours
+
+
+async def calculate_hourly_planetary_energy(planetary_hours: list, user_data: dict, db: AsyncIOMotorDatabase = None) -> list:
+    """Вычисляет энергию каждого планетарного часа с детальными советами из базы данных"""
     
     hourly_data = []
     planet_counts = user_data.get('planet_counts', {})
+    soul_number = user_data.get('soul_number', 0)
+    destiny_number = user_data.get('destiny_number', 0)
+    mind_number = user_data.get('mind_number', 0)
     
     for hour in planetary_hours:
         planet = hour.get('planet', '')
         start_time = hour.get('start_time', '')
         end_time = hour.get('end_time', '')
+        hour_number = hour.get('hour', 0)
+        period = hour.get('period', 'day')
         
         # Сила планеты в личной карте
         personal_strength = planet_counts.get(planet, 0)
@@ -2301,24 +2373,88 @@ def calculate_hourly_planetary_energy(planetary_hours: list, user_data: dict) ->
         elif personal_strength == 0:
             base_energy -= 2
         
-        # Определяем тип активности
+        # Получаем детальные советы из базы данных
+        advice_doc = None
+        if db:
+            try:
+                advice_doc = await db.planetary_advice.find_one({"planet": planet})
+            except Exception as e:
+                print(f"⚠️  Ошибка получения советов для {planet}: {e}")
+        
+        # Формируем детальные рекомендации
+        activities = []
+        avoid = []
+        personalized_advice = []
+        
+        if advice_doc:
+            # Общие активности для этой планеты
+            activities = advice_doc.get('activities', [])[:3]  # Топ-3 активности
+            avoid = advice_doc.get('avoid', [])[:2]  # Топ-2 чего избегать
+            
+            # Персонализированные советы
+            if soul_number:
+                soul_advice = advice_doc.get('soul_number_advice', {}).get(str(soul_number))
+                if soul_advice:
+                    personalized_advice.append(f"💎 Число Души: {soul_advice}")
+            
+            if destiny_number:
+                destiny_advice = advice_doc.get('destiny_number_advice', {}).get(str(destiny_number))
+                if destiny_advice:
+                    personalized_advice.append(f"🎯 Число Судьбы: {destiny_advice}")
+            
+            if mind_number:
+                mind_advice = advice_doc.get('mind_number_advice', {}).get(str(mind_number))
+                if mind_advice:
+                    personalized_advice.append(f"🧠 Число Ума: {mind_advice}")
+            
+            # Советы по силе планеты
+            if personal_strength == 0:
+                weak_advice = advice_doc.get('weak_planet_advice')
+                if weak_advice:
+                    personalized_advice.append(f"⚠️ Слабая планета: {weak_advice}")
+            elif personal_strength >= 5:
+                strong_advice = advice_doc.get('strong_planet_advice')
+                if strong_advice:
+                    personalized_advice.append(f"⭐ Сильная планета: {strong_advice}")
+            
+            # Советы по времени суток
+            if period == 'night':
+                night_advice = advice_doc.get('night_hour_advice')
+                if night_advice:
+                    personalized_advice.append(f"🌙 Ночной час: {night_advice}")
+            else:
+                day_advice = advice_doc.get('day_hour_advice')
+                if day_advice:
+                    personalized_advice.append(f"☀️ Дневной час: {day_advice}")
+        
+        # Определяем тип активности и общую рекомендацию
         if base_energy >= 7:
             activity_type = "Высокая энергия"
-            recommendation = f"Отличное время для активности, связанной с {planet}"
+            general_recommendation = f"⚡ Отличное время! Ваша энергия {planet} на пике."
         elif base_energy >= 5:
             activity_type = "Умеренная энергия"
-            recommendation = f"Подходящее время для повседневных дел"
+            general_recommendation = f"✓ Подходящее время для работы с энергией {planet}."
         else:
             activity_type = "Низкая энергия"
-            recommendation = f"Время для отдыха или работы над слабыми сторонами"
+            general_recommendation = f"⚠️ Планета слаба в вашей карте. Время для развития этой энергии."
+        
+        # Определяем благоприятность часа
+        is_favorable = hour.get('is_favorable', False)
         
         hourly_data.append({
-            'time': f"{start_time} - {end_time}",
+            'hour': hour_number,
+            'time': f"{start_time.split('T')[1][:5] if 'T' in start_time else start_time} - {end_time.split('T')[1][:5] if 'T' in end_time else end_time}",
             'planet': planet,
+            'planet_sanskrit': hour.get('planet_sanskrit', planet),
+            'period': period,
             'energy_level': min(10, max(1, base_energy)),
             'personal_strength': personal_strength,
             'activity_type': activity_type,
-            'recommendation': recommendation
+            'is_favorable': is_favorable,
+            'general_recommendation': general_recommendation,
+            'best_activities': activities,
+            'avoid_activities': avoid,
+            'personalized_advice': personalized_advice
         })
     
     return hourly_data
