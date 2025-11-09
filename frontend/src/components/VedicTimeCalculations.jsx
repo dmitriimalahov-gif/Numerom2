@@ -398,16 +398,31 @@ const VedicTimeCalculations = () => {
           return false;
         }
         
-        // Ночные часы могут переходить через полночь
-        // Если end > start, то это обычный интервал
-        // Если end < start, то интервал переходит через полночь
+        // Ночные часы переходят через полночь
+        // Проверяем, находится ли текущее время в этом интервале
         let isActive;
-        if (end > start) {
-          // Обычный интервал
+        
+        // Получаем дату начала и конца
+        const startDate = start.toDateString();
+        const endDate = end.toDateString();
+        const nowDate = now.toDateString();
+        
+        if (startDate === endDate) {
+          // Интервал в пределах одних суток
           isActive = now >= start && now < end;
         } else {
-          // Интервал через полночь: либо после start, либо до end
-          isActive = now >= start || now < end;
+          // Интервал переходит через полночь
+          // Активен если: (now >= start И now в тот же день что start) ИЛИ (now < end И now в тот же день что end)
+          const sameAsStart = nowDate === startDate;
+          const sameAsEnd = nowDate === endDate;
+          
+          if (sameAsStart) {
+            isActive = now >= start;
+          } else if (sameAsEnd) {
+            isActive = now < end;
+          } else {
+            isActive = false;
+          }
         }
         
         // Логируем все часы до восхода и активный час
@@ -417,9 +432,11 @@ const VedicTimeCalculations = () => {
             end: end?.toLocaleString('ru-RU'),
             now: now.toLocaleString('ru-RU'),
             isActive,
-            crossesMidnight: end < start,
-            'now >= start': now >= start,
-            'now < end': now < end
+            startDate,
+            endDate,
+            nowDate,
+            sameAsStart: nowDate === startDate,
+            sameAsEnd: nowDate === endDate
           });
         }
         
