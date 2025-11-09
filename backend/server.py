@@ -1667,10 +1667,10 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
             day_analysis = analyze_day_compatibility(day_date, user_data, day_schedule)
             
             # Добавляем полный анализ к дню
-            day['compatibility_score'] = day_analysis['compatibility_score']
-            day['positive_aspects'] = day_analysis['positive_aspects'][:3]  # Топ 3
-            day['challenges'] = day_analysis['challenges'][:3]  # Топ 3
-            day['key_advice'] = day_analysis['overall_description'][:200] + '...' if len(day_analysis['overall_description']) > 200 else day_analysis['overall_description']
+            day['compatibility_score'] = day_analysis.get('overall_score', 50)  # Используем overall_score
+            day['positive_aspects'] = day_analysis.get('positive_aspects', [])[:3]  # Топ 3
+            day['challenges'] = day_analysis.get('challenges', [])[:3]  # Топ 3
+            day['key_advice'] = day_analysis.get('overall_description', '')[:200] + '...' if len(day_analysis.get('overall_description', '')) > 200 else day_analysis.get('overall_description', '')
             day['influence'] = day_analysis.get('influence', {})
             day['color_class'] = day_analysis.get('color_class', 'blue')
             
