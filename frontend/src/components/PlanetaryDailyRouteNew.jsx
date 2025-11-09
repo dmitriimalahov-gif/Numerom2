@@ -65,39 +65,16 @@ const PlanetaryDailyRouteNew = () => {
     }
   };
 
-  // Функция для получения персонализированных советов для часа
+  // Функция для получения персонализированных советов для часа (клон из VedicTimeCalculations)
   const getPersonalizedAdvice = async (hour) => {
-    if (!hour || !hour.planet) {
-      console.error('getPersonalizedAdvice: hour или hour.planet отсутствует', hour);
-      return null;
-    }
+    if (!hour) return null;
+
+    const planet = hour.planet;
+    const planetSanskrit = hour.planet_sanskrit || planet;
+    const isNight = hour.period === 'night';
     
     try {
-      const planet = hour.planet;
-      const isNight = hour.period === 'night' || false;
-      
-      // Если у нас уже есть все данные в hour, используем их напрямую
-      if (hour.best_activities || hour.personalized_advice) {
-        const startTime = typeof hour.start === 'string' ? hour.start : hour.start_time?.slice(11, 16) || hour.time?.split(' - ')[0] || '';
-        const endTime = typeof hour.end === 'string' ? hour.end : hour.end_time?.slice(11, 16) || hour.time?.split(' - ')[1] || '';
-        
-        return {
-          planet: hour.planet,
-          planet_sanskrit: hour.planet_sanskrit || hour.planet,
-          planetSanskrit: hour.planet_sanskrit || hour.planet,
-          time: `${startTime} - ${endTime}`,
-          isFavorable: hour.is_favorable,
-          personalStrength: hour.personal_strength || 0,
-          energyLevel: hour.energy_level || 5,
-          activityType: hour.activity_type || 'Умеренная энергия',
-          generalRecommendation: hour.general_recommendation || '',
-          bestActivities: hour.best_activities || [],
-          avoidActivities: hour.avoid_activities || [],
-          personalizedAdvice: hour.personalized_advice || []
-        };
-      }
-      
-      // Иначе делаем запрос к API
+      // Загружаем советы через API (тот же endpoint, что в Ведических временах)
       const response = await fetch(
         `${apiBaseUrl}/vedic-time/planetary-advice/${planet}?is_night=${isNight}`,
         {
@@ -105,35 +82,37 @@ const PlanetaryDailyRouteNew = () => {
         }
       );
       
-      if (!response.ok) throw new Error('Ошибка загрузки советов');
+      if (!response.ok) {
+        throw new Error('Не удалось загрузить советы');
+      }
       
       const advice = await response.json();
       
       // Добавляем информацию о времени
-      const startTime = typeof hour.start === 'string' ? hour.start : hour.start_time?.slice(11, 16) || hour.time?.split(' - ')[0] || '';
-      const endTime = typeof hour.end === 'string' ? hour.end : hour.end_time?.slice(11, 16) || hour.time?.split(' - ')[1] || '';
+      const startTime = typeof hour.start === 'string' ? hour.start : hour.start_time?.slice(11, 16) || '';
+      const endTime = typeof hour.end === 'string' ? hour.end : hour.end_time?.slice(11, 16) || '';
       advice.time = `${startTime} - ${endTime}`;
       advice.isFavorable = hour.is_favorable;
-      advice.personalStrength = hour.personal_strength || 0;
-      advice.energyLevel = hour.energy_level || 5;
       
       return advice;
-    } catch (err) {
-      console.error('Ошибка загрузки советов:', err);
+    } catch (error) {
+      console.error('Ошибка загрузки советов:', error);
       
       // Fallback: возвращаем базовые советы
       const startTime = typeof hour.start === 'string' ? hour.start : hour.start_time?.slice(11, 16) || '';
       const endTime = typeof hour.end === 'string' ? hour.end : hour.end_time?.slice(11, 16) || '';
       
       return {
-        planet: hour.planet,
-        planet_sanskrit: hour.planet_sanskrit || hour.planet,
-        general_recommendation: `Время ${hour.planet} благоприятно для соответствующих планете действий.`,
-        best_activities: ['Следуйте интуиции', 'Будьте внимательны к знакам'],
-        avoid_activities: ['Спешка', 'Необдуманные решения'],
+        planet,
+        planetSanskrit,
+        general_advice: `Время ${planetSanskrit} благоприятно для соответствующих планете действий.`,
+        activities: ['Следуйте интуиции', 'Будьте внимательны к знакам'],
+        avoid: ['Спешка', 'Необдуманные решения'],
+        health: 'Заботьтесь о своем здоровье.',
+        mantra: `Мантра планеты ${planetSanskrit}`,
+        personalized_notes: [],
         time: `${startTime} - ${endTime}`,
-        isFavorable: hour.is_favorable,
-        energy_level: 5
+        isFavorable: hour.is_favorable
       };
     }
   };
@@ -1160,7 +1139,7 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
             {advice.planet === 'Rahu' && '🌑'}
             {advice.planet === 'Ketu' && '⚪'}
           </span>
-          {advice.planet_sanskrit || advice.planetSanskrit || advice.planet}
+          {advice.planet_sanskrit || advice.planetSanskrit}
         </DialogTitle>
         <DialogDescription className={themeConfig.mutedText}>
           Планетарный час: {advice.time}
@@ -1174,53 +1153,6 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
       </DialogHeader>
 
       <div className="mt-6 space-y-6">
-        {/* Информация о планете в карте */}
-        {(advice.personalStrength !== undefined || advice.energyLevel !== undefined || advice.activityType) && (
-          <div className="grid grid-cols-3 gap-3">
-            {advice.personalStrength !== undefined && (
-              <div 
-                className={`p-3 rounded-lg text-center ${themeConfig.text}`}
-                style={{
-                  ...getBackgroundStyle('20'),
-                  ...getBorderStyle('60')
-                }}
-              >
-                <div className="text-2xl font-bold" style={{ color: planetColor }}>
-                  {advice.personalStrength}
-                </div>
-                <div className="text-xs mt-1 opacity-70">Сила в карте</div>
-              </div>
-            )}
-            {advice.energyLevel !== undefined && (
-              <div 
-                className={`p-3 rounded-lg text-center ${themeConfig.text}`}
-                style={{
-                  ...getBackgroundStyle('20'),
-                  ...getBorderStyle('60')
-                }}
-              >
-                <div className="text-2xl font-bold" style={{ color: planetColor }}>
-                  {advice.energyLevel}/10
-                </div>
-                <div className="text-xs mt-1 opacity-70">Энергия часа</div>
-              </div>
-            )}
-            {advice.activityType && (
-              <div 
-                className={`p-3 rounded-lg text-center ${themeConfig.text}`}
-                style={{
-                  ...getBackgroundStyle('20'),
-                  ...getBorderStyle('60')
-                }}
-              >
-                <div className="text-sm font-bold" style={{ color: planetColor }}>
-                  {advice.activityType}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Персонализированные заметки */}
         {advice.personalized_notes && advice.personalized_notes.length > 0 && (
           <div className="space-y-3">
@@ -1241,89 +1173,57 @@ const HourAdviceContent = ({ hour, getAdvice, themeConfig }) => {
         )}
 
         {/* Общая характеристика */}
-        {(advice.general_advice || advice.general || advice.general_recommendation || advice.generalRecommendation) && (
-          <div>
-            <h3 className={`font-bold text-lg mb-2 flex items-center gap-2 ${themeConfig.text}`}>
-              <Sparkles className="h-5 w-5" style={{ color: planetColor }} />
-              Общая характеристика
-            </h3>
-            <p className={themeConfig.mutedText}>{advice.general_advice || advice.general || advice.general_recommendation || advice.generalRecommendation}</p>
-          </div>
-        )}
+        <div>
+          <h3 className={`font-bold text-lg mb-2 flex items-center gap-2 ${themeConfig.text}`}>
+            <Sparkles className="h-5 w-5" style={{ color: planetColor }} />
+            Общая характеристика
+          </h3>
+          <p className={themeConfig.mutedText}>{advice.general_advice || advice.general}</p>
+        </div>
 
         {/* Благоприятные действия */}
-        {(advice.activities || advice.best_activities || advice.bestActivities) && (advice.activities || advice.best_activities || advice.bestActivities).length > 0 && (
-          <div>
-            <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
-              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-              Благоприятные действия
-            </h3>
-            <ul className="space-y-2">
-              {(advice.activities || advice.best_activities || advice.bestActivities || []).map((activity, idx) => (
-                <li key={idx} className="flex items-start gap-2">
-                  <span className="text-emerald-500 mt-1">✓</span>
-                  <span className={themeConfig.mutedText}>{activity}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <div>
+          <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
+            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+            Благоприятные действия
+          </h3>
+          <ul className="space-y-2">
+            {advice.activities.map((activity, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <span className="text-emerald-500 mt-1">✓</span>
+                <span className={themeConfig.mutedText}>{activity}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
 
         {/* Чего избегать */}
-        {(advice.avoid || advice.avoid_activities || advice.avoidActivities) && (advice.avoid || advice.avoid_activities || advice.avoidActivities).length > 0 && (
-          <div>
-            <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
-              Чего избегать
-            </h3>
-            <ul className="space-y-2">
-              {(advice.avoid || advice.avoid_activities || advice.avoidActivities || []).map((item, idx) => (
-                <li key={idx} className="flex items-start gap-2">
-                  <span className="text-amber-500 mt-1">⚠</span>
-                  <span className={themeConfig.mutedText}>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <div>
+          <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            Чего избегать
+          </h3>
+          <ul className="space-y-2">
+            {advice.avoid.map((item, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <span className="text-amber-500 mt-1">⚠</span>
+                <span className={themeConfig.mutedText}>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
 
         {/* Здоровье */}
-        {advice.health && (
-          <div 
-            className={`p-4 rounded-lg ${themeConfig.text}`}
-            style={{
-              ...getBackgroundStyle('15'),
-              borderLeft: `4px solid ${planetColor}`
-            }}
-          >
-            <h3 className="font-bold text-lg mb-2">💊 Здоровье</h3>
-            <p className={themeConfig.mutedText}>{advice.health}</p>
-          </div>
-        )}
-
-        {/* Персонализированные советы */}
-        {(advice.personalized_advice || advice.personalizedAdvice) && (advice.personalized_advice || advice.personalizedAdvice).length > 0 && (
-          <div>
-            <h3 className={`font-bold text-lg mb-3 flex items-center gap-2 ${themeConfig.text}`}>
-              <Star className="h-5 w-5 text-yellow-500" />
-              Персональные рекомендации
-            </h3>
-            <div className="space-y-2">
-              {(advice.personalized_advice || advice.personalizedAdvice || []).map((item, idx) => (
-                <div 
-                  key={idx}
-                  className={`p-3 rounded-lg border ${themeConfig.text}`}
-                  style={{
-                    ...getBackgroundStyle('15'),
-                    ...getBorderStyle('40')
-                  }}
-                >
-                  <p className="text-sm">{item}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <div 
+          className={`p-4 rounded-lg ${themeConfig.text}`}
+          style={{
+            ...getBackgroundStyle('15'),
+            borderLeft: `4px solid ${planetColor}`
+          }}
+        >
+          <h3 className="font-bold text-lg mb-2">💊 Здоровье</h3>
+          <p className={themeConfig.mutedText}>{advice.health}</p>
+        </div>
 
         {/* Мантра */}
         {advice.mantra && (
