@@ -1,9 +1,10 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import pytz
 import os
 import uuid
@@ -13,6 +14,7 @@ import requests
 import logging
 import tempfile
 import re
+import mimetypes
 
 from dotenv import load_dotenv
 
@@ -26,9 +28,18 @@ from models import (
     VedicTimeRequest, PDFReportRequest, HTMLReportRequest,
     UserProfileUpdate, GroupCompatibilityRequest, GroupCompatibilityPerson,
     PersonalConsultation, ConsultationPurchase, CreditTransaction, CREDIT_COSTS,
-    PlanetaryAdviceResponse
+    PlanetaryAdviceResponse, LearningPointsConfig, LearningPointsConfigUpdate,
+    NumerologyCreditsConfig, NumerologyCreditsConfigUpdate,
+    CreditsDeductionConfig, CreditsDeductionConfigUpdate,
+    PlanetaryEnergyModifiersConfig, PlanetaryEnergyModifiersConfigUpdate,
+    MonthlyRouteConfig, MonthlyRouteConfigUpdate
 )
-from lesson_system import lesson_system
+# Import V2 learning system models and functions
+from models_v2 import (
+    LessonV2, TheoryBlock, Exercise, Challenge, ChallengeDay, Quiz, QuizQuestion,
+    LessonFile, ExerciseResult, LessonAnalytics, LessonProgress, ChallengeProgress,
+    QuizAttempt, StudentAnalytics
+)
 from auth import (
     get_current_user, create_access_token, get_password_hash, verify_password,
     create_user_response, ensure_super_admin_exists
@@ -47,11 +58,32 @@ from vedic_numerology import (
     calculate_comprehensive_vedic_numerology,
     generate_weekly_planetary_energy
 )
-from vedic_time_calculations import get_vedic_day_schedule, get_monthly_planetary_route, get_quarterly_planetary_route
+from vedic_time_calculations import get_vedic_day_schedule, get_monthly_planetary_route, get_quarterly_planetary_route, calculate_planetary_hours, calculate_night_planetary_hours, is_favorable_time, get_sunrise_sunset
 from html_generator import create_numerology_report_html
 from pdf_generator import create_numerology_report_pdf, create_compatibility_pdf
 from planetary_advice import init_planetary_advice_collection, get_personalized_planetary_advice
 import stripe
+
+# Helpers: calculate full name number (только латиница)
+def _letters_to_number_sum(text: str) -> int:
+    if not text:
+        return 0
+    norm = [ch for ch in (text or '').upper() if 'A' <= ch <= 'Z']
+    total = 0
+    for ch in norm:
+        total += ord(ch) - ord('A') + 1  # A=1 ... Z=26
+    return total
+
+def calculate_full_name_number(name: str = '', surname: str = '') -> int:
+    """
+    Число имени: используем ТОЛЬКО латиницу из поля name и фамилии.
+    Полное число имени = reduce( sum(буквы имени+фамилии) ).
+    """
+    base_sum = _letters_to_number_sum((name or '') + (surname or ''))
+    x = abs(int(base_sum))
+    while x > 9:
+        x = sum(int(d) for d in str(x))
+    return x
 
 # Load env
 ROOT_DIR = Path(__file__).parent
@@ -88,6 +120,9 @@ SUBSCRIPTION_CREDITS = {
 # FastAPI app
 app = FastAPI()
 api_router = APIRouter(prefix='/api')
+
+# Mount static files directory
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Global scoring configuration cache
 _scoring_config_cache = None
@@ -185,6 +220,7 @@ LESSONS_DIR = UPLOAD_ROOT / 'lessons'
 LESSONS_VIDEO_DIR = LESSONS_DIR / 'videos'
 LESSONS_PDF_DIR = LESSONS_DIR / 'pdfs'
 LESSONS_WORD_DIR = LESSONS_DIR / 'word'
+LESSONS_RESOURCES_DIR = LESSONS_DIR / 'resources'
 TMP_DIR = UPLOAD_ROOT / 'tmp'
 
 @app.on_event('startup')
@@ -202,6 +238,7 @@ async def on_startup():
         LESSONS_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
         LESSONS_PDF_DIR.mkdir(parents=True, exist_ok=True)
         LESSONS_WORD_DIR.mkdir(parents=True, exist_ok=True)
+        LESSONS_RESOURCES_DIR.mkdir(parents=True, exist_ok=True)
         TMP_DIR.mkdir(parents=True, exist_ok=True)
 
         # Инициализируем менеджер push уведомлений
@@ -236,6 +273,20 @@ async def record_credit_transaction(user_id: str, amount: int, description: str,
     )
     await db.credit_transactions.insert_one(transaction.dict())
 
+async def get_credits_deduction_config() -> dict:
+    """Получить конфигурацию списания баллов"""
+    try:
+        config = await db.credits_deduction_config.find_one({'is_active': True})
+        if config:
+            config.pop('_id', None)
+            return config
+    except Exception as e:
+        logger.error(f"Error getting credits deduction config: {e}")
+    
+    # Возвращаем значения по умолчанию
+    default_config = CreditsDeductionConfig()
+    return default_config.dict()
+
 async def deduct_credits(user_id: str, cost: int, description: str, category: str, details: dict = None):
     """Списать баллы и записать транзакцию"""
     user = await db.users.find_one({'id': user_id})
@@ -250,6 +301,38 @@ async def deduct_credits(user_id: str, cost: int, description: str, category: st
     
     # Записываем транзакцию
     await record_credit_transaction(user_id, -cost, description, category, details)
+
+async def get_learning_points_config() -> dict:
+    """Получить конфигурацию начисления баллов за обучение"""
+    try:
+        config = await db.learning_points_config.find_one({'is_active': True})
+        if config:
+            config.pop('_id', None)
+            return config
+    except Exception as e:
+        logger.error(f"Error getting learning points config: {e}")
+    
+    # Возвращаем значения по умолчанию
+    default_config = LearningPointsConfig()
+    return default_config.dict()
+
+async def award_credits_for_learning(user_id: str, amount: int, description: str, category: str, details: dict = None):
+    """Начислить кредиты за обучение и записать транзакцию"""
+    if amount <= 0:
+        return  # Не начисляем нулевые или отрицательные баллы
+    
+    user = await db.users.find_one({'id': user_id})
+    if not user:
+        logger.warning(f"Попытка начислить кредиты несуществующему пользователю: {user_id}")
+        return
+    
+    # Начисляем кредиты
+    await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': amount}})
+    
+    # Записываем транзакцию
+    await record_credit_transaction(user_id, amount, description, category, details)
+    
+    logger.info(f"Начислено {amount} кредитов пользователю {user_id} за {description}")
 
 # ----------------- CREDIT HISTORY -----------------
 @api_router.get('/user/credit-history')
@@ -272,6 +355,65 @@ async def get_credit_history(limit: int = 50, offset: int = 0, current_user: dic
     return {
         'transactions': result,
         'total': await db.credit_transactions.count_documents({'user_id': user_id})
+    }
+
+@api_router.get('/user/points-breakdown')
+async def get_points_breakdown(current_user: dict = Depends(get_current_user)):
+    """Получить разбивку баллов по категориям"""
+    user_id = current_user['user_id']
+    
+    # Получаем все транзакции пользователя
+    transactions = await db.credit_transactions.find(
+        {'user_id': user_id, 'transaction_type': 'credit'}
+    ).to_list(length=None)
+    
+    # Инициализируем счетчики
+    earned_points = 0  # Заработанные баллы (обучение, активность)
+    purchased_points = 0  # Купленные баллы (подписка, покупка)
+    admin_points = 0  # Баллы, добавленные администратором
+    exercise_review_points = 0  # Баллы за проверку упражнений
+    
+    # Категории для заработанных баллов
+    earned_categories = ['learning', 'exercise', 'quiz', 'challenge', 'lesson']
+    
+    # Категории для купленных баллов
+    purchased_categories = ['purchase', 'subscription']
+    
+    # Обрабатываем транзакции
+    for transaction in transactions:
+        amount = transaction.get('amount', 0)
+        category = transaction.get('category', '')
+        details = transaction.get('details', {})
+        
+        if category in earned_categories:
+            # Проверяем, не является ли это проверкой упражнения
+            if category == 'exercise' and (details.get('reviewed_by') or details.get('admin_review')):
+                exercise_review_points += amount
+            else:
+                earned_points += amount
+        elif category in purchased_categories:
+            purchased_points += amount
+        elif category == 'admin' or details.get('added_by_admin'):
+            admin_points += amount
+        elif category == 'exercise_review' or details.get('exercise_review'):
+            exercise_review_points += amount
+        elif category == 'report':
+            # Отчёты считаются заработанными (пользователь потратил баллы на получение отчёта)
+            # Но это списание, поэтому не добавляем в earned_points
+            # Можно добавить отдельную категорию для отчётов, если нужно
+            pass
+    
+    # Получаем текущий баланс
+    user = await db.users.find_one({'id': user_id})
+    total_balance = user.get('credits_remaining', 0) if user else 0
+    
+    return {
+        'earned_points': earned_points,
+        'purchased_points': purchased_points,
+        'admin_points': admin_points,
+        'exercise_review_points': exercise_review_points,
+        'total_balance': total_balance,
+        'total_earned': earned_points + exercise_review_points  # Все заработанные включая проверку
     }
 
 # ----------------- AUTH -----------------
@@ -298,6 +440,8 @@ async def register(user_data: UserCreate, request: Request):
         email=user_data.email,
         password_hash=get_password_hash(user_data.password),
         full_name=user_data.full_name,
+        name=user_data.name or (user_data.full_name.split()[0] if user_data.full_name else None),
+        surname=user_data.surname or (user_data.full_name.split()[1] if user_data.full_name and len(user_data.full_name.split()) > 1 else None),
         birth_date=user_data.birth_date,
         city=city or 'Москва',
         phone_number=user_data.phone_number,
@@ -437,6 +581,29 @@ async def get_payment_status(session_id: str):
             credits_to_add = SUBSCRIPTION_CREDITS.get(package, 0)
             await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': credits_to_add}})
             
+            # Записываем транзакцию в историю
+            if credits_to_add > 0:
+                package_names = {
+                    'one_time': 'Разовая покупка',
+                    'monthly': 'Месячная подписка',
+                    'annual': 'Годовая подписка',
+                    'master_consultation': 'Мастер консультация'
+                }
+                await record_credit_transaction(
+                    user_id=user_id,
+                    amount=credits_to_add,
+                    description=f"Покупка: {package_names.get(package, package)} ({credits_to_add} баллов)",
+                    category='purchase' if package == 'one_time' else 'subscription',
+                    details={
+                        'package_type': package,
+                        'package_name': package_names.get(package, package),
+                        'amount_paid': tx.get('amount', 0),
+                        'currency': tx.get('currency', 'eur'),
+                        'session_id': session_id,
+                        'payment_method': 'demo' if PAYMENT_DEMO_MODE else 'stripe'
+                    }
+                )
+            
             # Обновляем подписку если это не разовая покупка
             if package == 'monthly':
                 await db.users.update_one({'id': user_id}, {'$set': {
@@ -476,6 +643,29 @@ async def get_payment_status(session_id: str):
                 # Добавляем баллы согласно пакету (используем $inc чтобы добавить к существующему балансу)
                 credits_to_add = SUBSCRIPTION_CREDITS.get(package, 0)
                 await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': credits_to_add}})
+                
+                # Записываем транзакцию в историю
+                if credits_to_add > 0:
+                    package_names = {
+                        'one_time': 'Разовая покупка',
+                        'monthly': 'Месячная подписка',
+                        'annual': 'Годовая подписка',
+                        'master_consultation': 'Мастер консультация'
+                    }
+                    await record_credit_transaction(
+                        user_id=user_id,
+                        amount=credits_to_add,
+                        description=f"Покупка: {package_names.get(package, package)} ({credits_to_add} баллов)",
+                        category='purchase' if package == 'one_time' else 'subscription',
+                        details={
+                            'package_type': package,
+                            'package_name': package_names.get(package, package),
+                            'amount_paid': tx.get('amount', 0),
+                            'currency': tx.get('currency', 'eur'),
+                            'session_id': session_id,
+                            'payment_method': 'stripe'
+                        }
+                    )
                 
                 # Обновляем подписку если это не разовая покупка
                 if package == 'monthly':
@@ -544,16 +734,30 @@ async def personal_numbers(birth_date: str = None, current_user: dict = Depends(
         user = User(**user_dict)
         birth_date = user.birth_date
     
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('personal_numbers', CREDIT_COSTS.get('personal_numbers', 1))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['personal_numbers'], 
+        cost, 
         'Расчёт персональных чисел', 
         'numerology',
         {'calculation_type': 'personal_numbers', 'birth_date': birth_date}
     )
     
     results = calculate_personal_numbers(birth_date)
+    # augment with full_name_number from user profile (compute and persist if absent)
+    user_doc = await db.users.find_one({'id': user_id})
+    # Для числа имени используем ТОЛЬКО латинское имя + фамилию
+    name_val = (user_doc or {}).get('name', '')  # ожидаем латиницу
+    surname_val = (user_doc or {}).get('surname', '')
+    fn_number = (user_doc or {}).get('full_name_number')
+    if fn_number is None:
+        fn_number = calculate_full_name_number(name_val, surname_val)
+        await db.users.update_one({'id': user_id}, {'$set': {'full_name_number': fn_number}})
+    results['full_name_number'] = fn_number
     calc = NumerologyCalculation(user_id=user_id, birth_date=birth_date, calculation_type='personal_numbers', results=results)
     await db.numerology_calculations.insert_one(calc.dict())
     return results
@@ -589,7 +793,6 @@ async def planetary_advice_endpoint(
         min_percent=advice_doc.get('min_percent') if advice_doc else None,
         max_percent=advice_doc.get('max_percent') if advice_doc else None
     )
-
 @api_router.post('/numerology/pythagorean-square')
 async def pythagorean_square(birth_date: str = None, current_user: dict = Depends(get_current_user)):
     """Расчёт квадрата Пифагора - 1 балл"""
@@ -603,10 +806,14 @@ async def pythagorean_square(birth_date: str = None, current_user: dict = Depend
         user = User(**user_dict)
         birth_date = user.birth_date
     
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('pythagorean_square', CREDIT_COSTS.get('pythagorean_square', 1))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['pythagorean_square'], 
+        cost, 
         'Расчёт квадрата Пифагора', 
         'numerology',
         {'calculation_type': 'pythagorean_square', 'birth_date': birth_date}
@@ -621,7 +828,9 @@ async def pythagorean_square(birth_date: str = None, current_user: dict = Depend
     destiny_number = reduce_to_single_digit_always(d + m + y)
     helping_mind_number = reduce_to_single_digit_always(m + y)
     wisdom_number = reduce_to_single_digit_always(d + m)
-    ruling_number = reduce_for_ruling_number(d + m + y)  # Сумма всех чисел даты рождения, сохраняем 11 и 22
+    # Правящее число = сумма всех цифр даты рождения (день + месяц + год) (может быть 11, 22)
+    from numerology import calculate_ruling_number
+    ruling_number = calculate_ruling_number(d, m, y)
     
     # Добавляем личные циклы (текущие) - все сводим к однозначному
     from datetime import datetime
@@ -658,10 +867,14 @@ async def compatibility_endpoint(request_data: CompatibilityRequest, current_use
     """Расчёт совместимости пары - 1 балл"""
     user_id = current_user['user_id']
     
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('compatibility_pair', CREDIT_COSTS.get('compatibility_pair', 1))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['compatibility_pair'], 
+        cost, 
         'Расчёт совместимости пары', 
         'numerology',
         {
@@ -683,28 +896,36 @@ async def name_numerology(name_data: dict, current_user: dict = Depends(get_curr
     
     name = name_data.get('name', '')
     surname = name_data.get('surname', '')
+    full_name = f"{name} {surname}".strip()
     
     if not name:
         raise HTTPException(status_code=400, detail='Имя обязательно для расчёта')
     
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('name_numerology', CREDIT_COSTS.get('name_numerology', 1))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['name_numerology'], 
+        cost, 
         'Нумерология имени', 
         'numerology',
         {'calculation_type': 'name_numerology', 'name': name, 'surname': surname}
     )
     
-    # Здесь должна быть логика расчета нумерологии имени
-    # Пока возвращаем заглушку
-    results = {
-        'name': name,
-        'surname': surname,
-        'name_number': sum(ord(c) for c in name) % 9 + 1,
-        'surname_number': sum(ord(c) for c in surname) % 9 + 1 if surname else 0,
-        'full_name_number': (sum(ord(c) for c in (name + surname))) % 9 + 1
-    }
+    # Рассчитываем нумерологию имени
+    from numerology import calculate_name_numerology
+    results = calculate_name_numerology(full_name)
+    
+    # Сохраняем в БД
+    calc = NumerologyCalculation(
+        user_id=user_id, 
+        birth_date='', 
+        calculation_type='name_numerology', 
+        results={**results, 'name': name, 'surname': surname}
+    )
+    await db.numerology_calculations.insert_one(calc.dict())
     
     return results
 
@@ -716,10 +937,14 @@ async def group_compatibility_numerology(group_data: GroupCompatibilityRequest, 
     if len(group_data.people) > 5:
         raise HTTPException(status_code=400, detail='Максимум 5 человек для группового анализа')
     
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('group_compatibility', CREDIT_COSTS.get('group_compatibility', 5))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['group_compatibility'], 
+        cost, 
         f'Групповая совместимость ({len(group_data.people)} чел.)', 
         'numerology',
         {'calculation_type': 'group_compatibility', 'people_count': len(group_data.people)}
@@ -730,23 +955,163 @@ async def group_compatibility_numerology(group_data: GroupCompatibilityRequest, 
         from numerology import calculate_group_compatibility
         # Конвертируем данные людей в нужный формат
         people_data = [{"name": person.name, "birth_date": person.birth_date} for person in group_data.people]
-        results = calculate_group_compatibility(group_data.people)
+        results = calculate_group_compatibility(group_data.main_person_birth_date, people_data)
+        
+        # Сохраняем в БД
+        calc = NumerologyCalculation(
+            user_id=user_id, 
+            birth_date=group_data.main_person_birth_date, 
+            calculation_type='group_compatibility', 
+            results={**results, 'main_person_birth_date': group_data.main_person_birth_date, 'people': people_data}
+        )
+        await db.numerology_calculations.insert_one(calc.dict())
+        
         return results
     except Exception as e:
         # Возвращаем баллы при ошибке
-        await record_credit_transaction(user_id, CREDIT_COSTS['group_compatibility'], 'Возврат за ошибку группового анализа', 'refund')
-        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': CREDIT_COSTS['group_compatibility']}})
+        config = await get_credits_deduction_config()
+        cost = config.get('group_compatibility', CREDIT_COSTS.get('group_compatibility', 5))
+        await record_credit_transaction(user_id, cost, 'Возврат за ошибку группового анализа', 'refund')
+        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': cost}})
         raise HTTPException(status_code=400, detail=f'Ошибка расчета: {str(e)}')
 
-@api_router.post('/quiz/personality-test')
-async def personality_test(test_data: dict, current_user: dict = Depends(get_current_user)):
-    """Тест личности - 1 балл"""
+@api_router.post('/numerology/address-numerology')
+async def address_numerology(address_data: dict, current_user: dict = Depends(get_current_user)):
+    """Нумерология адреса - 1 балл"""
     user_id = current_user['user_id']
+    
+    street = address_data.get('street', '')
+    house_number = address_data.get('house_number', '')
+    apartment_number = address_data.get('apartment_number', '')
+    postal_code = address_data.get('postal_code', '')
+    
+    if not house_number:
+        raise HTTPException(status_code=400, detail='Номер дома обязателен для расчёта')
+    
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('address_numerology', CREDIT_COSTS.get('address_numerology', 1))
     
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['personality_test'], 
+        cost, 
+        'Нумерология адреса', 
+        'numerology',
+        {'calculation_type': 'address_numerology', 'street': street, 'house_number': house_number, 'apartment_number': apartment_number}
+    )
+    
+    # Рассчитываем нумерологию адреса
+    from numerology import calculate_address_numerology
+    results = calculate_address_numerology(street, house_number, apartment_number, postal_code)
+    
+    # Сохраняем в БД
+    calc = NumerologyCalculation(
+        user_id=user_id, 
+        birth_date='', 
+        calculation_type='address_numerology', 
+        results={**results, 'street': street, 'house_number': house_number, 'apartment_number': apartment_number, 'postal_code': postal_code}
+    )
+    await db.numerology_calculations.insert_one(calc.dict())
+    
+    return results
+
+@api_router.post('/numerology/car-numerology')
+async def car_numerology(car_data: dict, current_user: dict = Depends(get_current_user)):
+    """Нумерология автомобиля - 1 балл"""
+    user_id = current_user['user_id']
+    
+    car_number = car_data.get('car_number', '')
+    
+    if not car_number:
+        raise HTTPException(status_code=400, detail='Номер автомобиля обязателен для расчёта')
+    
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('car_numerology', CREDIT_COSTS.get('car_numerology', 1))
+    
+    # Списываем баллы с записью в историю
+    await deduct_credits(
+        user_id, 
+        cost, 
+        'Нумерология автомобиля', 
+        'numerology',
+        {'calculation_type': 'car_numerology', 'car_number': car_number}
+    )
+    
+    # Рассчитываем нумерологию автомобиля
+    from numerology import calculate_car_number_numerology
+    results = calculate_car_number_numerology(car_number)
+    
+    # Сохраняем в БД
+    calc = NumerologyCalculation(
+        user_id=user_id, 
+        birth_date='', 
+        calculation_type='car_numerology', 
+        results=results
+    )
+    await db.numerology_calculations.insert_one(calc.dict())
+    
+    return results
+
+@api_router.post('/vedic-time/planetary-route/save')
+async def save_planetary_route(route_data: dict, current_user: dict = Depends(get_current_user)):
+    """Сохранение планетарного маршрута в БД"""
+    user_id = current_user['user_id']
+    
+    # Сохраняем планетарный маршрут
+    calc = NumerologyCalculation(
+        user_id=user_id, 
+        birth_date=route_data.get('date', ''), 
+        calculation_type='planetary_route', 
+        results=route_data
+    )
+    await db.numerology_calculations.insert_one(calc.dict())
+    
+    return {'status': 'saved', 'message': 'Планетарный маршрут сохранён'}
+
+@api_router.get('/numerology/saved-calculations')
+async def get_saved_calculations(
+    calculation_type: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Получение сохранённых расчётов пользователя"""
+    user_id = current_user['user_id']
+    
+    query = {'user_id': user_id}
+    if calculation_type:
+        query['calculation_type'] = calculation_type
+    
+    # Получаем последние расчёты каждого типа
+    calculations = await db.numerology_calculations.find(query).sort('created_at', -1).to_list(length=100)
+    
+    # Группируем по типу и берём последний для каждого типа
+    grouped = {}
+    for calc in calculations:
+        calc_type = calc.get('calculation_type')
+        if calc_type not in grouped:
+            grouped[calc_type] = {
+                'id': calc.get('id'),
+                'calculation_type': calc_type,
+                'results': calc.get('results', {}),
+                'created_at': calc.get('created_at').isoformat() if calc.get('created_at') else None
+            }
+    
+    return grouped
+
+@api_router.get('/quiz/personality-test')
+async def personality_test(test_data: dict, current_user: dict = Depends(get_current_user)):
+    """Тест личности - 1 балл"""
+    user_id = current_user['user_id']
+    
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('personality_test', CREDIT_COSTS.get('personality_test', 1))
+    
+    # Списываем баллы с записью в историю
+    await deduct_credits(
+        user_id, 
+        cost, 
         'Тест личности', 
         'quiz',
         {'calculation_type': 'personality_test'}
@@ -777,10 +1142,14 @@ async def vedic_daily_schedule(vedic_request: VedicTimeRequest = Depends(), curr
     if not city:
         raise HTTPException(status_code=422, detail="Город не указан. Укажите город в запросе или обновите профиль пользователя.")
     
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('vedic_daily', CREDIT_COSTS.get('vedic_daily', 1))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['vedic_daily'], 
+        cost, 
         'Ведическое время на день', 
         'vedic',
         {'calculation_type': 'vedic_daily', 'city': city, 'date': vedic_request.date}
@@ -799,9 +1168,129 @@ async def vedic_daily_schedule(vedic_request: VedicTimeRequest = Depends(), curr
     schedule = get_vedic_day_schedule(city=city, date=date_obj)
     if 'error' in schedule:
         # Возвращаем балл при ошибке
-        await record_credit_transaction(user_id, CREDIT_COSTS['vedic_daily'], 'Возврат за ошибку ведического времени', 'refund')
-        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': CREDIT_COSTS['vedic_daily']}})
+        config = await get_credits_deduction_config()
+        cost = config.get('vedic_daily', CREDIT_COSTS.get('vedic_daily', 1))
+        await record_credit_transaction(user_id, cost, 'Возврат за ошибку ведического времени', 'refund')
+        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': cost}})
         raise HTTPException(status_code=400, detail=schedule['error'])
+    
+    # Add planetary energy calculation for the day
+    try:
+        user_dict = await db.users.find_one({'id': user_id})
+        if user_dict and user_dict.get('birth_date'):
+            user = User(**user_dict)
+            
+            # Prepare user data for enhanced calculation
+            user_numbers = None
+            pythagorean_square_data = None
+            fractal_behavior = None
+            problem_numbers = None
+            name_numbers = None
+            weekday_energy = None
+            janma_ank_value = None
+            
+            try:
+                day, month, year = parse_birth_date(user.birth_date)
+                
+                # Get personal numbers
+                personal_numbers = calculate_personal_numbers(user.birth_date)
+                user_numbers = {
+                    'soul_number': personal_numbers.get('soul_number'),
+                    'mind_number': personal_numbers.get('mind_number'),
+                    'destiny_number': personal_numbers.get('destiny_number'),
+                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'ruling_number': personal_numbers.get('ruling_number'),
+                    'personal_day': personal_numbers.get('personal_day')
+                }
+                
+                # Calculate Pythagorean Square
+                pythagorean_square_data = create_pythagorean_square(day, month, year)
+                
+                # Calculate Janma Ank
+                from vedic_numerology import calculate_janma_ank, calculate_bhagya_ank, calculate_enhanced_daily_planetary_energy
+                janma_ank_value = calculate_janma_ank(day, month, year)
+                total_before_reduction = day + month + year
+                if total_before_reduction == 22:
+                    janma_ank_value = 22
+                
+                destiny_number = calculate_bhagya_ank(day, month, year)
+                
+                # Calculate fractal behavior
+                day_reduced = reduce_to_single_digit(day)
+                month_reduced = reduce_to_single_digit(month)
+                year_reduced = reduce_to_single_digit(year)
+                year_sum = reduce_to_single_digit(day + month + year)
+                fractal_behavior = [day_reduced, month_reduced, year_reduced, year_sum]
+                
+                # Calculate problem numbers
+                soul_num = user_numbers.get('soul_number', 1)
+                mind_num = user_numbers.get('mind_number', 1)
+                destiny_num = user_numbers.get('destiny_number', 1)
+                problem1 = reduce_to_single_digit(abs(soul_num - mind_num))
+                problem2 = reduce_to_single_digit(abs(soul_num - year_reduced))
+                problem3 = reduce_to_single_digit(abs(problem1 - problem2))
+                problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
+                problem_numbers = [problem1, problem2, problem3, problem4]
+                
+                # Get name numbers if available
+                if hasattr(user, 'full_name') and user.full_name:
+                    from numerology import calculate_name_numerology
+                    try:
+                        name_data = calculate_name_numerology(user.full_name)
+                        name_numbers = {
+                            'first_name_number': name_data.get('first_name_number'),
+                            'last_name_number': name_data.get('last_name_number'),
+                            'total_name_number': name_data.get('total_name_number'),
+                            'full_name_number': name_data.get('total_name_number')
+                        }
+                    except:
+                        pass
+                
+                # Calculate weekday energy
+                try:
+                    from numerology import calculate_planetary_strength
+                    planetary_strength_data = calculate_planetary_strength(day, month, year)
+                    strength_dict = planetary_strength_data.get('strength', {})
+                    planet_name_to_key = {
+                        'Солнце': 'surya', 'Луна': 'chandra', 'Марс': 'mangal',
+                        'Меркурий': 'budha', 'Юпитер': 'guru', 'Венера': 'shukra', 'Сатурн': 'shani'
+                    }
+                    weekday_energy = {}
+                    for planet_name, energy_value in strength_dict.items():
+                        planet_key = planet_name_to_key.get(planet_name)
+                        if planet_key:
+                            weekday_energy[planet_key] = float(energy_value)
+                except:
+                    pass
+                
+                # Get modifiers config
+                modifiers_config = await get_planetary_energy_modifiers_config()
+                
+                # Calculate planetary energy for the day
+                planetary_energies = calculate_enhanced_daily_planetary_energy(
+                    destiny_number=destiny_number,
+                    date=date_obj,
+                    birth_date=user.birth_date,
+                    user_numbers=user_numbers,
+                    pythagorean_square=pythagorean_square_data,
+                    fractal_behavior=fractal_behavior,
+                    problem_numbers=problem_numbers,
+                    name_numbers=name_numbers,
+                    weekday_energy=weekday_energy,
+                    janma_ank=janma_ank_value,
+                    city=city,
+                    modifiers_config=modifiers_config
+                )
+                
+                # Add planetary energies to schedule
+                schedule['planetary_energies'] = planetary_energies
+                schedule['total_energy'] = sum(planetary_energies.values())
+                
+            except Exception as e:
+                print(f"Error calculating planetary energy for daily schedule: {e}")
+    except Exception as e:
+        print(f"Error adding planetary energy to daily schedule: {e}")
+    
     return schedule
 
 async def get_scoring_config_cached():
@@ -816,6 +1305,54 @@ async def get_scoring_config_cached():
         return default_config.dict()
     
     return config
+
+async def get_user_numerology_data(user_id: str) -> Dict[str, Any]:
+    """Получить нумерологические данные пользователя"""
+    user = await db.users.find_one({'id': user_id})
+    if not user:
+        return {}
+    
+    birth_date = user.get('birth_date', '')
+    if not birth_date:
+        return {}
+    
+    # Вычисляем персональные числа
+    try:
+        numbers = calculate_personal_numbers(birth_date)
+        return {
+            'soul_number': numbers.get('soul_number', 0),
+            'destiny_number': numbers.get('destiny_number', 0),
+            'mind_number': numbers.get('mind_number', 0),
+            'birth_date': birth_date,
+            'planet_counts': numbers.get('planetary_strength', {}).get('strength', {})
+        }
+    except Exception as e:
+        logger.error(f"Error calculating numerology data: {e}")
+        return {}
+
+async def calculate_hourly_planetary_energy(hours: List[Dict[str, Any]], user_data: Dict[str, Any], db) -> List[Dict[str, Any]]:
+    """Вычислить почасовую энергию планет с детальными советами"""
+    if not hours:
+        return []
+    
+    result = []
+    for hour in hours:
+        planet = hour.get('planet', '')
+        result.append({
+            **hour,
+            'energy_level': 50,  # Базовая энергия
+            'advice': f'Период планеты {planet}'
+        })
+    return result
+
+def find_best_hours_for_activities(hours: List[Dict[str, Any]], user_data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Найти лучшие часы для разных активностей"""
+    return {
+        'work': hours[:3] if len(hours) >= 3 else hours,
+        'communication': hours[3:6] if len(hours) >= 6 else [],
+        'rest': hours[6:9] if len(hours) >= 9 else [],
+        'creativity': hours[9:12] if len(hours) >= 12 else []
+    }
 
 def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], schedule: Dict[str, Any], scoring_config: Dict[str, Any] = None) -> Dict[str, Any]:
     """
@@ -926,8 +1463,18 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     # Получаем конфигурацию системы оценки
     config = get_scoring_config_sync()
     
+    # Утилита для безопасного извлечения числовых значений из конфигурации
+    def score_value(key: str, default: int) -> int:
+        value = config.get(key, default)
+        if isinstance(value, (int, float)):
+            return int(value)
+        try:
+            return int(str(value))
+        except Exception:
+            return default
+    
     # 1. БАЗОВЫЙ СЧЁТ - из конфигурации
-    base_score = config['base_score']
+    base_score = score_value('base_score', 20)
     compatibility_score = base_score
     
     # Списки для позитивных аспектов и вызовов
@@ -949,7 +1496,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     
     if planet_weekday_energy == 0:
         # Это КРИТИЧЕСКИ СЛОЖНЫЙ день - энергия планеты отсутствует!
-        compatibility_score -= 15  # Снижение баллов
+        zero_penalty = score_value('personal_energy_zero', -15)
+        compatibility_score += zero_penalty
         challenges.append({
             'type': 'zero_weekday_energy',
             'icon': '🚨',
@@ -966,12 +1514,14 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
                 "Проводите больше времени в уединении и покое"
             ],
             'planet_info': f"Ваша личная энергия {ruling_planet} = 0 (расчёт по дате рождения)",
-            'solution': f"Перенесите все важные дела на дни с высокой энергией других планет. Сегодня - день минимальной активности и максимальной осторожности."
+            'solution': f"Перенесите все важные дела на дни с высокой энергией других планет. Сегодня - день минимальной активности и максимальной осторожности.",
+            'score_impact': zero_penalty
         })
         print(f"🚨 КРИТИЧЕСКИЙ ДЕНЬ: Энергия {ruling_planet} = 0 для пользователя!")
     elif planet_weekday_energy > 0 and planet_weekday_energy <= 3:
         # Низкая энергия - день сложный, но не критический
-        compatibility_score -= 10
+        low_penalty = score_value('personal_energy_low', -10)
+        compatibility_score += low_penalty
         challenges.append({
             'type': 'low_weekday_energy',
             'icon': '⚡',
@@ -986,11 +1536,13 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
                 "Отдавайте предпочтение рутинным делам"
             ],
             'planet_info': f"Личная энергия {ruling_planet} = {planet_weekday_energy}/9",
-            'solution': "Работайте в планетарные часы других, более сильных для вас планет"
+            'solution': "Работайте в планетарные часы других, более сильных для вас планет",
+            'score_impact': low_penalty
         })
     elif planet_weekday_energy >= 7:
         # Высокая энергия - день благоприятный!
-        compatibility_score += 10  # Повышение баллов
+        high_bonus = score_value('personal_energy_high', 10)
+        compatibility_score += high_bonus
         positive_aspects.append({
             'type': 'high_weekday_energy',
             'icon': '⚡',
@@ -1004,13 +1556,15 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
                 "Принимайте стратегические решения",
                 f"Энергия {ruling_planet} полностью поддерживает вас"
             ],
-            'planet_info': f"Личная энергия {ruling_planet} = {planet_weekday_energy}/9 - МАКСИМУМ!"
+            'planet_info': f"Личная энергия {ruling_planet} = {planet_weekday_energy}/9 - МАКСИМУМ!",
+            'score_impact': high_bonus
         })
     
     # 2. РЕЗОНАНС ЧИСЛА ДУШИ (+1/+5/-10)
     soul_planet = number_to_planet.get(soul_number)
     if soul_number == ruling_planet_number:
-        compatibility_score += 1
+        delta = score_value('soul_resonance', 1)
+        compatibility_score += delta
         positive_aspects.append({
             'type': 'soul_resonance',
             'icon': '🌟',
@@ -1023,10 +1577,12 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
                 "Это время максимальной силы для начинаний, связанных с вашей истинной природой",
                 f"Медитируйте на энергию {ruling_planet} для усиления эффекта"
             ],
-            'planet_info': f"{ruling_planet} управляет вашей душой и днём одновременно, создавая мощный резонанс"
+            'planet_info': f"{ruling_planet} управляет вашей душой и днём одновременно, создавая мощный резонанс",
+            'score_impact': delta
         })
     elif soul_planet and ruling_planet in planet_relationships.get(soul_planet, {}).get('friends', []):
-        compatibility_score += 5
+        delta = score_value('soul_friendship', 5)
+        compatibility_score += delta
         positive_aspects.append({
             'type': 'soul_harmony',
             'icon': '✨',
@@ -1038,10 +1594,12 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
                 "Ваши истинные желания найдут поддержку",
                 f"Планеты {soul_planet} и {ruling_planet} работают в гармонии"
             ],
-            'planet_info': f"{soul_planet} (ваша душа) дружит с {ruling_planet} (планета дня)"
+            'planet_info': f"{soul_planet} (ваша душа) дружит с {ruling_planet} (планета дня)",
+            'score_impact': delta
         })
     elif soul_planet and ruling_planet in planet_relationships.get(soul_planet, {}).get('enemies', []):
-        compatibility_score -= 10
+        delta = score_value('soul_hostility', -10)
+        compatibility_score += delta
         challenges.append({
             'type': 'soul_conflict',
             'icon': '⚠️',
@@ -1056,13 +1614,15 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
                 "Отложите важные начинания на более благоприятный день"
             ],
             'planet_info': f"Враждебные отношения: {soul_planet} (душа) ⚔ {ruling_planet} (день)",
-            'solution': f"Используйте планетарные часы {soul_planet} для важных дел"
+            'solution': f"Используйте планетарные часы {soul_planet} для важных дел",
+            'score_impact': delta
         })
     
     # 3. РЕЗОНАНС ЧИСЛА УМА (+1/+6/-20)
     mind_planet = number_to_planet.get(mind_number)
     if mind_number == ruling_planet_number:
-        compatibility_score += 1
+        delta = score_value('mind_resonance', 1)
+        compatibility_score += delta
         positive_aspects.append({
             'type': 'mind_resonance',
             'icon': '🧠',
@@ -1078,7 +1638,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"{ruling_planet} усиливает ваши ментальные способности в {(12/80)*100:.0f}% от максимума"
         })
     elif mind_planet and ruling_planet in planet_relationships.get(mind_planet, {}).get('friends', []):
-        compatibility_score += 6
+        delta = score_value('mind_friendship', 6)
+        compatibility_score += delta
         positive_aspects.append({
             'type': 'mind_harmony',
             'icon': '💭',
@@ -1093,7 +1654,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"{mind_planet} (ваш ум) дружит с {ruling_planet} (планета дня)"
         })
     elif mind_planet and ruling_planet in planet_relationships.get(mind_planet, {}).get('enemies', []):
-        compatibility_score -= 20
+        delta = score_value('mind_hostility', -20)
+        compatibility_score += delta
         challenges.append({
             'type': 'mind_conflict',
             'icon': '🧠',
@@ -1115,7 +1677,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     # 4. РЕЗОНАНС ЧИСЛА СУДЬБЫ (+1/-30)
     destiny_planet = number_to_planet.get(destiny_number)
     if destiny_number == ruling_planet_number:
-        compatibility_score += 1
+        delta = score_value('destiny_resonance', 1)
+        compatibility_score += delta
         positive_aspects.append({
             'type': 'destiny_resonance',
             'icon': '🎯',
@@ -1131,7 +1694,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"{ruling_planet} направляет вас по пути вашего предназначения"
         })
     elif destiny_planet and ruling_planet in planet_relationships.get(destiny_planet, {}).get('enemies', []):
-        compatibility_score -= 30
+        delta = score_value('destiny_hostility', -30)
+        compatibility_score += delta
         challenges.append({
             'type': 'destiny_conflict',
             'icon': '🎯',
@@ -1170,7 +1734,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
     # 6. СИЛА ПЛАНЕТЫ В КАРТЕ (+12/+1/-10)
     planet_count = planet_counts.get(ruling_planet, 0)
     if planet_count >= 4:
-        compatibility_score += 12
+        delta = score_value('planet_strength_high', 12)
+        compatibility_score += delta
         positive_aspects.append({
             'type': 'planet_strength_high',
             'icon': '⚖️',
@@ -1187,7 +1752,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"Сила {ruling_planet} в вашей карте: {planet_count}/9 = {(planet_count/9)*100:.0f}% мощности"
         })
     elif planet_count >= 2:
-        compatibility_score += 1
+        delta = score_value('planet_strength_medium', 1)
+        compatibility_score += delta
         positive_aspects.append({
             'type': 'planet_strength_balanced',
             'icon': '⚡',
@@ -1202,6 +1768,8 @@ def analyze_day_compatibility(date_obj: datetime, user_data: Dict[str, Any], sch
             'planet_info': f"Баланс {ruling_planet}: {planet_count}/9 = оптимальная сила"
         })
     elif planet_count == 1:
+        delta = score_value('planet_strength_low', -10)
+        compatibility_score += delta
         challenges.append({
             'type': 'planet_weakness',
             'icon': '📉',
@@ -1747,10 +2315,14 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
         raise HTTPException(status_code=404, detail='Пользователь не найден')
     user = User(**user_dict)
     
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('planetary_daily', CREDIT_COSTS.get('planetary_daily', 1))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['planetary_daily'], 
+        cost, 
         'Планетарный маршрут на день', 
         'vedic',
         {'calculation_type': 'planetary_daily', 'date': vedic_request.date}
@@ -1773,8 +2345,10 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
     schedule = get_vedic_day_schedule(city=city, date=date_obj)
     if 'error' in schedule:
         # Возвращаем балл при ошибке
-        await record_credit_transaction(user_id, CREDIT_COSTS['planetary_daily'], 'Возврат за ошибку планетарного маршрута', 'refund')
-        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': CREDIT_COSTS['planetary_daily']}})
+        config = await get_credits_deduction_config()
+        cost = config.get('planetary_daily', CREDIT_COSTS.get('planetary_daily', 1))
+        await record_credit_transaction(user_id, cost, 'Возврат за ошибку планетарного маршрута', 'refund')
+        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': cost}})
         raise HTTPException(status_code=400, detail=schedule['error'])
         
     # Получаем нумерологические данные пользователя
@@ -1796,6 +2370,119 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
     # Находим лучшие часы для разных активностей
     best_hours = find_best_hours_for_activities(full_24h_guide, user_data)
     
+    # Calculate planetary energies for the day
+    planetary_energies = {}
+    total_energy = 0
+    try:
+        # Prepare user data for enhanced calculation
+        user_numbers = None
+        pythagorean_square_data = None
+        fractal_behavior = None
+        problem_numbers = None
+        name_numbers = None
+        weekday_energy = None
+        janma_ank_value = None
+        
+        if user.birth_date:
+            try:
+                day, month, year = parse_birth_date(user.birth_date)
+                
+                # Get personal numbers
+                personal_numbers = calculate_personal_numbers(user.birth_date)
+                user_numbers = {
+                    'soul_number': personal_numbers.get('soul_number'),
+                    'mind_number': personal_numbers.get('mind_number'),
+                    'destiny_number': personal_numbers.get('destiny_number'),
+                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'ruling_number': personal_numbers.get('ruling_number'),
+                    'personal_day': personal_numbers.get('personal_day')
+                }
+                
+                # Calculate Pythagorean Square
+                pythagorean_square_data = create_pythagorean_square(day, month, year)
+                
+                # Calculate Janma Ank
+                from vedic_numerology import calculate_janma_ank, calculate_bhagya_ank, calculate_enhanced_daily_planetary_energy
+                janma_ank_value = calculate_janma_ank(day, month, year)
+                total_before_reduction = day + month + year
+                if total_before_reduction == 22:
+                    janma_ank_value = 22
+                
+                destiny_number = calculate_bhagya_ank(day, month, year)
+                
+                # Calculate fractal behavior
+                day_reduced = reduce_to_single_digit(day)
+                month_reduced = reduce_to_single_digit(month)
+                year_reduced = reduce_to_single_digit(year)
+                year_sum = reduce_to_single_digit(day + month + year)
+                fractal_behavior = [day_reduced, month_reduced, year_reduced, year_sum]
+                
+                # Calculate problem numbers
+                soul_num = user_numbers.get('soul_number', 1)
+                mind_num = user_numbers.get('mind_number', 1)
+                destiny_num = user_numbers.get('destiny_number', 1)
+                problem1 = reduce_to_single_digit(abs(soul_num - mind_num))
+                problem2 = reduce_to_single_digit(abs(soul_num - year_reduced))
+                problem3 = reduce_to_single_digit(abs(problem1 - problem2))
+                problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
+                problem_numbers = [problem1, problem2, problem3, problem4]
+                
+                # Get name numbers if available
+                if hasattr(user, 'full_name') and user.full_name:
+                    from numerology import calculate_name_numerology
+                    try:
+                        name_data = calculate_name_numerology(user.full_name)
+                        name_numbers = {
+                            'first_name_number': name_data.get('first_name_number'),
+                            'last_name_number': name_data.get('last_name_number'),
+                            'total_name_number': name_data.get('total_name_number'),
+                            'full_name_number': name_data.get('total_name_number')
+                        }
+                    except:
+                        pass
+                
+                # Calculate weekday energy
+                try:
+                    from numerology import calculate_planetary_strength
+                    planetary_strength_data = calculate_planetary_strength(day, month, year)
+                    strength_dict = planetary_strength_data.get('strength', {})
+                    planet_name_to_key = {
+                        'Солнце': 'surya', 'Луна': 'chandra', 'Марс': 'mangal',
+                        'Меркурий': 'budha', 'Юпитер': 'guru', 'Венера': 'shukra', 'Сатурн': 'shani'
+                    }
+                    weekday_energy = {}
+                    for planet_name, energy_value in strength_dict.items():
+                        planet_key = planet_name_to_key.get(planet_name)
+                        if planet_key:
+                            weekday_energy[planet_key] = float(energy_value)
+                except:
+                    pass
+                
+                # Get modifiers config
+                modifiers_config = await get_planetary_energy_modifiers_config()
+                
+                # Calculate planetary energy for the day
+                planetary_energies = calculate_enhanced_daily_planetary_energy(
+                    destiny_number=destiny_number,
+                    date=date_obj,
+                    birth_date=user.birth_date,
+                    user_numbers=user_numbers,
+                    pythagorean_square=pythagorean_square_data,
+                    fractal_behavior=fractal_behavior,
+                    problem_numbers=problem_numbers,
+                    name_numbers=name_numbers,
+                    weekday_energy=weekday_energy,
+                    janma_ank=janma_ank_value,
+                    city=city,
+                    modifiers_config=modifiers_config
+                )
+                
+                total_energy = sum(planetary_energies.values())
+            except Exception as e:
+                print(f"Error calculating planetary energy for daily route: {e}")
+    except Exception as e:
+        print(f"Error adding planetary energy to daily route: {e}")
+    
     # Build detailed route from schedule
     rec = schedule.get('recommendations', {})
     route = {
@@ -1809,6 +2496,10 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
         
         # НОВОЕ: Добавляем schedule для фронтенда
         'schedule': schedule,
+        
+        # Планетарные энергии дня
+        'planetary_energies': planetary_energies,
+        'total_energy': total_energy,
         
         # Полный 24-часовой гид с детальными советами
         'hourly_guide_24h': full_24h_guide,
@@ -1841,11 +2532,23 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
             'compatibility_score': day_analysis.get('overall_score', 0)
         }
     }
+    
+    # Сохраняем планетарный маршрут в БД
+    try:
+        calc = NumerologyCalculation(
+            user_id=user_id, 
+            birth_date=vedic_request.date, 
+            calculation_type='planetary_route_daily', 
+            results=route
+        )
+        await db.numerology_calculations.insert_one(calc.dict())
+    except Exception as e:
+        print(f"Ошибка сохранения планетарного маршрута: {e}")
+    
     return route
-
 @api_router.get('/vedic-time/planetary-route/weekly')
 async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), current_user: dict = Depends(get_current_user)):
-    """Планетарный маршрут на неделю - 2 балла"""
+    """Планетарный маршрут на неделю - 10 баллов"""
     user_id = current_user['user_id']
     
     # Получаем данные пользователя
@@ -1855,14 +2558,20 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
     
     user = User(**user_dict)
     
-    # Проверяем кредиты (2 балла за неделю)
-    if user.credits_remaining < 2:
-        raise HTTPException(status_code=402, detail='Недостаточно баллов. Требуется 2 балла.')
+    # Получаем стоимость из единой конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('planetary_weekly', CREDIT_COSTS.get('planetary_weekly', 10))
+    
+    # Списываем баллы с записью в историю
+    await deduct_credits(
+        user_id,
+        cost,
+        'Планетарный маршрут на неделю',
+        'vedic',
+        {'calculation_type': 'planetary_weekly', 'date': vedic_request.date}
+    )
     
     try:
-        # Списываем баллы
-        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': -2}})
-        await record_credit_transaction(user_id, 2, 'Планетарный маршрут на неделю', 'debit')
         
         # Парсим дату
         date_obj = datetime.strptime(vedic_request.date, '%Y-%m-%d')
@@ -1870,22 +2579,134 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
         # Импортируем функцию
         from vedic_time_calculations import get_weekly_planetary_route
         
+        # Prepare user data for enhanced calculation
+        user_numbers = None
+        pythagorean_square_data = None
+        fractal_behavior = None
+        problem_numbers = None
+        name_numbers = None
+        weekday_energy = None
+        janma_ank_value = None
+        
+        city = vedic_request.city or user.city
+        if not city:
+            raise HTTPException(status_code=422, detail="Город не указан. Укажите город в запросе или обновите профиль пользователя.")
+        
+        # Initialize variables with default values
+        user_numbers = None
+        pythagorean_square_data = None
+        fractal_behavior = None
+        problem_numbers = None
+        name_numbers = None
+        weekday_energy = None
+        janma_ank_value = None
+        
+        if user.birth_date:
+            try:
+                day, month, year = parse_birth_date(user.birth_date)
+                
+                # Get personal numbers
+                personal_numbers = calculate_personal_numbers(user.birth_date)
+                user_numbers = {
+                    'soul_number': personal_numbers.get('soul_number'),
+                    'mind_number': personal_numbers.get('mind_number'),
+                    'destiny_number': personal_numbers.get('destiny_number'),
+                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'ruling_number': personal_numbers.get('ruling_number'),
+                    'personal_day': personal_numbers.get('personal_day')
+                }
+                
+                # Calculate Pythagorean Square
+                pythagorean_square_data = create_pythagorean_square(day, month, year)
+                
+                # Calculate Janma Ank
+                from vedic_numerology import calculate_janma_ank
+                janma_ank_value = calculate_janma_ank(day, month, year)
+                total_before_reduction = day + month + year
+                if total_before_reduction == 22:
+                    janma_ank_value = 22
+                
+                # Calculate fractal behavior
+                day_reduced = reduce_to_single_digit(day)
+                month_reduced = reduce_to_single_digit(month)
+                year_reduced = reduce_to_single_digit(year)
+                year_sum = reduce_to_single_digit(day + month + year)
+                fractal_behavior = [day_reduced, month_reduced, year_reduced, year_sum]
+                
+                # Calculate problem numbers
+                soul_num = user_numbers.get('soul_number', 1)
+                mind_num = user_numbers.get('mind_number', 1)
+                destiny_num = user_numbers.get('destiny_number', 1)
+                problem1 = reduce_to_single_digit(abs(soul_num - mind_num))
+                problem2 = reduce_to_single_digit(abs(soul_num - year_reduced))
+                problem3 = reduce_to_single_digit(abs(problem1 - problem2))
+                problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
+                problem_numbers = [problem1, problem2, problem3, problem4]
+                
+                # Get name numbers if available
+                if hasattr(user, 'full_name') and user.full_name:
+                    from numerology import calculate_name_numerology
+                    try:
+                        name_data = calculate_name_numerology(user.full_name)
+                        name_numbers = {
+                            'first_name_number': name_data.get('first_name_number'),
+                            'last_name_number': name_data.get('last_name_number'),
+                            'total_name_number': name_data.get('total_name_number'),
+                            'full_name_number': name_data.get('total_name_number')
+                        }
+                    except:
+                        pass
+                
+                # Calculate weekday energy
+                try:
+                    from numerology import calculate_planetary_strength
+                    planetary_strength_data = calculate_planetary_strength(day, month, year)
+                    strength_dict = planetary_strength_data.get('strength', {})
+                    planet_name_to_key = {
+                        'Солнце': 'surya', 'Луна': 'chandra', 'Марс': 'mangal',
+                        'Меркурий': 'budha', 'Юпитер': 'guru', 'Венера': 'shukra', 'Сатурн': 'shani'
+                    }
+                    weekday_energy = {}
+                    for planet_name, energy_value in strength_dict.items():
+                        planet_key = planet_name_to_key.get(planet_name)
+                        if planet_key:
+                            weekday_energy[planet_key] = float(energy_value)
+                except:
+                    pass
+            except Exception as e:
+                print(f"Error preparing enhanced calculation data: {e}")
+        
+        # Get modifiers config
+        modifiers_config = await get_planetary_energy_modifiers_config()
+        
         # Получаем недельный маршрут
         weekly_route = get_weekly_planetary_route(
-            city=vedic_request.city,
+            city=city,
             start_date=date_obj,
-            birth_date=user.birth_date
+            birth_date=user.birth_date,
+            user_numbers=user_numbers,
+            pythagorean_square=pythagorean_square_data,
+            fractal_behavior=fractal_behavior,
+            problem_numbers=problem_numbers,
+            name_numbers=name_numbers,
+            weekday_energy=weekday_energy,
+            janma_ank=janma_ank_value,
+            modifiers_config=modifiers_config
         )
         
         # Получаем нумерологические данные пользователя
-        from numerology import parse_birth_date, reduce_to_single_digit_always, reduce_for_ruling_number
+        from numerology import reduce_to_single_digit_always, reduce_for_ruling_number
         
         # Рассчитываем личные числа
-        d, m, y = parse_birth_date(user.birth_date)
+        from numerology import calculate_ruling_number
+        if user.birth_date:
+            d, m, y = parse_birth_date(user.birth_date)
+        else:
+            d, m, y = 1, 1, 2000  # Default values
         soul_number = reduce_to_single_digit_always(d)
         mind_number = reduce_to_single_digit_always(m)
         destiny_number = reduce_to_single_digit_always(d + m + y)
-        ruling_number = reduce_for_ruling_number(d + m + y)
+        ruling_number = calculate_ruling_number(d, m, y)
         
         # Добавляем персонализированный анализ для каждого дня
         user_data = {
@@ -1970,13 +2791,15 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
         print(f"❌ Traceback: {traceback.format_exc()}")
         
         # Возвращаем баллы в случае ошибки
-        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': 2}})
-        await record_credit_transaction(user_id, 2, 'Возврат за ошибку недельного маршрута', 'refund')
+        config = await get_credits_deduction_config()
+        cost = config.get('planetary_weekly', CREDIT_COSTS.get('planetary_weekly', 10))
+        await record_credit_transaction(user_id, cost, 'Возврат за ошибку недельного маршрута', 'refund')
+        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': cost}})
         raise HTTPException(status_code=400, detail=f'Ошибка расчета недельного маршрута: {str(e)}')
 
 @api_router.get('/vedic-time/planetary-route/monthly')
 async def monthly_planetary_route(vedic_request: VedicTimeRequest = Depends(), current_user: dict = Depends(get_current_user)):
-    """Планетарный маршрут на месяц - 5 баллов"""
+    """Планетарный маршрут на месяц - 30 баллов"""
     user_id = current_user['user_id']
     
     # Получаем данные пользователя
@@ -1985,10 +2808,14 @@ async def monthly_planetary_route(vedic_request: VedicTimeRequest = Depends(), c
         raise HTTPException(status_code=404, detail='Пользователь не найден')
     user = User(**user_dict)
     
+    # Получаем стоимость из единой конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('planetary_monthly', CREDIT_COSTS.get('planetary_monthly', 30))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['planetary_monthly'], 
+        cost, 
         'Планетарный маршрут на месяц', 
         'vedic',
         {'calculation_type': 'planetary_monthly', 'date': vedic_request.date}
@@ -2008,16 +2835,111 @@ async def monthly_planetary_route(vedic_request: VedicTimeRequest = Depends(), c
         raise HTTPException(status_code=422, detail="Город не указан. Укажите город в запросе или обновите профиль пользователя.")
     
     try:
-        monthly_route = get_monthly_planetary_route(city=city, start_date=date_obj, birth_date=user.birth_date)
+        # Prepare user data for enhanced calculation
+        user_numbers = None
+        pythagorean_square_data = None
+        fractal_behavior = None
+        problem_numbers = None
+        name_numbers = None
+        weekday_energy = None
+        janma_ank_value = None
+        
+        if user.birth_date:
+            try:
+                day, month, year = parse_birth_date(user.birth_date)
+                
+                # Get personal numbers
+                personal_numbers = calculate_personal_numbers(user.birth_date)
+                user_numbers = {
+                    'soul_number': personal_numbers.get('soul_number'),
+                    'mind_number': personal_numbers.get('mind_number'),
+                    'destiny_number': personal_numbers.get('destiny_number'),
+                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'ruling_number': personal_numbers.get('ruling_number'),
+                    'personal_day': personal_numbers.get('personal_day')
+                }
+                
+                # Calculate Pythagorean Square
+                pythagorean_square_data = create_pythagorean_square(day, month, year)
+                
+                # Calculate Janma Ank
+                from vedic_numerology import calculate_janma_ank
+                janma_ank_value = calculate_janma_ank(day, month, year)
+                total_before_reduction = day + month + year
+                if total_before_reduction == 22:
+                    janma_ank_value = 22
+                
+                # Calculate fractal behavior
+                day_reduced = reduce_to_single_digit(day)
+                month_reduced = reduce_to_single_digit(month)
+                year_reduced = reduce_to_single_digit(year)
+                year_sum = reduce_to_single_digit(day + month + year)
+                fractal_behavior = [day_reduced, month_reduced, year_reduced, year_sum]
+                
+                # Calculate problem numbers
+                soul_num = user_numbers.get('soul_number', 1)
+                mind_num = user_numbers.get('mind_number', 1)
+                destiny_num = user_numbers.get('destiny_number', 1)
+                problem1 = reduce_to_single_digit(abs(soul_num - mind_num))
+                problem2 = reduce_to_single_digit(abs(soul_num - year_reduced))
+                problem3 = reduce_to_single_digit(abs(problem1 - problem2))
+                problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
+                problem_numbers = [problem1, problem2, problem3, problem4]
+                
+                # Get name numbers if available
+                if hasattr(user, 'full_name') and user.full_name:
+                    from numerology import calculate_name_numerology
+                    try:
+                        name_data = calculate_name_numerology(user.full_name)
+                        name_numbers = {
+                            'first_name_number': name_data.get('first_name_number'),
+                            'last_name_number': name_data.get('last_name_number'),
+                            'total_name_number': name_data.get('total_name_number'),
+                            'full_name_number': name_data.get('total_name_number')
+                        }
+                    except:
+                        pass
+                
+                # Calculate weekday energy
+                try:
+                    from numerology import calculate_planetary_strength
+                    planetary_strength_data = calculate_planetary_strength(day, month, year)
+                    strength_dict = planetary_strength_data.get('strength', {})
+                    planet_name_to_key = {
+                        'Солнце': 'surya', 'Луна': 'chandra', 'Марс': 'mangal',
+                        'Меркурий': 'budha', 'Юпитер': 'guru', 'Венера': 'shukra', 'Сатурн': 'shani'
+                    }
+                    weekday_energy = {}
+                    for planet_name, energy_value in strength_dict.items():
+                        planet_key = planet_name_to_key.get(planet_name)
+                        if planet_key:
+                            weekday_energy[planet_key] = float(energy_value)
+                except:
+                    pass
+            except Exception as e:
+                print(f"Error preparing enhanced calculation data: {e}")
+        
+        # Get modifiers config
+        modifiers_config = await get_planetary_energy_modifiers_config()
+        
+        monthly_route = get_monthly_planetary_route(
+            city=city, start_date=date_obj, birth_date=user.birth_date,
+            user_numbers=user_numbers, pythagorean_square=pythagorean_square_data,
+            fractal_behavior=fractal_behavior, problem_numbers=problem_numbers,
+            name_numbers=name_numbers, weekday_energy=weekday_energy,
+            janma_ank=janma_ank_value, modifiers_config=modifiers_config
+        )
         return monthly_route
     except Exception as e:
         # Возвращаем баллы при ошибке
-        await record_credit_transaction(user_id, CREDIT_COSTS['planetary_monthly'], 'Возврат за ошибку месячного маршрута', 'refund')
-        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': CREDIT_COSTS['planetary_monthly']}})
+        config = await get_credits_deduction_config()
+        cost = config.get('planetary_monthly', CREDIT_COSTS.get('planetary_monthly', 30))
+        await record_credit_transaction(user_id, cost, 'Возврат за ошибку месячного маршрута', 'refund')
+        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': cost}})
         raise HTTPException(status_code=400, detail=f'Ошибка расчета месячного маршрута: {str(e)}')
 @api_router.get('/vedic-time/planetary-route/quarterly') 
 async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(), current_user: dict = Depends(get_current_user)):
-    """Планетарный маршрут на квартал - 10 баллов"""
+    """Планетарный маршрут на квартал - 100 баллов"""
     user_id = current_user['user_id']
     
     # Получаем данные пользователя
@@ -2026,10 +2948,14 @@ async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(),
         raise HTTPException(status_code=404, detail='Пользователь не найден')
     user = User(**user_dict)
     
+    # Получаем стоимость из единой конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('planetary_quarterly', CREDIT_COSTS.get('planetary_quarterly', 100))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['planetary_quarterly'], 
+        cost, 
         'Планетарный маршрут на квартал', 
         'vedic',
         {'calculation_type': 'planetary_quarterly', 'date': vedic_request.date}
@@ -2049,12 +2975,107 @@ async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(),
         raise HTTPException(status_code=422, detail="Город не указан. Укажите город в запросе или обновите профиль пользователя.")
     
     try:
-        quarterly_route = get_quarterly_planetary_route(city=city, start_date=date_obj, birth_date=user.birth_date)
+        # Prepare user data for enhanced calculation (same as monthly)
+        user_numbers = None
+        pythagorean_square_data = None
+        fractal_behavior = None
+        problem_numbers = None
+        name_numbers = None
+        weekday_energy = None
+        janma_ank_value = None
+        
+        if user.birth_date:
+            try:
+                day, month, year = parse_birth_date(user.birth_date)
+                
+                # Get personal numbers
+                personal_numbers = calculate_personal_numbers(user.birth_date)
+                user_numbers = {
+                    'soul_number': personal_numbers.get('soul_number'),
+                    'mind_number': personal_numbers.get('mind_number'),
+                    'destiny_number': personal_numbers.get('destiny_number'),
+                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'ruling_number': personal_numbers.get('ruling_number'),
+                    'personal_day': personal_numbers.get('personal_day')
+                }
+                
+                # Calculate Pythagorean Square
+                pythagorean_square_data = create_pythagorean_square(day, month, year)
+                
+                # Calculate Janma Ank
+                from vedic_numerology import calculate_janma_ank
+                janma_ank_value = calculate_janma_ank(day, month, year)
+                total_before_reduction = day + month + year
+                if total_before_reduction == 22:
+                    janma_ank_value = 22
+                
+                # Calculate fractal behavior
+                day_reduced = reduce_to_single_digit(day)
+                month_reduced = reduce_to_single_digit(month)
+                year_reduced = reduce_to_single_digit(year)
+                year_sum = reduce_to_single_digit(day + month + year)
+                fractal_behavior = [day_reduced, month_reduced, year_reduced, year_sum]
+                
+                # Calculate problem numbers
+                soul_num = user_numbers.get('soul_number', 1)
+                mind_num = user_numbers.get('mind_number', 1)
+                destiny_num = user_numbers.get('destiny_number', 1)
+                problem1 = reduce_to_single_digit(abs(soul_num - mind_num))
+                problem2 = reduce_to_single_digit(abs(soul_num - year_reduced))
+                problem3 = reduce_to_single_digit(abs(problem1 - problem2))
+                problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
+                problem_numbers = [problem1, problem2, problem3, problem4]
+                
+                # Get name numbers if available
+                if hasattr(user, 'full_name') and user.full_name:
+                    from numerology import calculate_name_numerology
+                    try:
+                        name_data = calculate_name_numerology(user.full_name)
+                        name_numbers = {
+                            'first_name_number': name_data.get('first_name_number'),
+                            'last_name_number': name_data.get('last_name_number'),
+                            'total_name_number': name_data.get('total_name_number'),
+                            'full_name_number': name_data.get('total_name_number')
+                        }
+                    except:
+                        pass
+                
+                # Calculate weekday energy
+                try:
+                    from numerology import calculate_planetary_strength
+                    planetary_strength_data = calculate_planetary_strength(day, month, year)
+                    strength_dict = planetary_strength_data.get('strength', {})
+                    planet_name_to_key = {
+                        'Солнце': 'surya', 'Луна': 'chandra', 'Марс': 'mangal',
+                        'Меркурий': 'budha', 'Юпитер': 'guru', 'Венера': 'shukra', 'Сатурн': 'shani'
+                    }
+                    weekday_energy = {}
+                    for planet_name, energy_value in strength_dict.items():
+                        planet_key = planet_name_to_key.get(planet_name)
+                        if planet_key:
+                            weekday_energy[planet_key] = float(energy_value)
+                except:
+                    pass
+            except Exception as e:
+                print(f"Error preparing enhanced calculation data: {e}")
+        
+        # Get modifiers config
+        modifiers_config = await get_planetary_energy_modifiers_config()
+        
+        quarterly_route = get_quarterly_planetary_route(
+            city=city, start_date=date_obj, birth_date=user.birth_date,
+            user_numbers=user_numbers, pythagorean_square=pythagorean_square_data,
+            fractal_behavior=fractal_behavior, problem_numbers=problem_numbers,
+            name_numbers=name_numbers, weekday_energy=weekday_energy,
+            janma_ank=janma_ank_value, modifiers_config=modifiers_config
+        )
         return quarterly_route
     except Exception as e:
         # Возвращаем баллы при ошибке
-        await record_credit_transaction(user_id, CREDIT_COSTS['planetary_quarterly'], 'Возврат за ошибку квартального маршрута', 'refund')
-        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': CREDIT_COSTS['planetary_quarterly']}})
+        config = await get_credits_deduction_config()
+        cost = config.get('planetary_quarterly', CREDIT_COSTS.get('planetary_quarterly', 100))
+        await record_credit_transaction(user_id, cost, 'Возврат за ошибку квартального маршрута', 'refund')
+        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': cost}})
         raise HTTPException(status_code=400, detail=f'Ошибка расчета квартального маршрута: {str(e)}')
 
 @api_router.get('/vedic-time/planetary-advice/{planet}')
@@ -2120,19 +3141,35 @@ async def get_planetary_hour_advice(
                         return num
                 return num
             
+            def reduce_to_single_digit_always(num):
+                """Редуцирует число до однозначного всегда, без мастер-чисел (для числа судьбы)"""
+                while num > 9:
+                    num = sum(int(d) for d in str(num))
+                return num
+            
+            def reduce_for_ruling_number(num):
+                """Редуцирует число для правящего числа - сохраняет только 11 и 22"""
+                if num in [11, 22]:
+                    return num
+                while num > 9:
+                    num = sum(int(d) for d in str(num))
+                    if num in [11, 22]:
+                        return num
+                return num
+            
             # Число души (день рождения)
             user_data["soul_number"] = reduce_to_single_digit(day)
             
-            # Число судьбы (сумма всех цифр даты)
+            # Число судьбы (сумма всех цифр даты) - всегда сводится к одной цифре, без мастер-чисел
             full_date_sum = day + month + year
-            user_data["destiny_number"] = reduce_to_single_digit(full_date_sum)
+            user_data["destiny_number"] = reduce_to_single_digit_always(full_date_sum)
             
             # Число ума (месяц)
             user_data["mind_number"] = reduce_to_single_digit(month)
             
-            # Правящее число (сумма числа души и числа судьбы)
-            ruling = user_data["soul_number"] + user_data["destiny_number"]
-            user_data["ruling_number"] = reduce_to_single_digit(ruling)
+            # Правящее число (сумма всех цифр даты рождения) - может быть 11 или 22
+            from numerology import calculate_ruling_number
+            user_data["ruling_number"] = calculate_ruling_number(day, month, year)
             
             print(f"🔢 Число души: {user_data['soul_number']}")
             print(f"🔢 Число судьбы: {user_data['destiny_number']}")
@@ -2198,7 +3235,6 @@ async def get_planetary_hour_advice(
             
             # Сохраняем дату рождения в user_data для дальнейшего анализа
             user_data["birth_date"] = birth_date_obj
-                
         except Exception as e:
             print(f"❌ Ошибка при вычислении чисел: {e}")
             import traceback
@@ -2218,17 +3254,207 @@ async def get_planetary_hour_advice(
 # ----------------- CHARTS -----------------
 @api_router.get('/charts/planetary-energy/{days}')
 async def get_planetary_energy(days: int = 7, current_user: dict = Depends(get_current_user)):
-    user_dict = await db.users.find_one({'id': current_user['user_id']})
+    """Динамика энергии планет - списание баллов в зависимости от периода"""
+    user_id = current_user['user_id']
+    user_dict = await db.users.find_one({'id': user_id})
     if not user_dict:
         raise HTTPException(status_code=404, detail='User not found')
     user = User(**user_dict)
+    
+    # Определяем период и стоимость
     if days <= 7:
-        chart_data = generate_weekly_planetary_energy(user.birth_date)
+        period = 'weekly'
+        cost_key = 'planetary_energy_weekly'
+        description = 'Динамика энергии планет на неделю'
+    elif days <= 30:
+        period = 'monthly'
+        cost_key = 'planetary_energy_monthly'
+        description = 'Динамика энергии планет на месяц'
     else:
-        chart_data = generate_weekly_planetary_energy(user.birth_date)
-        for _ in range(1, (days // 7) + 1):
-            chart_data.extend(generate_weekly_planetary_energy(user.birth_date))
-    return {'chart_data': chart_data[:days], 'period': f'{days} days', 'user_birth_date': user.birth_date}
+        period = 'quarterly'
+        cost_key = 'planetary_energy_quarterly'
+        description = 'Динамика энергии планет на квартал'
+    
+    # Получаем стоимость из единой конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get(cost_key, CREDIT_COSTS.get(cost_key, 10))
+    
+    # Списываем баллы с записью в историю
+    await deduct_credits(
+        user_id,
+        cost,
+        description,
+        'numerology',
+        {
+            'calculation_type': 'planetary_energy',
+            'period': period,
+            'days': days,
+            'cost_key': cost_key
+        }
+    )
+    
+    try:
+        # Get user's personal numbers for enhanced calculation
+        user_numbers = None
+        pythagorean_square_data = None
+        fractal_behavior = None
+        problem_numbers = None
+        name_numbers = None
+        weekday_energy = None
+        
+        if user.birth_date:
+            try:
+                day, month, year = parse_birth_date(user.birth_date)
+                
+                # Get personal numbers
+                personal_numbers = calculate_personal_numbers(user.birth_date)
+                user_numbers = {
+                    'soul_number': personal_numbers.get('soul_number'),
+                    'mind_number': personal_numbers.get('mind_number'),
+                    'destiny_number': personal_numbers.get('destiny_number'),
+                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'ruling_number': personal_numbers.get('ruling_number'),
+                    'personal_day': personal_numbers.get('personal_day')
+                }
+                
+                # Calculate Pythagorean Square
+                pythagorean_square_data = create_pythagorean_square(day, month, year)
+                
+                # Calculate Janma Ank (Life Path/Birth Number) - can be master number 22
+                from vedic_numerology import calculate_janma_ank
+                janma_ank_value = calculate_janma_ank(day, month, year)
+                # Note: calculate_janma_ank uses reduce_to_single_digit which preserves 11, 22, 33
+                # But we need to check if the sum before reduction was 22
+                total_before_reduction = day + month + year
+                if total_before_reduction == 22 or (total_before_reduction > 9 and reduce_to_single_digit(total_before_reduction) == 4 and total_before_reduction % 11 == 0):
+                    # Check if it's actually 22 (master number)
+                    if total_before_reduction == 22:
+                        janma_ank_value = 22
+                
+                # Calculate fractal behavior (4 numbers: day, month, year reduced, sum)
+                day_reduced = reduce_to_single_digit(day)
+                month_reduced = reduce_to_single_digit(month)
+                year_reduced = reduce_to_single_digit(year)
+                year_sum = reduce_to_single_digit(day + month + year)
+                fractal_behavior = [day_reduced, month_reduced, year_reduced, year_sum]
+                
+                # Calculate problem numbers (simplified - can be enhanced)
+                # Problem numbers are calculated from personal numbers
+                soul_num = user_numbers.get('soul_number', 1)
+                mind_num = user_numbers.get('mind_number', 1)
+                destiny_num = user_numbers.get('destiny_number', 1)
+                year_num = year_reduced
+                
+                # Problem numbers calculation (simplified)
+                problem1 = reduce_to_single_digit(abs(soul_num - mind_num))
+                problem2 = reduce_to_single_digit(abs(soul_num - year_num))
+                problem3 = reduce_to_single_digit(abs(problem1 - problem2))
+                problem4 = reduce_to_single_digit(abs(mind_num - year_num))
+                problem_numbers = [problem1, problem2, problem3, problem4]
+                
+                # Get name numbers if available
+                if hasattr(user, 'full_name') and user.full_name:
+                    # Calculate name numbers (name and surname separately)
+                    from numerology import calculate_name_numerology
+                    try:
+                        name_data = calculate_name_numerology(user.full_name)
+                        name_numbers = {
+                            'first_name_number': name_data.get('first_name_number'),
+                            'last_name_number': name_data.get('last_name_number'),
+                            'total_name_number': name_data.get('total_name_number'),
+                            'full_name_number': name_data.get('total_name_number')  # Alias
+                        }
+                    except:
+                        # Fallback to simple calculation
+                        try:
+                            from numerology import calculate_full_name_number
+                            name_num = calculate_full_name_number(user.full_name)
+                            name_numbers = {'name_number': name_num, 'full_name_number': name_num}
+                        except:
+                            pass
+                
+                # Calculate weekday energy (personal energy by day of week)
+                # This uses calculate_planetary_strength which calculates DDMM × YYYY
+                try:
+                    from numerology import calculate_planetary_strength
+                    planetary_strength_data = calculate_planetary_strength(day, month, year)
+                    strength_dict = planetary_strength_data.get('strength', {})
+                    weekday_map = planetary_strength_data.get('weekday_map', {})
+                    
+                    # Map planet names to energy keys
+                    planet_name_to_key = {
+                        'Солнце': 'surya',
+                        'Луна': 'chandra',
+                        'Марс': 'mangal',
+                        'Меркурий': 'budha',
+                        'Юпитер': 'guru',
+                        'Венера': 'shukra',
+                        'Сатурн': 'shani'
+                    }
+                    
+                    weekday_energy = {}
+                    for planet_name, energy_value in strength_dict.items():
+                        planet_key = planet_name_to_key.get(planet_name)
+                        if planet_key:
+                            weekday_energy[planet_key] = float(energy_value)
+                except Exception as e:
+                    print(f"Error calculating weekday energy: {e}")
+                    weekday_energy = None
+                
+            except Exception as e:
+                print(f"Error preparing enhanced calculation data: {e}")
+                pass
+        
+        user_city = getattr(user, 'city', 'Москва') or 'Москва'
+        # Get modifiers config
+        modifiers_config = await get_planetary_energy_modifiers_config()
+        
+        # Start from today
+        base_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        chart_data = []
+        
+        # Generate data for the requested number of days
+        weeks_needed = (days // 7) + (1 if days % 7 > 0 else 0)
+        
+        for week_idx in range(weeks_needed):
+            # Calculate start date for this week
+            week_start_date = base_date + timedelta(days=week_idx * 7)
+            
+            # Generate weekly data starting from this week's start date
+            week_data = generate_weekly_planetary_energy(
+                user.birth_date, user_numbers, user_city,
+                pythagorean_square=pythagorean_square_data,
+                fractal_behavior=fractal_behavior,
+                problem_numbers=problem_numbers,
+                name_numbers=name_numbers,
+                weekday_energy=weekday_energy,
+                janma_ank=janma_ank_value if 'janma_ank_value' in locals() else None,
+                modifiers_config=modifiers_config,
+                start_date=week_start_date
+            )
+            
+            chart_data.extend(week_data)
+            
+            # Stop if we have enough days
+            if len(chart_data) >= days:
+                break
+        
+        # Trim to exact number of days requested
+        chart_data = chart_data[:days]
+        
+        # Apply anti-cyclicity to the entire period (for month and quarter)
+        if days > 7:
+            from vedic_numerology import apply_anti_cyclicity_to_period
+            chart_data = apply_anti_cyclicity_to_period(chart_data, modifiers_config)
+        
+        return {'chart_data': chart_data, 'period': f'{days} days', 'user_birth_date': user.birth_date}
+    except Exception as e:
+        # Возвращаем баллы при ошибке
+        config = await get_credits_deduction_config()
+        cost = config.get(cost_key, CREDIT_COSTS.get(cost_key, 10))
+        await record_credit_transaction(user_id, cost, f'Возврат за ошибку {description}', 'refund')
+        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': cost}})
+        raise HTTPException(status_code=400, detail=f'Ошибка расчета динамики энергии планет: {str(e)}')
 
 # ----------------- QUIZ -----------------
 @api_router.get('/quiz/randomized-questions')
@@ -2249,10 +3475,14 @@ async def submit_quiz(answers: List[Dict[str, Any]], current_user: dict = Depend
     """Прохождение Quiz - 1 балл"""
     user_id = current_user['user_id']
     
+    # Получаем стоимость из конфигурации
+    config = await get_credits_deduction_config()
+    cost = config.get('quiz_completion', CREDIT_COSTS.get('quiz_completion', 1))
+    
     # Списываем баллы с записью в историю
     await deduct_credits(
         user_id, 
-        CREDIT_COSTS['quiz_completion'], 
+        cost, 
         'Прохождение викторины', 
         'quiz',
         {'quiz_type': 'numerology_assessment'}
@@ -2264,5409 +3494,655 @@ async def submit_quiz(answers: List[Dict[str, Any]], current_user: dict = Depend
     await db.quiz_results.insert_one(qr.dict())
     return results
 
-# ----------------- LEARNING -----------------
-# Обновленный endpoint для получения всех уроков для студентов (включая custom_lessons)
-@api_router.get('/learning/all-lessons')
-async def get_all_student_lessons(current_user: dict = Depends(get_current_user)):
-    """Получить все доступные уроки для студентов (video_lessons + custom_lessons)"""
-    try:
-        user_id = current_user['user_id']
-        
-        # Получаем данные уровня пользователя
-        level = await db.user_levels.find_one({'user_id': user_id})
-        if not level:
-            from models import UserLevel
-            level = UserLevel(user_id=user_id).dict()
-            await db.user_levels.insert_one(level)
-            level.pop('_id', None)
-        else:
-            level = dict(level)
-            level.pop('_id', None)
-        
-        # Получаем уроки из video_lessons
-        video_lessons = await db.video_lessons.find({'is_active': True}).sort('level', 1).sort('order', 1).to_list(100)
-        
-        # Получаем уроки из custom_lessons  
-        custom_lessons = await db.custom_lessons.find({'is_active': True}).to_list(100)
-        
-        # Объединяем уроки и очищаем от MongoDB ObjectId
-        all_lessons = []
-        
-        # Добавляем video_lessons
-        for lesson in video_lessons:
-            lesson_dict = dict(lesson)
-            lesson_dict.pop('_id', None)
-            lesson_dict['source'] = 'video_lessons'
-            all_lessons.append(lesson_dict)
-        
-        # Добавляем custom_lessons
-        for lesson in custom_lessons:
-            lesson_dict = dict(lesson)
-            lesson_dict.pop('_id', None)
-            lesson_dict['source'] = 'custom_lessons'
-            # Устанавливаем значения по умолчанию для совместимости
-            lesson_dict['level'] = lesson_dict.get('level', 1)
-            lesson_dict['order'] = lesson_dict.get('order', 999)
-            lesson_dict['duration_minutes'] = lesson_dict.get('duration_minutes', 30)
-            lesson_dict['video_url'] = lesson_dict.get('video_url', '')
-            lesson_dict['video_file_id'] = lesson_dict.get('video_file_id', '')
-            lesson_dict['pdf_file_id'] = lesson_dict.get('pdf_file_id', '')
-            lesson_dict['word_file_id'] = lesson_dict.get('word_file_id', '')
-            lesson_dict['word_filename'] = lesson_dict.get('word_filename', '')
-            lesson_dict['word_url'] = lesson_dict.get('word_url', '')
-            all_lessons.append(lesson_dict)
-        
-        # Исключаем lesson_numerom_intro из списка и сортируем по order
-        all_lessons = [lesson for lesson in all_lessons if lesson.get('id') != 'lesson_numerom_intro']
-        
-        # Сортируем по order (0 для вводного, 1-9 для уроков, 10 для урока 0)
-        all_lessons.sort(key=lambda x: (
-            x.get('order', 999),
-            x.get('level', 999)
-        ))
-        
-        return {
-            'user_level': level, 
-            'available_lessons': all_lessons, 
-            'total_levels': 10
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting all student lessons: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка загрузки уроков: {str(e)}")
+# ==================== НОВАЯ СИСТЕМА ОБУЧЕНИЯ V2 ====================
 
-@api_router.get('/learning/levels')
-async def get_learning_levels(current_user: dict = Depends(get_current_user)):
-    level = await db.user_levels.find_one({'user_id': current_user['user_id']})
-    if not level:
-        from models import UserLevel
-        level = UserLevel(user_id=current_user['user_id']).dict()
-        await db.user_levels.insert_one(level)
-        # Remove MongoDB _id from newly created level
-        level.pop('_id', None)
-    else:
-        # Convert MongoDB document to dict and remove _id
-        level = dict(level)
-        level.pop('_id', None)
-    
-    lessons = await db.video_lessons.find({'is_active': True}).sort('level', 1).sort('order', 1).to_list(100)
-    # Convert all lessons to dicts and remove _id
-    clean_lessons = []
-    for lesson in lessons:
-        lesson_dict = dict(lesson)
-        lesson_dict.pop('_id', None)
-        clean_lessons.append(lesson_dict)
-    
-    return {'user_level': level, 'available_lessons': clean_lessons, 'total_levels': 10}
-
-@api_router.post('/learning/complete-lesson/{lesson_id}')
-async def complete_lesson(lesson_id: str, watch_time: int, quiz_score: int = None, current_user: dict = Depends(get_current_user)):
-    lesson = await db.video_lessons.find_one({'id': lesson_id})
-    if not lesson:
-        raise HTTPException(status_code=404, detail='Lesson not found')
-    progress_data = {
-        'user_id': current_user['user_id'], 'lesson_id': lesson_id, 'completed': True,
-        'completion_date': datetime.utcnow(), 'watch_time_minutes': watch_time, 'quiz_score': quiz_score
-    }
-    await db.user_progress.update_one({'user_id': current_user['user_id'], 'lesson_id': lesson_id}, {'$set': progress_data}, upsert=True)
-    completed = await db.user_progress.count_documents({'user_id': current_user['user_id'], 'completed': True})
-    new_level = min(10, (completed // 3) + 1)
-    await db.user_levels.update_one({'user_id': current_user['user_id']}, {'$set': {'current_level': new_level, 'lessons_completed': completed, 'last_activity': datetime.utcnow()}, '$inc': {'experience_points': 10}}, upsert=True)
-    return {'lesson_completed': True, 'new_level': new_level, 'total_completed': completed}
-
-@api_router.get('/learning/lesson/{lesson_id}/quiz')
-async def get_lesson_quiz(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить 5 случайных вопросов викторины для урока"""
-    # Проверяем существование урока
-    lesson = await db.video_lessons.find_one({'id': lesson_id})
-    if not lesson:
-        raise HTTPException(status_code=404, detail='Урок не найден')
-    
-    # Импортируем данные викторины
-    from quiz_data import NUMEROLOGY_QUIZ
-    import random
-    
-    # Получаем все вопросы и выбираем случайные 5
-    all_questions = NUMEROLOGY_QUIZ['questions']
-    if len(all_questions) <= 5:
-        selected_questions = all_questions
-    else:
-        selected_questions = random.sample(all_questions, 5)
-    
-    # Перемешиваем варианты ответов в каждом вопросе
-    for question in selected_questions:
-        random.shuffle(question['options'])
-    
-    return {
-        'lesson_id': lesson_id,
-        'lesson_title': lesson.get('title', 'Урок'),
-        'quiz': {
-            'title': 'Викторина по уроку',
-            'description': f'Ответьте на 5 вопросов по материалу урока "{lesson.get("title", "")}"',
-            'questions': selected_questions
-        }
-    }
-
-@api_router.post('/learning/lesson/{lesson_id}/start')
-async def start_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Начать урок - 10 баллов (одноразовое списание)"""
-    user_id = current_user['user_id']
-    
-    # Проверяем существование урока
-    lesson = await db.video_lessons.find_one({'id': lesson_id})
-    if not lesson:
-        raise HTTPException(status_code=404, detail='Урок не найден')
-    
-    # Проверяем, не начинал ли пользователь уже этот урок
-    existing_progress = await db.user_progress.find_one({
-        'user_id': user_id,
-        'lesson_id': lesson_id
-    })
-    
-    # Если урок уже начат, просто возвращаем успех
-    if existing_progress:
-        return {
-            'lesson_started': True,
-            'points_deducted': 0,
-            'message': 'Урок уже был начат ранее'
-        }
-    
-    # Всегда списываем 10 баллов за первый просмотр урока
-    await deduct_credits(
-        user_id, 
-        CREDIT_COSTS['lesson_viewing'], 
-        f'Просмотр урока: {lesson.get("title", "Без названия")}', 
-        'learning',
-        {'lesson_id': lesson_id, 'lesson_title': lesson.get('title')}
-    )
-    
-    # Создаем запись о начале урока
-    progress_data = {
-        'user_id': user_id,
-        'lesson_id': lesson_id,
-        'completed': False,
-        'watch_time_minutes': 0,
-        'created_at': datetime.utcnow()
-    }
-    await db.user_progress.insert_one(progress_data)
-    
-    return {
-        'lesson_started': True,
-        'points_deducted': CREDIT_COSTS['lesson_viewing'],
-        'message': f'Урок начат! Списано {CREDIT_COSTS["lesson_viewing"]} баллов'
-    }
-
-# ----------------- ADMIN (SUPER ADMIN ONLY) -----------------
-
-# NEW LESSON MANAGEMENT ENDPOINTS (must come before general routes)
-@api_router.post('/admin/lessons/create')
-async def create_new_lesson(lesson_data: dict, current_user: dict = Depends(get_current_user)):
-    """Создать новый урок с полной структурой"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Добавляем метаданные создания
-        lesson_data['created_by'] = current_user['user_id']
-        lesson_data['created_at'] = datetime.utcnow()
-        lesson_data['updated_at'] = datetime.utcnow()
-        
-        # Вставляем урок в коллекцию custom_lessons для новых уроков
-        await db.custom_lessons.insert_one(lesson_data)
-        
-        return {
-            'success': True, 
-            'message': 'Урок успешно создан',
-            'lesson_id': lesson_data['id']
-        }
-        
-    except Exception as e:
-        logger.error(f"Error creating lesson: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка создания урока: {str(e)}")
-
-@api_router.get('/admin/lessons/{lesson_id}')
-async def get_lesson_for_editing(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить урок для редактирования"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Ищем сначала в custom_lessons, потом в video_lessons для совместимости
-        lesson = await db.custom_lessons.find_one({'id': lesson_id})
-        if not lesson:
-            lesson = await db.video_lessons.find_one({'id': lesson_id})
-        
-        if not lesson:
-            raise HTTPException(status_code=404, detail='Урок не найден')
-        
-        # Очищаем MongoDB ObjectId
-        lesson_dict = dict(lesson)
-        lesson_dict.pop('_id', None)
-        
-        # Убеждаемся, что все поля медиафайлов присутствуют (даже если None)
-        lesson_dict.setdefault('video_file_id', None)
-        lesson_dict.setdefault('video_filename', None)
-        lesson_dict.setdefault('pdf_file_id', None)
-        lesson_dict.setdefault('pdf_filename', None)
-        lesson_dict.setdefault('word_file_id', None)
-        lesson_dict.setdefault('word_filename', None)
-        
-        logger.info(f"Loading lesson {lesson_id} for editing")
-        logger.info(f"PDF file_id: {lesson_dict.get('pdf_file_id')}, PDF filename: {lesson_dict.get('pdf_filename')}")
-        
-        return {'lesson': lesson_dict}
-        
-    except Exception as e:
-        logger.error(f"Error getting lesson: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка загрузки урока: {str(e)}")
-
-@api_router.put('/admin/lessons/{lesson_id}/content')
-async def update_lesson_content(lesson_id: str, content_data: dict, current_user: dict = Depends(get_current_user)):
-    """Обновить контент урока"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        section = content_data.get('section')
-        field = content_data.get('field')
-        value = content_data.get('value')
-        
-        if not all([section, field, value is not None]):
-            raise HTTPException(status_code=400, detail='Недостаточно данных для обновления')
-        
-        # Формируем путь для обновления в MongoDB
-        update_path = f"content.{section}.{field}"
-        update_data = {
-            update_path: value,
-            'updated_at': datetime.utcnow(),
-            'updated_by': current_user['user_id']
-        }
-        
-        # Обновляем в custom_lessons
-        result = await db.custom_lessons.update_one(
-            {'id': lesson_id},
-            {'$set': update_data}
-        )
-        
-        if result.matched_count == 0:
-            # Если не найдено в custom_lessons, пробуем video_lessons (для совместимости)
-            result = await db.video_lessons.update_one(
-                {'id': lesson_id},
-                {'$set': update_data}
-            )
-        
-        if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail='Урок не найден')
-        
-        return {'success': True, 'message': 'Контент обновлен'}
-        
-    except Exception as e:
-        logger.error(f"Error updating lesson content: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка обновления контента: {str(e)}")
-
-@api_router.post('/admin/lessons/{lesson_id}/upload-video')
-async def upload_lesson_video(lesson_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    """Загрузка видео для урока"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Проверяем тип файла
-        allowed_types = ['video/mp4', 'video/avi', 'video/mov', 'video/webm']
-        if file.content_type not in allowed_types:
-            raise HTTPException(status_code=400, detail='Неподдерживаемый формат видео')
-        
-        # Проверяем размер файла (максимум 500MB для уроков)
-        if file.size and file.size > 500 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail='Размер файла превышает 500MB')
-        
-        # Генерируем уникальное имя файла
-        file_extension = Path(file.filename).suffix if file.filename else '.mp4'
-        unique_filename = f"{lesson_id}_video_{uuid.uuid4()}{file_extension}"
-        
-        # Сохраняем файл
-        file_path = LESSONS_VIDEO_DIR / unique_filename
-        with open(file_path, 'wb') as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Сохраняем метаданные файла
-        file_id = str(uuid.uuid4())
-        file_record = {
-            'id': file_id,
-            'lesson_id': lesson_id,
-            'original_filename': file.filename,
-            'stored_filename': unique_filename,
-            'file_path': str(file_path),
-            'file_size': len(content),
-            'content_type': file.content_type,
-            'uploaded_at': datetime.utcnow(),
-            'uploaded_by': current_user['user_id']
-        }
-        
-        await db.lesson_videos.insert_one(file_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'video_url': f'/api/lessons/video/{file_id}'
-        }
-        
-    except Exception as e:
-        logger.error(f"Error uploading lesson video: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка загрузки видео: {str(e)}")
-
-@api_router.post('/admin/lessons/{lesson_id}/upload-pdf')
-async def upload_lesson_pdf(lesson_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    """Загрузка PDF для урока"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Проверяем тип файла
-        if file.content_type != 'application/pdf':
-            raise HTTPException(status_code=400, detail='Разрешены только PDF файлы')
-        
-        # Проверяем размер файла (максимум 50MB)
-        if file.size and file.size > 50 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail='Размер файла превышает 50MB')
-        
-        # Генерируем уникальное имя файла
-        unique_filename = f"{lesson_id}_pdf_{uuid.uuid4()}.pdf"
-        
-        # Сохраняем файл
-        file_path = LESSONS_PDF_DIR / unique_filename
-        with open(file_path, 'wb') as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Сохраняем метаданные файла
-        file_id = str(uuid.uuid4())
-        file_record = {
-            'id': file_id,
-            'lesson_id': lesson_id,
-            'original_filename': file.filename,
-            'stored_filename': unique_filename,
-            'file_path': str(file_path),
-            'file_size': len(content),
-            'content_type': file.content_type,
-            'uploaded_at': datetime.utcnow(),
-            'uploaded_by': current_user['user_id']
-        }
-        
-        await db.lesson_pdfs.insert_one(file_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'pdf_url': f'/api/lessons/pdf/{file_id}'
-        }
-        
-    except Exception as e:
-        logger.error(f"Error uploading lesson PDF: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка загрузки PDF: {str(e)}")
-
-@api_router.post('/admin/lessons/{lesson_id}/upload-word')
-async def upload_lesson_word(lesson_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    """Загрузка Word файла для урока"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Проверяем тип файла (Word форматы)
-        allowed_types = [
-            'application/msword',  # .doc
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'  # .docx
-        ]
-        filename_lower = file.filename.lower() if file.filename else ''
-        is_docx = filename_lower.endswith('.docx')
-        is_doc = filename_lower.endswith('.doc')
-        
-        if file.content_type not in allowed_types and not (is_docx or is_doc):
-            raise HTTPException(status_code=400, detail='Разрешены только Word файлы (.doc, .docx)')
-        
-        # Проверяем размер файла (максимум 50MB)
-        if file.size and file.size > 50 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail='Размер файла превышает 50MB')
-        
-        # Определяем расширение файла
-        file_extension = '.docx' if is_docx else '.doc'
-        
-        # Генерируем уникальное имя файла
-        unique_filename = f"{lesson_id}_word_{uuid.uuid4()}{file_extension}"
-        
-        # Сохраняем файл
-        file_path = LESSONS_WORD_DIR / unique_filename
-        with open(file_path, 'wb') as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Сохраняем метаданные файла
-        file_id = str(uuid.uuid4())
-        file_record = {
-            'id': file_id,
-            'lesson_id': lesson_id,
-            'original_filename': file.filename,
-            'stored_filename': unique_filename,
-            'file_path': str(file_path),
-            'file_size': len(content),
-            'content_type': file.content_type or ('application/vnd.openxmlformats-officedocument.wordprocessingml.document' if file_extension == '.docx' else 'application/msword'),
-            'file_extension': file_extension,
-            'uploaded_at': datetime.utcnow(),
-            'uploaded_by': current_user['user_id']
-        }
-        
-        await db.lesson_word_files.insert_one(file_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'word_url': f'/api/lessons/word/{file_id}',
-            'download_url': f'/api/lessons/word/{file_id}/download'
-        }
-        
-    except Exception as e:
-        logger.error(f"Error uploading lesson Word file: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка загрузки Word файла: {str(e)}")
-
-# OLD LESSON MANAGEMENT ENDPOINTS (for compatibility)
-@api_router.post('/admin/lessons')
-async def create_video_lesson(lesson: VideoLesson, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    await db.video_lessons.insert_one(lesson.dict())
-    return {'message': 'Lesson created successfully', 'lesson_id': lesson.id}
-
-# Endpoint для синхронизации первого урока с общей системой
-@api_router.post('/admin/lessons/sync-first-lesson')
-async def sync_first_lesson_to_system(current_user: dict = Depends(get_current_user)):
-    """Синхронизировать первый урок с общей системой управления уроками"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Получаем данные первого урока из lesson_system
-        first_lesson_data = lesson_system.get_lesson('lesson_numerom_intro')
-        if not first_lesson_data:
-            raise HTTPException(status_code=404, detail='Первый урок не найден в системе')
-        
-        # Проверяем, не существует ли урок уже в custom_lessons
-        existing_lesson = await db.custom_lessons.find_one({'id': 'lesson_numerom_intro'})
-        
-        if not existing_lesson:
-            # Создаем запись в custom_lessons для первого урока
-            first_lesson_record = {
-                'id': 'lesson_numerom_intro',
-                'title': 'Первое занятие NumerOM',
-                'module': 'Модуль 1: Основы',
-                'description': 'Введение в NumerOM: История космического корабля и основы нумерологии',
-                'points_required': 0,  # Бесплатный урок
-                'is_active': True,
-                'content': {
-                    'theory': {
-                        'what_is_topic': 'Введение в мир ведической нумерологии через историю космического корабля',
-                        'main_story': first_lesson_data.content.get('theory', {}).get('cosmic_ship_story', ''),
-                        'key_concepts': 'Планетарные энергии, численные вибрации, космический корабль как метафора',
-                        'practical_applications': 'Анализ своих основных чисел, понимание планетарных энергий'
-                    },
-                    'exercises': [
-                        {
-                            'id': ex.id,
-                            'title': ex.title,
-                            'type': ex.type,
-                            'content': ex.content,
-                            'instructions': ex.instructions,
-                            'expected_outcome': ex.expected_outcome
-                        } for ex in first_lesson_data.exercises
-                    ],
-                    'quiz': {
-                        'id': first_lesson_data.quiz.id,
-                        'title': first_lesson_data.quiz.title,
-                        'questions': first_lesson_data.quiz.questions,
-                        'correct_answers': first_lesson_data.quiz.correct_answers,
-                        'explanations': first_lesson_data.quiz.explanations
-                    },
-                    'challenge': {
-                        'id': first_lesson_data.challenges[0].id,
-                        'title': first_lesson_data.challenges[0].title,
-                        'description': first_lesson_data.challenges[0].description,
-                        'daily_tasks': first_lesson_data.challenges[0].daily_tasks
-                    }
-                },
-                'source': 'first_lesson_sync',
-                'created_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow(),
-                'created_by': current_user['user_id']
-            }
-            
-            # Вставляем в custom_lessons
-            await db.custom_lessons.insert_one(first_lesson_record)
-            
-            return {
-                'success': True, 
-                'message': 'Первый урок успешно добавлен в общую систему',
-                'action': 'created'
-            }
-        else:
-            return {
-                'success': True, 
-                'message': 'Первый урок уже существует в общей системе',
-                'action': 'already_exists'
-            }
-        
-    except Exception as e:
-        logger.error(f"Error syncing first lesson: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка синхронизации первого урока: {str(e)}")
-
-# Endpoint для получения объединенного списка всех уроков (включая первый урок)
-@api_router.get('/admin/lessons')
-async def get_all_lessons(current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    
-    # Получаем уроки из обеих коллекций
-    video_lessons = await db.video_lessons.find().to_list(100)
-    custom_lessons = await db.custom_lessons.find().to_list(100)
-    
-    # Объединяем и очищаем от MongoDB ObjectId
-    all_lessons = []
-    
-    # Добавляем существующие video_lessons (для совместимости)
-    for lesson in video_lessons:
-        lesson_dict = dict(lesson)
-        lesson_dict.pop('_id', None)
-        lesson_dict['source'] = 'video_lessons'  # Указываем источник
-        all_lessons.append(lesson_dict)
-    
-    # Добавляем новые custom_lessons
-    for lesson in custom_lessons:
-        lesson_dict = dict(lesson)
-        lesson_dict.pop('_id', None)
-        lesson_dict['source'] = 'custom_lessons'  # Указываем источник
-        all_lessons.append(lesson_dict)
-    
-    # Если первого урока нет в списке, добавляем его из lesson_system
-    first_lesson_exists = any(lesson.get('id') == 'lesson_numerom_intro' for lesson in all_lessons)
-    if not first_lesson_exists:
-        # Получаем данные первого урока из lesson_system
-        first_lesson_data = lesson_system.get_lesson('lesson_numerom_intro')
-        if first_lesson_data:
-            first_lesson_dict = {
-                'id': 'lesson_numerom_intro',
-                'title': 'Первое занятие NumerOM',
-                'module': 'Модуль 1: Основы',
-                'description': 'Введение в NumerOM: История космического корабля и основы нумерологии',
-                'points_required': 0,
-                'is_active': True,
-                'source': 'lesson_system',
-                'created_at': datetime.now(),
-                'content': first_lesson_data.content
-            }
-            all_lessons.insert(0, first_lesson_dict)  # Добавляем в начало списка
-    
-    # Сортируем по дате создания (первый урок всегда первый)
-    all_lessons.sort(key=lambda x: (
-        0 if x.get('id') == 'lesson_numerom_intro' else 1,  # Первый урок всегда первый
-        x.get('created_at', datetime.min)
-    ), reverse=False)
-    
-    return {'lessons': all_lessons, 'total_count': len(all_lessons)}
-
-@api_router.put('/admin/lessons/{lesson_id}')
-async def update_lesson(lesson_id: str, lesson_data: Dict[str, Any], current_user: dict = Depends(get_current_user)):
-    """Обновить урок (работает с обеими коллекциями, поддерживает медиа поля как в консультациях)"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    
-    # Добавляем метаданные обновления
-    lesson_data['updated_at'] = datetime.utcnow()
-    lesson_data['updated_by'] = current_user['user_id']
-    
-    # Пробуем обновить в custom_lessons
-    result = await db.custom_lessons.update_one({'id': lesson_id}, {'$set': lesson_data})
-    lesson_source = 'custom_lessons'
-    
-    # Если не найден в custom_lessons, пробуем video_lessons
-    if result.matched_count == 0:
-        result = await db.video_lessons.update_one({'id': lesson_id}, {'$set': lesson_data})
-        lesson_source = 'video_lessons'
-    
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail='Урок не найден')
-    
-    return {
-        'message': f'Урок успешно обновлен в {lesson_source}',
-        'lesson_id': lesson_id,
-        'updated_fields': list(lesson_data.keys())
-    }
-
-@api_router.delete('/admin/lessons/{lesson_id}')
-async def delete_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Удалить урок (работает с обеими коллекциями)"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    
-    # Ищем и удаляем из custom_lessons
-    result = await db.custom_lessons.delete_one({'id': lesson_id})
-    lesson_source = 'custom_lessons'
-    
-    # Если не найден в custom_lessons, пробуем video_lessons
-    if result.deleted_count == 0:
-        result = await db.video_lessons.delete_one({'id': lesson_id})
-        lesson_source = 'video_lessons'
-    
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail='Урок не найден')
-    
-    # Удаляем связанные медиа файлы
-    await db.lesson_videos.delete_many({'lesson_id': lesson_id})
-    await db.lesson_pdfs.delete_many({'lesson_id': lesson_id})
-    
-    # Удаляем прогресс пользователей
-    await db.user_progress.delete_many({'lesson_id': lesson_id})
-    
-    return {
-        'success': True, 
-        'message': f'Урок успешно удален из {lesson_source}',
-        'lesson_id': lesson_id
-    }
-    
-    # Также удаляем связанные записи о прогрессе пользователей
-    await db.user_progress.delete_many({'lesson_id': lesson_id})
-    
-    return {'message': 'Урок успешно удален'}
-
-@api_router.post('/admin/make-admin/{user_id}')
-async def make_user_admin(user_id: str, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    
-    # Check if target user exists
-    target_user = await db.users.find_one({'id': user_id})
-    if not target_user:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    
-    # Update user to have admin rights
-    await db.users.update_one(
-        {'id': user_id}, 
-        {'$set': {'is_admin': True, 'updated_at': datetime.utcnow()}}
-    )
-    
-    # Also create/update admin_users record for legacy compatibility
-    admin_user_record = AdminUser(user_id=user_id, role='admin', permissions=['video_management', 'user_management', 'content_management'])
-    await db.admin_users.update_one({'user_id': user_id}, {'$set': admin_user_record.dict()}, upsert=True)
-    
-    return {'message': f'Права администратора предоставлены пользователю {target_user["email"]}', 'user_email': target_user['email']}
-@api_router.delete('/admin/revoke-admin/{user_id}')
-async def revoke_user_admin(user_id: str, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    
-    # Check if target user exists
-    target_user = await db.users.find_one({'id': user_id})
-    if not target_user:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    
-    # Prevent revoking super admin rights
-    if target_user.get('is_super_admin'):
-        raise HTTPException(status_code=400, detail='Нельзя отозвать права суперадминистратора')
-    
-    # Remove admin rights
-    await db.users.update_one(
-        {'id': user_id}, 
-        {'$set': {'is_admin': False, 'updated_at': datetime.utcnow()}}
-    )
-    
-    # Remove admin_users record
-    await db.admin_users.delete_one({'user_id': user_id})
-    
-    return {'message': f'Права администратора отозваны у пользователя {target_user["email"]}', 'user_email': target_user['email']}
-
-# Materials upload (super admin only for upload/delete; list/stream requires auth)
-@api_router.post('/admin/materials/upload/init')
-async def materials_upload_init(
-    title: str = Form(...),
-    description: str = Form(''),
-    lesson_id: str = Form(''),
-    material_type: str = Form('pdf'),
-    filename: str = Form(...),
-    total_size: int = Form(...),
+@app.post("/api/admin/lessons-v2/upload-from-file")
+async def upload_lesson_from_file_v2(
+    file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user)
 ):
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    upload_id = str(uuid.uuid4())
-    await db.material_upload_sessions.insert_one({
-        'upload_id': upload_id, 'filename': filename, 'title': title, 'description': description,
-        'lesson_id': lesson_id, 'material_type': material_type, 'total_size': total_size,
-        'created_at': datetime.utcnow(), 'user_id': current_user['user_id'], 'received_chunks': 0
-    })
-    (TMP_DIR / upload_id).mkdir(parents=True, exist_ok=True)
-    return {'uploadId': upload_id}
-
-@api_router.post('/admin/materials/upload/chunk')
-async def materials_upload_chunk(uploadId: str = Form(...), index: int = Form(...), chunk: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    tmp_dir = TMP_DIR / uploadId
-    if not tmp_dir.exists():
-        raise HTTPException(status_code=404, detail='Upload session not found')
-    chunk_path = tmp_dir / f'chunk_{index}'
-    with open(chunk_path, 'wb') as f:
-        f.write(await chunk.read())
-    await db.material_upload_sessions.update_one({'upload_id': uploadId}, {'$inc': {'received_chunks': 1}})
-    return {'ok': True, 'index': index}
-
-@api_router.post('/admin/materials/upload/finish')
-async def materials_upload_finish(uploadId: str = Form(...), current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    session = await db.material_upload_sessions.find_one({'upload_id': uploadId})
-    if not session:
-        raise HTTPException(status_code=404, detail='Upload session not found')
-    tmp_dir = TMP_DIR / uploadId
-    if not tmp_dir.exists():
-        raise HTTPException(status_code=404, detail='Upload temp data missing')
-    safe_name = f"{uuid.uuid4().hex}_{Path(session['filename']).name}"
-    final_path = MATERIALS_DIR / safe_name
-    chunk_files = sorted([p for p in tmp_dir.iterdir() if p.name.startswith('chunk_')], key=lambda p: int(p.name.split('_')[1]))
-    with open(final_path, 'wb') as outfile:
-        for part in chunk_files:
-            with open(part, 'rb') as infile:
-                shutil.copyfileobj(infile, outfile)
-    file_size = final_path.stat().st_size
-    material_id = str(uuid.uuid4())
-    material_doc = {
-        'id': material_id,
-        'lesson_id': session.get('lesson_id', ''),
-        'title': session.get('title', 'Untitled'),
-        'description': session.get('description', ''),
-        'material_type': session.get('material_type', 'pdf'),
-        'file_name': Path(session.get('filename', '')).name,
-        'file_path': str(final_path),
-        'file_size': file_size,
-        'file_url': f"/api/materials/{material_id}/stream",
-        'created_at': datetime.utcnow(),
-        'uploaded_by': current_user['user_id']
-    }
-    await db.materials.insert_one(material_doc)
+    """Загрузить урок V2 из текстового файла с 5 разделами (дублированный эндпоинт)"""
     try:
-        shutil.rmtree(tmp_dir)
-        await db.material_upload_sessions.delete_one({'upload_id': uploadId})
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Читаем файл
+        content = await file.read()
+        text_content = content.decode('utf-8')
+
+        # Парсим урок из файла
+        lesson_data = parse_lesson_from_text_v2(text_content)
+
+        # Сохраняем в базу данных
+        lesson_dict = lesson_data.dict()
+        lesson_dict['created_by'] = user.get('id', 'admin_system')
+        lesson_dict['updated_by'] = user.get('id', 'admin_system')
+
+        result = await db.lessons_v2.insert_one(lesson_dict)
+        
+        return {
+            "message": "Урок V2 успешно загружен",
+            "lesson_id": lesson_data.id,
+            "sections": {
+                "theory_blocks": len(lesson_data.theory),
+                "exercises": len(lesson_data.exercises),
+                "has_challenge": lesson_data.challenge is not None,
+                "has_quiz": lesson_data.quiz is not None,
+                "analytics_enabled": lesson_data.analytics_enabled
+            }
+        }
+        
     except Exception as e:
-        logger.warning(f'Tmp cleanup failed: {e}')
-    return {'material': {k: v for k, v in material_doc.items() if k != 'file_path'}}
+        logger.error(f"Error uploading lesson V2: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error uploading lesson: {str(e)}")
 
-@api_router.get('/materials')
-async def list_materials(current_user: dict = Depends(get_current_user)):
-    materials = await db.materials.find().sort('created_at', -1).to_list(100)
-    clean_materials = []
-    for m in materials:
-        material_dict = dict(m)
-        material_dict.pop('_id', None)
-        if 'file_path' in material_dict:
-            material_dict.pop('file_path')
-        clean_materials.append(material_dict)
-    return clean_materials
+def parse_lesson_from_text_v2(text_content: str) -> 'LessonV2':
+    """Парсить урок V2 из текстового файла"""
+    from models import LessonV2, TheoryBlock, Exercise, Challenge, ChallengeDay, Quiz, QuizQuestion
 
-@api_router.get('/materials/{material_id}/stream')
-async def stream_material(material_id: str, current_user: dict = Depends(get_current_user)):
-    """Просмотр материала - 1 балл (одноразовое списание)"""
-    user_id = current_user['user_id']
-    
-    material = await db.materials.find_one({'id': material_id})
-    if not material:
-        raise HTTPException(status_code=404, detail='Материал не найден')
-    
-    # Проверяем, не просматривал ли пользователь уже этот материал
-    existing_view = await db.material_views.find_one({
-        'user_id': user_id,
-        'material_id': material_id
-    })
-    
-    # Если материал еще не просматривался, списываем баллы
-    if not existing_view:
-        await deduct_credits(
-            user_id, 
-            CREDIT_COSTS['material_viewing'], 
-            f'Просмотр материала: {material.get("title", "Без названия")}', 
-            'materials',
-            {'material_id': material_id, 'material_title': material.get('title')}
-        )
-        
-        # Записываем факт просмотра
-        view_record = {
-            'id': str(uuid.uuid4()),
-            'user_id': user_id,
-            'material_id': material_id,
-            'viewed_at': datetime.utcnow()
-        }
-        await db.material_views.insert_one(view_record)
-    
-    file_path = material.get('file_path')
-    if not file_path or not Path(file_path).exists():
-        raise HTTPException(status_code=404, detail='Файл не найден')
-    
-    # Определяем тип файла
-    file_extension = Path(file_path).suffix.lower()
-    if file_extension == '.pdf':
-        media_type = 'application/pdf'
-    elif file_extension in ['.mp4', '.avi', '.mov']:
-        media_type = 'video/mp4'
-    elif file_extension in ['.mp3', '.wav']:
-        media_type = 'audio/mpeg'
-    else:
-        media_type = 'application/octet-stream'
-    
-    # Возвращаем файл с CORS headers
-    from fastapi.responses import FileResponse
-    response = FileResponse(
-        file_path,
-        media_type=media_type,
-        headers={
-            'Accept-Ranges': 'bytes',
-            'Content-Disposition': 'inline',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-        }
-    )
-    return response
-
-@api_router.delete('/admin/materials/{material_id}')
-async def delete_material(material_id: str, current_user: dict = Depends(get_current_user)):
-    user_doc = await db.users.find_one({'id': current_user['user_id']})
-    if not user_doc or not user_doc.get('is_super_admin', False):
-        raise HTTPException(status_code=403, detail='Требуются права суперадминистратора')
-    material = await db.materials.find_one({'id': material_id})
-    if not material:
-        raise HTTPException(status_code=404, detail='Материал не найден')
-    file_path = material.get('file_path')
-    if file_path and Path(file_path).exists():
-        try:
-            Path(file_path).unlink()
-        except Exception as e:
-            logger.warning(f'Failed to delete file: {e}')
-    await db.materials.delete_one({'id': material_id})
-    return {'deleted': True}
-
-# ========== Вспомогательные функции для планетарного маршрута ==========
-
-def calculate_string_number(text: str) -> int:
-    """Вычисляет нумерологическое число из текста (имя, адрес, номер авто)"""
-    if not text:
-        return 0
-    
-    # Таблица соответствия букв и цифр (ведическая нумерология)
-    letter_values = {
-        'А': 1, 'И': 1, 'С': 1, 'Ъ': 1, 'A': 1, 'I': 1, 'J': 1, 'Q': 1, 'Y': 1,
-        'Б': 2, 'Й': 2, 'Т': 2, 'Ы': 2, 'B': 2, 'K': 2, 'R': 2,
-        'В': 3, 'К': 3, 'У': 3, 'Ь': 3, 'C': 3, 'G': 3, 'L': 3, 'S': 3,
-        'Г': 4, 'Л': 4, 'Ф': 4, 'Э': 4, 'D': 4, 'M': 4, 'T': 4,
-        'Д': 5, 'М': 5, 'Х': 5, 'Ю': 5, 'E': 5, 'H': 5, 'N': 5, 'X': 5,
-        'Е': 6, 'Н': 6, 'Ц': 6, 'Я': 6, 'U': 6, 'V': 6, 'W': 6,
-        'Ё': 7, 'О': 7, 'Ч': 7, 'F': 7, 'O': 7, 'Z': 7,
-        'Ж': 8, 'П': 8, 'Ш': 8, 'P': 8,
-        'З': 9, 'Р': 9, 'Щ': 9
-    }
-    
-    total = 0
-    for char in text.upper():
-        if char.isdigit():
-            total += int(char)
-        elif char in letter_values:
-            total += letter_values[char]
-    
-    return reduce_to_single_digit(total) if total > 0 else 0
-
-async def get_user_numerology_data(user_id: str) -> dict:
-    """Получает все нумерологические данные пользователя"""
-    user_dict = await db.users.find_one({'id': user_id})
-    if not user_dict:
-        return {}
-    
-    user = User(**user_dict)
-    
-    # Парсим дату рождения
-    birth_date_obj = None
-    if user.birth_date:
-        try:
-            if '.' in user.birth_date:
-                birth_date_obj = datetime.strptime(user.birth_date, "%d.%m.%Y")
-            elif '-' in user.birth_date and len(user.birth_date) == 10:
-                birth_date_obj = datetime.strptime(user.birth_date, "%Y-%m-%d")
-            elif 'T' in user.birth_date:
-                birth_date_obj = datetime.fromisoformat(user.birth_date.replace('Z', '+00:00'))
-        except Exception as e:
-            print(f"Ошибка парсинга даты рождения: {e}")
-    
-    if not birth_date_obj:
-        return {}
-    
-    # Вычисляем основные числа
-    day = birth_date_obj.day
-    month = birth_date_obj.month
-    year = birth_date_obj.year
-    
-    soul_number = reduce_to_single_digit(day)
-    destiny_number = reduce_to_single_digit(day + month + year)
-    mind_number = reduce_to_single_digit(month)
-    
-    # Вычисляем рабочие числа (метод Александрова)
-    birth_date_str = birth_date_obj.strftime("%d%m%Y")
-    birth_digits = [int(d) for d in birth_date_str if d != '0']
-    first_working = sum(birth_digits)
-    second_working = reduce_to_single_digit(first_working)
-    first_digit = int(birth_date_str[0])
-    third_working = first_working - (2 * first_digit)
-    fourth_working = reduce_to_single_digit(abs(third_working))
-    
-    # Подсчитываем силу планет
-    all_digits = (
-        birth_digits +
-        [int(d) for d in str(first_working)] +
-        [int(d) for d in str(second_working)] +
-        [int(d) for d in str(abs(third_working))] +
-        [int(d) for d in str(fourth_working)]
-    )
-    
-    planet_counts = {}
-    planet_digit_map = {
-        "Surya": 1, "Chandra": 2, "Guru": 3, "Rahu": 4,
-        "Budh": 5, "Shukra": 6, "Ketu": 7, "Shani": 8, "Mangal": 9
-    }
-    
-    for planet, digit in planet_digit_map.items():
-        planet_counts[planet] = all_digits.count(digit)
-    
-    # Отладочный вывод
-    print(f"🔢 DEBUG: Дата рождения: {birth_date_str}")
-    print(f"🔢 DEBUG: Цифры даты (без 0): {birth_digits}")
-    print(f"🔢 DEBUG: Рабочие числа: {first_working}, {second_working}, {third_working}, {fourth_working}")
-    print(f"🔢 DEBUG: Все цифры для подсчёта: {all_digits}")
-    print(f"🔢 DEBUG: Сила планет: {planet_counts}")
-    
-    # Вычисляем числа из имени, адреса и автомобиля
-    name_number = calculate_string_number(user.full_name)
-    
-    # Полный адрес
-    full_address = f"{user.street or ''} {user.house_number or ''} {user.apartment_number or ''}"
-    address_number = calculate_string_number(full_address.strip())
-    
-    car_number = calculate_string_number(user.car_number or '')
-    
-    # Определяем планеты для имени, адреса и автомобиля
-    number_to_planet = {v: k for k, v in planet_digit_map.items()}
-    name_planet = number_to_planet.get(name_number)
-    address_planet = number_to_planet.get(address_number)
-    car_planet = number_to_planet.get(car_number)
-    
-    return {
-        'soul_number': soul_number,
-        'destiny_number': destiny_number,
-        'mind_number': mind_number,
-        'helping_mind_number': second_working,
-        'wisdom_number': fourth_working,
-        'ruling_number': reduce_to_single_digit(soul_number + destiny_number),
-        'planet_counts': planet_counts,
-        'birth_date': birth_date_obj,
-        # Дополнительные данные
-        'name_number': name_number,
-        'name_planet': name_planet,
-        'address_number': address_number,
-        'address_planet': address_planet,
-        'car_number': car_number,
-        'car_planet': car_planet,
-        'full_name': user.full_name,
-        'full_address': full_address.strip(),
-        'car_plate': user.car_number or ''
+    lines = text_content.split('\n')
+    lesson_data = {
+        'title': '',
+        'description': '',
+        'module': 'Основы нумерологии',
+        'level': 1,
+        'order': 0,
+        'theory': [],
+        'exercises': [],
+        'challenge': None,
+        'quiz': None
     }
 
-def generate_detailed_day_interpretation(
-    ruling_planet: str,
-    ruling_number: int,
-    soul_number: int,
-    mind_number: int,
-    destiny_number: int,
-    personal_year: int,
-    personal_month: int,
-    personal_day: int,
-    challenge_number: int,
-    planet_strength: int,
-    planet_counts: dict,
-    detailed_analysis: dict,
-    positive_aspects: list,
-    challenges: list
-) -> dict:
-    """Генерирует подробную интерпретацию дня с учётом всех чисел и силы планет"""
-    
-    # Характеристики планет
-    planet_characteristics = {
-        'Surya': {
-            'name': 'Солнце',
-            'energy': 'лидерство, уверенность, власть',
-            'activities': 'важные встречи, публичные выступления, принятие решений',
-            'avoid': 'конфликты с начальством, эгоизм'
-        },
-        'Chandra': {
-            'name': 'Луна',
-            'energy': 'эмоции, интуиция, забота',
-            'activities': 'семейные дела, творчество, работа с эмоциями',
-            'avoid': 'импульсивные решения, эмоциональные срывы'
-        },
-        'Mangal': {
-            'name': 'Марс',
-            'energy': 'действие, смелость, энергия',
-            'activities': 'спорт, активные проекты, решительные действия',
-            'avoid': 'агрессия, конфликты, спешка'
-        },
-        'Budh': {
-            'name': 'Меркурий',
-            'energy': 'общение, обучение, торговля',
-            'activities': 'переговоры, учёба, коммуникации, бизнес',
-            'avoid': 'обман, пустая болтовня'
-        },
-        'Guru': {
-            'name': 'Юпитер',
-            'energy': 'мудрость, рост, благополучие',
-            'activities': 'обучение, духовные практики, инвестиции',
-            'avoid': 'излишества, самодовольство'
-        },
-        'Shukra': {
-            'name': 'Венера',
-            'energy': 'любовь, красота, гармония',
-            'activities': 'романтика, искусство, покупки, отдых',
-            'avoid': 'излишества, лень, поверхностность'
-        },
-        'Shani': {
-            'name': 'Сатурн',
-            'energy': 'дисциплина, терпение, ответственность',
-            'activities': 'долгосрочное планирование, серьёзная работа',
-            'avoid': 'пессимизм, жёсткость, страхи'
-        },
-        'Rahu': {
-            'name': 'Раху',
-            'energy': 'амбиции, инновации, трансформация',
-            'activities': 'нестандартные решения, технологии, риск',
-            'avoid': 'обман, манипуляции, иллюзии'
-        },
-        'Ketu': {
-            'name': 'Кету',
-            'energy': 'духовность, освобождение, интуиция',
-            'activities': 'медитация, завершение циклов, духовный рост',
-            'avoid': 'изоляция, отрешённость от реальности'
-        }
-    }
-    
-    planet_info = planet_characteristics.get(ruling_planet, {})
-    
-    # Анализ силы планеты в карте
-    strength_interpretation = ""
-    if planet_strength >= 4:
-        strength_interpretation = f"У вас очень сильная {planet_info.get('name', ruling_planet)} в личной карте ({planet_strength} раз). Это ВАША планета! Вы естественно владеете энергией {planet_info.get('energy', '')}. Сегодня эта энергия усиливается многократно - используйте её для {planet_info.get('activities', '')}."
-    elif planet_strength >= 2:
-        strength_interpretation = f"В вашей карте присутствует {planet_info.get('name', ruling_planet)} ({planet_strength} раз). Вы знакомы с энергией {planet_info.get('energy', '')}. Сегодня - отличный день для развития этих качеств через {planet_info.get('activities', '')}."
-    elif planet_strength == 1:
-        strength_interpretation = f"У вас есть {planet_info.get('name', ruling_planet)} в карте (1 раз). Это слабая, но важная энергия. Сегодня день поможет вам развить качества {planet_info.get('energy', '')}. Рекомендуется: {planet_info.get('activities', '')}."
-    else:
-        strength_interpretation = f"В вашей карте отсутствует {planet_info.get('name', ruling_planet)}. Это означает, что энергия {planet_info.get('energy', '')} может быть для вас непривычной. Сегодня - прекрасная возможность познакомиться с этой энергией и восполнить пробел. Начните с малого: {planet_info.get('activities', '')}."
-    
-    # Анализ личных чисел
-    personal_numbers_analysis = []
-    
-    if soul_number:
-        personal_numbers_analysis.append(f"**Число Души ({soul_number})**: {detailed_analysis.get('soul_match', 'neutral')} совместимость с днём. " + 
-            ("Ваша внутренняя сущность полностью резонирует с энергией дня!" if detailed_analysis.get('soul_match') == 'perfect' else
-             "Ваша душа чувствует поддержку от энергии дня." if detailed_analysis.get('soul_match') == 'friendly' else
-             "День создаёт напряжение для вашей души - время для внутренней работы." if detailed_analysis.get('soul_match') == 'hostile' else
-             "Ваша душа открыта новым возможностям."))
-    
-    if mind_number:
-        personal_numbers_analysis.append(f"**Число Ума ({mind_number})**: {detailed_analysis.get('mind_match', 'neutral')} совместимость. " +
-            ("Ваше мышление работает на максимуме!" if detailed_analysis.get('mind_match') == 'perfect' else
-             "Ваш ум получает поддержку от планеты дня." if detailed_analysis.get('mind_match') == 'friendly' else
-             "День расширяет границы вашего мышления."))
-    
-    if destiny_number:
-        personal_numbers_analysis.append(f"**Число Судьбы ({destiny_number})**: {detailed_analysis.get('destiny_match', 'neutral')} совместимость. " +
-            ("Идеальный день для реализации вашего предназначения!" if detailed_analysis.get('destiny_match') == 'perfect' else
-             "День поддерживает движение к вашим целям." if detailed_analysis.get('destiny_match') == 'friendly' else
-             "Работайте над своей судьбой с терпением." if detailed_analysis.get('destiny_match') == 'hostile' else
-             "День открывает новые пути к вашей судьбе."))
-    
-    # Анализ личных циклов
-    personal_cycles_analysis = []
-    
-    if personal_year:
-        personal_cycles_analysis.append(f"**Личный Год ({personal_year})**: Общая энергия вашего года " +
-            ("полностью гармонирует с сегодняшним днём!" if detailed_analysis.get('personal_year_match') == 'perfect' else
-             "поддерживает энергию дня." if detailed_analysis.get('personal_year_match') == 'friendly' else
-             "создаёт нейтральный фон."))
-    
-    if personal_month:
-        personal_cycles_analysis.append(f"**Личный Месяц ({personal_month})**: Энергия текущего месяца " +
-            ("идеально резонирует с днём!" if detailed_analysis.get('personal_month_match') == 'perfect' else
-             "благоприятствует дню." if detailed_analysis.get('personal_month_match') == 'friendly' else
-             "нейтральна к энергии дня."))
-    
-    if personal_day:
-        personal_cycles_analysis.append(f"**Личный День ({personal_day})**: Это " +
-            ("ВАШ особенный день! Максимальный резонанс!" if detailed_analysis.get('personal_day_match') == 'perfect' else
-             "благоприятный день для вас." if detailed_analysis.get('personal_day_match') == 'friendly' else
-             "день с вызовами - будьте внимательны." if detailed_analysis.get('personal_day_match') == 'hostile' else
-             "обычный день в вашем личном цикле."))
-    
-    # Анализ числа проблемы
-    challenge_analysis = ""
-    if challenge_number > 0:
-        if detailed_analysis.get('challenge_day'):
-            challenge_analysis = f"⚠️ **Число Проблемы ({challenge_number})**: Сегодня день вашего числа проблемы. Это время для осознанной работы над внутренним конфликтом между желаниями души (число {soul_number}) и жизненным предназначением (число {destiny_number}). Используйте этот день для медитации, самоанализа и принятия себя."
-        else:
-            challenge_analysis = f"**Число Проблемы ({challenge_number})**: День помогает вам справиться с внутренними противоречиями. Работайте над гармонизацией души и судьбы."
-    
-    # Общие рекомендации
-    recommendations = []
-    recommendations.append(f"🎯 **Главная рекомендация дня**: Сфокусируйтесь на {planet_info.get('activities', 'важных делах')}.")
-    recommendations.append(f"✅ **Что делать**: {', '.join([aspect.replace('🌟', '').replace('✨', '').replace('🎯', '').replace('🧠', '').replace('💪', '').replace('📝', '').replace('🏠', '').replace('🚗', '').replace('💡', '').strip() for aspect in positive_aspects[:3]])}.")
-    
-    if challenges:
-        recommendations.append(f"⚠️ **Чего избегать**: {planet_info.get('avoid', 'негативных проявлений')}. {challenges[0] if challenges else ''}")
-    
-    # Анализ других планет в карте
-    other_planets_analysis = []
-    for planet, count in planet_counts.items():
-        if planet != ruling_planet and count > 0:
-            other_planet_info = planet_characteristics.get(planet, {})
-            other_planets_analysis.append(f"- **{other_planet_info.get('name', planet)}** ({count} раз): энергия {other_planet_info.get('energy', '')} также присутствует в вашей карте и может быть использована сегодня.")
-    
-    return {
-        'ruling_planet_description': f"{planet_info.get('name', ruling_planet)} ({ruling_number}) - планета {planet_info.get('energy', '')}",
-        'strength_interpretation': strength_interpretation,
-        'personal_numbers_analysis': personal_numbers_analysis,
-        'personal_cycles_analysis': personal_cycles_analysis,
-        'challenge_analysis': challenge_analysis,
-        'recommendations': recommendations,
-        'other_planets_in_chart': other_planets_analysis[:5],  # Топ-5 других планет
-        'planet_characteristics': planet_info
-    }
+    current_section = None
+    current_block = None
+    block_order = 0
+    exercise_order = 0
 
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
 
-def find_best_hours_for_activities(hourly_guide: list, user_data: dict) -> dict:
-    """Находит лучшие часы для разных типов активностей"""
-    
-    # Категории активностей по планетам
-    planet_activities = {
-        'Surya': ['Лидерство и управление', 'Важные встречи', 'Публичные выступления', 'Карьерные решения'],
-        'Chandra': ['Творчество', 'Общение с семьёй', 'Эмоциональная работа', 'Интуитивные решения'],
-        'Mangal': ['Спорт и физическая активность', 'Решительные действия', 'Конкуренция', 'Начало проектов'],
-        'Budh': ['Обучение', 'Коммуникация', 'Написание текстов', 'Аналитическая работа'],
-        'Guru': ['Духовные практики', 'Обучение других', 'Финансовое планирование', 'Мудрые решения'],
-        'Shukra': ['Искусство', 'Романтика', 'Красота и стиль', 'Дипломатия'],
-        'Shani': ['Дисциплина', 'Долгосрочное планирование', 'Работа с документами', 'Медитация'],
-        'Rahu': ['Инновации', 'Нестандартные решения', 'Технологии', 'Амбициозные цели'],
-        'Ketu': ['Духовность', 'Освобождение от лишнего', 'Глубокая медитация', 'Исследования']
-    }
-    
-    best_hours = {}
-    
-    # Для каждой планеты находим лучшие часы
-    for planet, activities in planet_activities.items():
-        planet_hours = [h for h in hourly_guide if h['planet'] == planet and h['energy_level'] >= 6]
-        
-        if planet_hours:
-            # Сортируем по уровню энергии
-            planet_hours.sort(key=lambda x: x['energy_level'], reverse=True)
-            best_hour = planet_hours[0]
-            
-            for activity in activities:
-                if activity not in best_hours:
-                    best_hours[activity] = {
-                        'time': best_hour['time'],
-                        'hour': best_hour['hour'],
-                        'planet': planet,
-                        'energy_level': best_hour['energy_level'],
-                        'recommendation': best_hour['general_recommendation']
-                    }
-    
-    # Добавляем общие категории
-    high_energy_hours = [h for h in hourly_guide if h['energy_level'] >= 7]
-    if high_energy_hours:
-        best_hours['Самые энергичные часы'] = [{
-            'time': h['time'],
-            'hour': h['hour'],
-            'planet': h['planet'],
-            'energy_level': h['energy_level']
-        } for h in high_energy_hours[:3]]
-    
-    low_energy_hours = [h for h in hourly_guide if h['energy_level'] <= 3]
-    if low_energy_hours:
-        best_hours['Часы для отдыха'] = [{
-            'time': h['time'],
-            'hour': h['hour'],
-            'planet': h['planet'],
-            'energy_level': h['energy_level'],
-            'advice': 'Время для восстановления и работы над слабыми сторонами'
-        } for h in low_energy_hours[:3]]
-    
-    return best_hours
+        # Заголовок урока
+        if line.startswith('УРОК') and ('ЦИФРА' in line or 'ЧИСЛО' in line):
+            # Парсим заголовок урока
+            lesson_data['title'] = line
+            i += 1
+            continue
 
+        # Разделы
+        if '───────────────────────────────────────────────' in line:
+            i += 1
+            if i < len(lines):
+                section_title = lines[i].strip().upper()
+                if 'ВВЕДЕНИЕ' in section_title:
+                    current_section = 'introduction'
+                elif 'КЛЮЧЕВЫЕ КОНЦЕПЦИИ' in section_title:
+                    current_section = 'key_concepts'
+                elif 'ПРАКТИЧЕСКОЕ ПРИМЕНЕНИЕ' in section_title:
+                    current_section = 'practical'
+                elif 'УПРАЖНЕНИЯ' in section_title or 'ПРАКТИЧЕСКИЕ ЗАДАНИЯ' in section_title:
+                    current_section = 'exercises'
+                elif 'ЧЕЛЛЕНДЖ' in section_title or 'ВЫЗОВ' in section_title:
+                    current_section = 'challenge'
+                elif 'ТЕСТ' in section_title or 'ВОПРОСЫ' in section_title:
+                    current_section = 'quiz'
+            i += 1
+            continue
 
-async def calculate_hourly_planetary_energy(planetary_hours: list, user_data: dict, db: AsyncIOMotorDatabase = None) -> list:
-    """Вычисляет энергию каждого планетарного часа с детальными советами из базы данных"""
-    
-    hourly_data = []
-    planet_counts = user_data.get('planet_counts', {})
-    soul_number = user_data.get('soul_number', 0)
-    destiny_number = user_data.get('destiny_number', 0)
-    mind_number = user_data.get('mind_number', 0)
-    
-    for hour in planetary_hours:
-        planet = hour.get('planet', '')
-        start_time = hour.get('start_time', '')
-        end_time = hour.get('end_time', '')
-        hour_number = hour.get('hour', 0)
-        period = hour.get('period', 'day')
-        
-        # Сила планеты в личной карте
-        personal_strength = planet_counts.get(planet, 0)
-        
-        # Базовая энергия часа (от 1 до 10)
-        base_energy = 5
-        
-        # Модификаторы
-        if personal_strength > 3:
-            base_energy += 3
-        elif personal_strength > 1:
-            base_energy += 1
-        elif personal_strength == 0:
-            base_energy -= 2
-        
-        # Получаем детальные советы из базы данных
-        advice_doc = None
-        if db is not None:
-            try:
-                advice_doc = await db.planetary_advice.find_one({"planet": planet})
-            except Exception as e:
-                print(f"⚠️  Ошибка получения советов для {planet}: {e}")
-        
-        # Формируем детальные рекомендации
-        activities = []
-        avoid = []
-        personalized_advice = []
-        
-        if advice_doc:
-            # Общие активности для этой планеты
-            activities = advice_doc.get('activities', [])[:3]  # Топ-3 активности
-            avoid = advice_doc.get('avoid', [])[:2]  # Топ-2 чего избегать
-            
-            # Персонализированные советы
-            if soul_number:
-                soul_advice = advice_doc.get('soul_number_advice', {}).get(str(soul_number))
-                if soul_advice:
-                    personalized_advice.append(f"💎 Число Души: {soul_advice}")
-            
-            if destiny_number:
-                destiny_advice = advice_doc.get('destiny_number_advice', {}).get(str(destiny_number))
-                if destiny_advice:
-                    personalized_advice.append(f"🎯 Число Судьбы: {destiny_advice}")
-            
-            if mind_number:
-                mind_advice = advice_doc.get('mind_number_advice', {}).get(str(mind_number))
-                if mind_advice:
-                    personalized_advice.append(f"🧠 Число Ума: {mind_advice}")
-            
-            # Советы по силе планеты
-            if personal_strength == 0:
-                weak_advice = advice_doc.get('weak_planet_advice')
-                if weak_advice:
-                    personalized_advice.append(f"⚠️ Слабая планета: {weak_advice}")
-            elif personal_strength >= 5:
-                strong_advice = advice_doc.get('strong_planet_advice')
-                if strong_advice:
-                    personalized_advice.append(f"⭐ Сильная планета: {strong_advice}")
-            
-            # Советы по времени суток
-            if period == 'night':
-                night_advice = advice_doc.get('night_hour_advice')
-                if night_advice:
-                    personalized_advice.append(f"🌙 Ночной час: {night_advice}")
+        # Разделы, начинающиеся с "РАЗДЕЛ"
+        elif line.startswith('РАЗДЕЛ'):
+            section_title = line.strip().upper()
+            if 'ЧЕЛЛЕНДЖ' in section_title or 'ВЫЗОВ' in section_title:
+                current_section = 'challenge'
+            elif 'ТЕСТ' in section_title or 'ВОПРОСЫ' in section_title:
+                current_section = 'quiz'
+            elif 'УПРАЖНЕНИЯ' in section_title or 'ПРАКТИЧЕСКИЕ ЗАДАНИЯ' in section_title:
+                current_section = 'exercises'
+            i += 1
+            continue
+
+        # Обрабатываем контент по разделам
+        if current_section == 'introduction' and line:
+            if not lesson_data['description']:
+                lesson_data['description'] = line
             else:
-                day_advice = advice_doc.get('day_hour_advice')
-                if day_advice:
-                    personalized_advice.append(f"☀️ Дневной час: {day_advice}")
-        
-        # Определяем тип активности и общую рекомендацию
-        if base_energy >= 7:
-            activity_type = "Высокая энергия"
-            general_recommendation = f"⚡ Отличное время! Ваша энергия {planet} на пике."
-        elif base_energy >= 5:
-            activity_type = "Умеренная энергия"
-            general_recommendation = f"✓ Подходящее время для работы с энергией {planet}."
-        else:
-            activity_type = "Низкая энергия"
-            general_recommendation = f"⚠️ Планета слаба в вашей карте. Время для развития этой энергии."
-        
-        # Определяем благоприятность часа
-        is_favorable = hour.get('is_favorable', False)
-        
-        # Извлекаем время в формате HH:MM
-        start_formatted = start_time.split('T')[1][:5] if 'T' in start_time else start_time
-        end_formatted = end_time.split('T')[1][:5] if 'T' in end_time else end_time
-        
-        hourly_data.append({
-            'hour': hour_number,
-            'time': f"{start_formatted} - {end_formatted}",
-            'start': start_formatted,  # Добавляем отдельно для фронтенда
-            'end': end_formatted,      # Добавляем отдельно для фронтенда
-            'start_time': start_time,  # Полное время для совместимости
-            'end_time': end_time,      # Полное время для совместимости
-            'planet': planet,
-            'planet_sanskrit': hour.get('planet_sanskrit', planet),
-            'period': period,
-            'energy_level': min(10, max(1, base_energy)),
-            'personal_strength': personal_strength,
-            'activity_type': activity_type,
-            'is_favorable': is_favorable,
-            'general_recommendation': general_recommendation,
-            'best_activities': activities,
-            'avoid_activities': avoid,
-            'personalized_advice': personalized_advice
-        })
-    
-    return hourly_data
-
-# IP Geolocation function
-def get_city_from_ip(client_ip: str = None) -> str:
-    """
-    Определяет город по IP адресу пользователя
-    """
-    if not client_ip or client_ip in ['127.0.0.1', 'localhost']:
-        return "Москва"  # По умолчанию для локальных адресов
-    
-    try:
-        # Используем бесплатный сервис ipapi.co
-        response = requests.get(f'http://ipapi.co/{client_ip}/json/', timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            city = data.get('city')
-            if city:
-                return city
-    except Exception as e:
-        print(f"Ошибка геолокации: {e}")
-    
-    return "Москва"  # Возвращаем по умолчанию при ошибке
-
-# Helper function to check admin rights
-async def check_admin_rights(current_user: dict, require_super_admin: bool = False):
-    user = await db.users.find_one({'id': current_user['user_id']})
-    if not user:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    
-    if require_super_admin:
-        if not user.get('is_super_admin'):
-            raise HTTPException(status_code=403, detail='Требуются права суперадминистратора')
-    else:
-        # Check if user is either super admin or regular admin
-        if not (user.get('is_super_admin') or user.get('is_admin')):
-            raise HTTPException(status_code=403, detail='Нет прав администратора')
-    
-    return user
-
-# Admin endpoints
-@api_router.get('/admin/users')
-async def get_all_users(current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user)
-    
-    users = await db.users.find({}).to_list(length=None)
-    user_list = []
-    
-    for u in users:
-        # Подсчет прогресса уроков
-        lessons_progress = await db.user_lesson_progress.find({'user_id': u['id']}).to_list(length=None)
-        completed_lessons = len([p for p in lessons_progress if p.get('completed', False)])
-        total_lessons = await db.materials.count_documents({})
-        
-        user_info = {
-            'id': u['id'],
-            'email': u['email'],
-            'name': u.get('name', ''),
-            'birth_date': u.get('birth_date', ''),
-            'city': u.get('city', ''),
-            'credits_remaining': u.get('credits_remaining', 0),
-            'is_premium': u.get('is_premium', False),
-            'subscription_type': u.get('subscription_type', ''),
-            'subscription_expires_at': u.get('subscription_expires_at', ''),
-            'created_at': u.get('created_at', ''),
-            'lessons_completed': completed_lessons,
-            'lessons_total': total_lessons,
-            'lessons_progress_percent': round((completed_lessons / max(total_lessons, 1)) * 100, 1)
-        }
-        user_list.append(user_info)
-    
-    return {'users': user_list, 'total_count': len(user_list)}
-
-@api_router.patch('/admin/users/{user_id}/credits')
-async def update_user_credits(user_id: str, credits_data: dict, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user)
-    
-    new_credits = credits_data.get('credits_remaining')
-    if new_credits is None or new_credits < 0:
-        raise HTTPException(status_code=400, detail='Некорректное количество кредитов')
-    
-    result = await db.users.update_one(
-        {'id': user_id},
-        {'$set': {'credits_remaining': new_credits}}
-    )
-    
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    
-    # Логирование изменений
-    log_entry = {
-        'id': str(uuid.uuid4()),
-        'admin_id': current_user['user_id'],
-        'user_id': user_id,
-        'action': 'credits_update',
-        'new_credits': new_credits,
-        'timestamp': datetime.utcnow()
-    }
-    await db.admin_logs.insert_one(log_entry)
-    
-    return {'success': True, 'new_credits': new_credits}
-
-@api_router.delete('/admin/users/{user_id}')
-async def delete_user(user_id: str, current_user: dict = Depends(get_current_user)):
-    """Удалить пользователя (только для супер-админа)"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    
-    # Проверяем что пользователь не является супер-админом
-    user_to_delete = await db.users.find_one({'id': user_id})
-    if not user_to_delete:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    
-    if user_to_delete.get('is_super_admin'):
-        raise HTTPException(status_code=403, detail='Нельзя удалить супер-администратора')
-    
-    # Запрещаем удаление самого себя
-    if user_id == current_user['user_id']:
-        raise HTTPException(status_code=403, detail='Нельзя удалить самого себя')
-    
-    # Удаляем пользователя и связанные данные
-    await db.users.delete_one({'id': user_id})
-    await db.user_progress.delete_many({'user_id': user_id})
-    await db.user_levels.delete_many({'user_id': user_id})
-    await db.quiz_results.delete_many({'user_id': user_id})
-    await db.consultation_purchases.delete_many({'user_id': user_id})
-    
-    # Логирование удаления
-    log_entry = {
-        'id': str(uuid.uuid4()),
-        'admin_id': current_user['user_id'],
-        'user_id': user_id,
-        'action': 'user_delete',
-        'user_email': user_to_delete.get('email', 'unknown'),
-        'timestamp': datetime.utcnow()
-    }
-    await db.admin_logs.insert_one(log_entry)
-    
-    return {'message': 'Пользователь успешно удален'}
-
-# Admin material management endpoints
-@api_router.get('/admin/materials')
-async def get_all_materials(current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user)
-    
-    materials = await db.materials.find({}).to_list(length=None)
-    # Clean MongoDB _id fields to avoid serialization errors
-    clean_materials = []
-    for material in materials:
-        material_dict = dict(material)
-        material_dict.pop('_id', None)
-        clean_materials.append(material_dict)
-    
-    return {'materials': clean_materials, 'total_count': len(clean_materials)}
-
-@api_router.post('/admin/materials')
-async def create_material(material_data: dict, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user)
-    
-    material = {
-        'id': str(uuid.uuid4()),
-        'title': material_data.get('title', ''),
-        'description': material_data.get('description', ''),
-        'content': material_data.get('content', ''),
-        'video_url': material_data.get('video_url', ''),
-        'video_file': material_data.get('video_file', ''), # старое поле для совместимости
-        'video_file_id': material_data.get('video_file_id', ''), # новое поле как в PersonalConsultations
-        'video_filename': material_data.get('video_filename', ''), # filename для отображения
-        'pdf_file_id': material_data.get('pdf_file_id', ''), # PDF как в PersonalConsultations
-        'pdf_filename': material_data.get('pdf_filename', ''), # filename для отображения
-        'file_url': material_data.get('file_url', ''), # старое поле для совместимости
-        'quiz_questions': material_data.get('quiz_questions', []),
-        'order': material_data.get('order', 0),
-        'is_active': material_data.get('is_active', True),
-        'created_at': datetime.utcnow(),
-        'created_by': current_user['user_id']
-    }
-    
-    result = await db.materials.insert_one(material)
-    return {'success': True, 'material_id': material['id']}
-
-@api_router.put('/admin/materials/{material_id}')
-async def update_material(material_id: str, material_data: dict, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user)
-    
-    update_data = {
-        'title': material_data.get('title'),
-        'description': material_data.get('description'),
-        'content': material_data.get('content'),
-        'video_url': material_data.get('video_url'),
-        'video_file': material_data.get('video_file'), # старое поле для совместимости
-        'video_file_id': material_data.get('video_file_id'), # новое поле как в PersonalConsultations
-        'video_filename': material_data.get('video_filename'), # filename для отображения
-        'pdf_file_id': material_data.get('pdf_file_id'), # PDF как в PersonalConsultations
-        'pdf_filename': material_data.get('pdf_filename'), # filename для отображения
-        'file_url': material_data.get('file_url'), # старое поле для совместимости
-        'quiz_questions': material_data.get('quiz_questions'),
-        'order': material_data.get('order'),
-        'is_active': material_data.get('is_active'),
-        'updated_at': datetime.utcnow(),
-        'updated_by': current_user['user_id']
-    }
-    
-    # Убираем None значения
-    update_data = {k: v for k, v in update_data.items() if v is not None}
-    
-    result = await db.materials.update_one(
-        {'id': material_id},
-        {'$set': update_data}
-    )
-    
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail='Материал не найден')
-    
-    return {'success': True}
-
-@api_router.delete('/admin/materials/{material_id}')
-async def delete_material(material_id: str, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user)
-    
-    result = await db.materials.delete_one({'id': material_id})
-    
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail='Материал не найден')
-    
-    # Также удаляем прогресс пользователей по этому материалу
-    await db.user_lesson_progress.delete_many({'material_id': material_id})
-    
-    return {'success': True}
-
-# Video upload endpoint
-@api_router.post('/admin/upload-video')
-async def upload_video(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user)
-    
-    # Проверяем тип файла
-    allowed_types = ['video/mp4', 'video/avi', 'video/mov', 'video/wmv', 'video/webm']
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail='Неподдерживаемый формат видео. Поддерживаются: MP4, AVI, MOV, WMV, WEBM')
-    
-    # Проверяем размер файла (максимум 100MB)
-    if file.size > 100 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail='Размер файла не должен превышать 100MB')
-    
-    # Генерируем уникальное имя файла
-    file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'mp4'
-    unique_filename = f"{str(uuid.uuid4())}.{file_extension}"
-    
-    # Создаем директорию для видео если не существует
-    video_dir = Path('/app/uploaded_videos')
-    video_dir.mkdir(exist_ok=True)
-    
-    file_path = video_dir / unique_filename
-    
-    try:
-        # Сохраняем файл
-        with open(file_path, 'wb') as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Сохраняем информацию о файле в базе данных
-        video_record = {
-            'id': str(uuid.uuid4()),
-            'original_filename': file.filename,
-            'stored_filename': unique_filename,
-            'file_path': str(file_path),
-            'file_size': len(content),
-            'content_type': file.content_type,
-            'uploaded_at': datetime.utcnow(),
-            'uploaded_by': current_user['user_id']
-        }
-        
-        await db.uploaded_videos.insert_one(video_record)
-        
-        return {
-            'success': True,
-            'video_id': video_record['id'],
-            'filename': unique_filename,
-            'video_url': f'/api/video/{video_record["id"]}'
-        }
-        
-    except Exception as e:
-        # Если что-то пошло не так, удаляем файл
-        if file_path.exists():
-            file_path.unlink()
-        raise HTTPException(status_code=500, detail=f'Ошибка при загрузке файла: {str(e)}')
-
-# Video serving endpoint
-@api_router.get('/video/{video_id}')
-async def serve_video(video_id: str):
-    video_record = await db.uploaded_videos.find_one({'id': video_id})
-    if not video_record:
-        raise HTTPException(status_code=404, detail='Видео не найдено')
-    
-    file_path = Path(video_record['file_path'])
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail='Файл видео не найден на сервере')
-    
-    return FileResponse(
-        path=str(file_path),
-        media_type=video_record['content_type'],
-        filename=video_record['original_filename'],
-        headers={
-            'Accept-Ranges': 'bytes',
-            'Content-Disposition': 'inline',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-        }
-    )
-
-@api_router.get('/admin/users/{user_id}/lessons')
-async def get_user_lessons_progress(user_id: str, current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user)
-    
-    # Получаем все материалы
-    materials = await db.materials.find({}).to_list(length=None)
-    
-    # Получаем прогресс пользователя
-    progress = await db.user_lesson_progress.find({'user_id': user_id}).to_list(length=None)
-    progress_dict = {p['material_id']: p for p in progress}
-    
-    lessons_data = []
-    for material in materials:
-        material_progress = progress_dict.get(material['id'], {})
-        lessons_data.append({
-            'material_id': material['id'],
-            'title': material['title'],
-            'completed': material_progress.get('completed', False),
-            'started_at': material_progress.get('started_at', ''),
-            'completed_at': material_progress.get('completed_at', ''),
-            'quiz_score': material_progress.get('quiz_score', 0)
-        })
-    
-    return {'lessons': lessons_data, 'user_id': user_id}
-
-# Групповая совместимость
-@api_router.post('/group-compatibility')
-async def calculate_group_compatibility_endpoint(request: GroupCompatibilityRequest, current_user: dict = Depends(get_current_user)):
-    try:
-        from numerology import calculate_group_compatibility
-        
-        # Конвертируем данные людей в нужный формат
-        people_data = [{"name": person.name, "birth_date": person.birth_date} for person in request.people]
-        
-        result = calculate_group_compatibility(request.main_person_birth_date, people_data)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f'Ошибка расчета: {str(e)}')
-
-# Нумерология автомобиля
-@api_router.post('/car-numerology')
-async def calculate_car_numerology_endpoint(car_data: Dict[str, str], current_user: dict = Depends(get_current_user)):
-    try:
-        from numerology import calculate_car_number_numerology
-        
-        car_number = car_data.get('car_number')
-        if not car_number:
-            raise HTTPException(status_code=400, detail='Номер автомобиля не указан')
-        
-        result = calculate_car_number_numerology(car_number)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f'Ошибка расчета: {str(e)}')
-
-# Нумерология адреса
-@api_router.post('/address-numerology')
-async def calculate_address_numerology_endpoint(address_data: Dict[str, str], current_user: dict = Depends(get_current_user)):
-    try:
-        from numerology import calculate_address_numerology
-        
-        result = calculate_address_numerology(
-            street=address_data.get('street'),
-            house_number=address_data.get('house_number'),
-            apartment_number=address_data.get('apartment_number'),
-            postal_code=address_data.get('postal_code')
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f'Ошибка расчета: {str(e)}')
-
-# Video upload for lessons endpoint
-@api_router.post('/admin/lessons/{lesson_id}/upload-video')
-async def upload_lesson_video(lesson_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    
-    # Check if lesson exists
-    lesson = await db.video_lessons.find_one({'id': lesson_id})
-    if not lesson:
-        raise HTTPException(status_code=404, detail='Урок не найден')
-    
-    # Check file type
-    allowed_types = ['video/mp4', 'video/avi', 'video/mov', 'video/wmv', 'video/webm']
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail='Неподдерживаемый формат видео. Поддерживаются: MP4, AVI, MOV, WMV, WEBM')
-    
-    # Check file size (maximum 100MB)
-    if file.size > 100 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail='Размер файла не должен превышать 100MB')
-    
-    # Generate unique filename
-    file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'mp4'
-    unique_filename = f"lesson_{lesson_id}_{str(uuid.uuid4())}.{file_extension}"
-    
-    # Create video directory if not exists
-    video_dir = Path('/app/uploaded_videos')
-    video_dir.mkdir(exist_ok=True)
-    
-    file_path = video_dir / unique_filename
-    
-    try:
-        # Save file
-        with open(file_path, 'wb') as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Save video information to database
-        video_record = {
-            'id': str(uuid.uuid4()),
-            'lesson_id': lesson_id,
-            'original_filename': file.filename,
-            'stored_filename': unique_filename,
-            'file_path': str(file_path),
-            'file_size': len(content),
-            'content_type': file.content_type,
-            'uploaded_at': datetime.utcnow(),
-            'uploaded_by': current_user['user_id']
-        }
-        
-        await db.uploaded_videos.insert_one(video_record)
-        
-        # Update lesson with direct video file reference
-        video_url = f'/api/video/{video_record["id"]}'
-        await db.video_lessons.update_one(
-            {'id': lesson_id}, 
-            {
-                '$set': {
-                    'video_url': video_url,
-                    'video_file_id': video_record['id'],
-                    'updated_at': datetime.utcnow()
+                lesson_data['description'] += ' ' + line
+        elif current_section in ['key_concepts', 'practical'] and line:
+            # Создаем или добавляем к блоку теории
+            if not current_block or current_block.get('title') != section_title:
+                current_block = {
+                    'title': section_title if 'section_title' in locals() else current_section.replace('_', ' ').title(),
+                    'content': line,
+                    'order': block_order
                 }
+                lesson_data['theory'].append(current_block)
+                block_order += 1
+            else:
+                current_block['content'] += '\n' + line
+
+        elif current_section == 'exercises' and line.startswith('УПРАЖНЕНИЕ') or line.startswith('ЗАДАНИЕ'):
+            # Создаем упражнение
+            exercise = {
+                'title': line,
+                'description': '',
+                'type': 'reflection',
+                'instructions': '',
+                'expected_outcome': '',
+                'order': exercise_order
             }
-        )
-        
-        return {
-            'success': True,
-            'video_id': video_record['id'],
-            'filename': unique_filename,
-            'video_url': video_url,
-            'lesson_id': lesson_id
-        }
-        
-    except Exception as e:
-        # If something went wrong, delete file
-        if file_path.exists():
-            file_path.unlink()
-        raise HTTPException(status_code=500, detail=f'Ошибка при загрузке файла: {str(e)}')
 
-# ----------------- SCORING CONFIGURATION (ADMIN) -----------------
-@api_router.get('/admin/scoring-config')
-async def get_scoring_config(current_user: dict = Depends(get_current_user)):
-    """Получить текущую конфигурацию системы баллов"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)
-    
-    # Получаем активную конфигурацию
-    config = await db.scoring_config.find_one({'is_active': True})
-    
-    if not config:
-        # Если конфигурации нет, создаём дефолтную
-        from models import ScoringConfig
-        default_config = ScoringConfig()
-        await db.scoring_config.insert_one(default_config.dict())
-        config = default_config.dict()
-    
-    # Удаляем MongoDB _id
-    if config:
-        config.pop('_id', None)
-    
-    return config
+            # Читаем описание упражнения
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith('УПРАЖНЕНИЕ') and not lines[i].strip().startswith('───────────────────────────────────────────────'):
+                if lines[i].strip():
+                    exercise['instructions'] += lines[i].strip() + '\n'
+                i += 1
 
-@api_router.put('/admin/scoring-config')
-async def update_scoring_config(
-    config_update: Dict[str, Any],
-    current_user: dict = Depends(get_current_user)
-):
-    """Обновить конфигурацию системы баллов"""
-    global _scoring_config_cache, _scoring_config_cache_time
-    
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
-    
-    # Получаем текущую активную конфигурацию
-    current_config = await db.scoring_config.find_one({'is_active': True})
-    
-    if not current_config:
-        # Создаём новую конфигурацию
-        from models import ScoringConfig
-        new_config = ScoringConfig(**config_update)
-        await db.scoring_config.insert_one(new_config.dict())
-        
-        # Инвалидируем кэш
-        _scoring_config_cache = None
-        _scoring_config_cache_time = None
-        
-        config_dict = new_config.dict()
-        config_dict.pop('_id', None)
-        return {'message': 'Конфигурация создана', 'config': config_dict}
-    
-    # Обновляем существующую конфигурацию
-    config_update['updated_at'] = datetime.utcnow()
-    
-    await db.scoring_config.update_one(
-        {'is_active': True},
-        {'$set': config_update}
-    )
-    
-    # Инвалидируем кэш
-    _scoring_config_cache = None
-    _scoring_config_cache_time = None
-    
-    # Получаем обновлённую конфигурацию
-    updated_config = await db.scoring_config.find_one({'is_active': True})
-    if updated_config:
-        updated_config.pop('_id', None)
-    
-    return {
-        'message': 'Конфигурация обновлена',
-        'config': updated_config
-    }
+            lesson_data['exercises'].append(exercise)
+            exercise_order += 1
+            continue
 
-@api_router.post('/admin/scoring-config/reset')
-async def reset_scoring_config(current_user: dict = Depends(get_current_user)):
-    """Сбросить конфигурацию к дефолтным значениям"""
-    global _scoring_config_cache, _scoring_config_cache_time
-    
-    admin_user = await check_admin_rights(current_user, require_super_admin=True)
-    
-    # Деактивируем все существующие конфигурации
-    await db.scoring_config.update_many({}, {'$set': {'is_active': False}})
-    
-    # Создаём новую дефолтную конфигурацию
-    from models import ScoringConfig
-    default_config = ScoringConfig()
-    await db.scoring_config.insert_one(default_config.dict())
-    
-    # Инвалидируем кэш
-    _scoring_config_cache = None
-    _scoring_config_cache_time = None
-    
-    config_dict = default_config.dict()
-    config_dict.pop('_id', None)
-    
-    return {
-        'message': 'Конфигурация сброшена к дефолтным значениям',
-        'config': config_dict
-    }
-
-# ----------------- PERSONAL CONSULTATIONS -----------------
-
-# Admin endpoints for managing consultations
-@api_router.get('/admin/consultations')
-async def get_all_consultations(current_user: dict = Depends(get_current_user)):
-    """Получить все персональные консультации с данными покупателей (только для админа)"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)  # Позволяем обычным админам
-    
-    consultations = await db.personal_consultations.find().sort('created_at', -1).to_list(100)
-    clean_consultations = []
-    
-    for consultation in consultations:
-        consultation_dict = dict(consultation)
-        consultation_dict.pop('_id', None)
-        
-        # Если консультация куплена, добавляем полную информацию о покупателе
-        if consultation_dict.get('is_purchased'):
-            buyer_info = {
-                'is_purchased': True,
-                'purchased_at': consultation_dict.get('purchased_at'),
-                'buyer_details': {
-                    'user_id': consultation_dict.get('purchased_by_user_id'),
-                    'full_name': consultation_dict.get('buyer_full_name', ''),
-                    'email': consultation_dict.get('buyer_email', ''),
-                    'birth_date': consultation_dict.get('buyer_birth_date', ''),
-                    'city': consultation_dict.get('buyer_city', ''),
-                    'phone': consultation_dict.get('buyer_phone', ''),
-                    'address': consultation_dict.get('buyer_address', ''),
-                    'credits_spent': consultation_dict.get('credits_spent', 0)
+        elif current_section == 'challenge' and line:
+            # Обрабатываем челлендж
+            if not lesson_data['challenge']:
+                lesson_data['challenge'] = {
+                    'title': '7-дневный челлендж',
+                    'description': '',
+                    'duration_days': 7,
+                    'daily_tasks': []
                 }
-            }
-            consultation_dict.update(buyer_info)
-        else:
-            consultation_dict['is_purchased'] = False
-            consultation_dict['buyer_details'] = None
-            
-        clean_consultations.append(consultation_dict)
-    
-    return clean_consultations
 
-@api_router.get('/admin/users/{user_id}/details')
-async def get_user_details(user_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить подробные данные пользователя (для админа)"""
-    admin_user = await check_admin_rights(current_user)
-    
-    user = await db.users.find_one({'id': user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    
-    # Возвращаем все доступные данные пользователя
-    user_details = {
-        'id': user.get('id'),
-        'email': user.get('email', ''),
-        'full_name': user.get('full_name', user.get('name', '')),
-        'birth_date': user.get('birth_date', ''),
-        'city': user.get('city', ''),
-        'phone': user.get('phone', ''),
-        'address': user.get('address', ''),
-        'car': user.get('car', ''),
-        'credits_remaining': user.get('credits_remaining', 0),
-        'subscription_type': user.get('subscription_type', ''),
-        'subscription_expires_at': user.get('subscription_expires_at', ''),
-        'created_at': user.get('created_at', ''),
-        'last_login': user.get('last_login', ''),
-        'is_admin': user.get('is_admin', False),
-        'is_super_admin': user.get('is_super_admin', False)
-    }
-    
-    # Дополнительная статистика
-    completed_lessons = await db.user_progress.count_documents({'user_id': user_id, 'completed': True})
-    total_lessons = await db.video_lessons.count_documents({'is_active': True})
-    quiz_results = await db.quiz_results.count_documents({'user_id': user_id})
-    
-    user_details.update({
-        'lessons_completed': completed_lessons,
-        'lessons_total': total_lessons,
-        'lessons_progress_percent': round((completed_lessons / max(total_lessons, 1)) * 100, 1),
-        'quiz_results_count': quiz_results
-    })
-    
-    return user_details
+            # Ищем заголовки дней
+            if any(day in line.upper() for day in ['ПОНЕДЕЛЬНИК', 'ВТОРНИК', 'СРЕДА', 'ЧЕТВЕРГ', 'ПЯТНИЦА', 'СУББОТА', 'ВОСКРЕСЕНЬЕ']):
+                # Это новый день челленджа
+                day_name = line.upper()
+                day_number = len(lesson_data['challenge']['daily_tasks']) + 1
 
-@api_router.post('/admin/consultations')
-async def create_consultation(consultation: PersonalConsultation, current_user: dict = Depends(get_current_user)):
-    """Создать новую персональную консультацию (только для админа)"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)  # Позволяем обычным админам
-    await db.personal_consultations.insert_one(consultation.dict())
-    return {'message': 'Консультация успешно создана', 'consultation_id': consultation.id}
+                # Читаем задачи для этого дня
+                tasks = []
+                i += 1
+                while i < len(lines) and not any(d in lines[i].upper() for d in ['ПОНЕДЕЛЬНИК', 'ВТОРНИК', 'СРЕДА', 'ЧЕТВЕРГ', 'ПЯТНИЦА', 'СУББОТА', 'ВОСКРЕСЕНЬЕ']) and not '───────────────────────────────────────────────' in lines[i]:
+                    if lines[i].strip() and lines[i].strip()[0].isdigit():
+                        tasks.append(lines[i].strip())
+                    i += 1
 
-@api_router.put('/admin/consultations/{consultation_id}')
-async def update_consultation(consultation_id: str, consultation_data: Dict[str, Any], current_user: dict = Depends(get_current_user)):
-    """Обновить персональную консультацию (только для админа)"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)  # Позволяем обычным админам
-    consultation_data['updated_at'] = datetime.utcnow()
-    result = await db.personal_consultations.update_one({'id': consultation_id}, {'$set': consultation_data})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail='Консультация не найдена')
-    return {'message': 'Консультация успешно обновлена'}
+                lesson_data['challenge']['daily_tasks'].append({
+                    'day': day_number,
+                    'title': day_name,
+                    'description': f'Задачи для {day_name.lower()}:',
+                    'tasks': tasks
+                })
+                continue
 
-@api_router.delete('/admin/consultations/{consultation_id}')
-async def delete_consultation(consultation_id: str, current_user: dict = Depends(get_current_user)):
-    """Удалить персональную консультацию (только для админа)"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)  # Позволяем обычным админам
-    result = await db.personal_consultations.delete_one({'id': consultation_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail='Консультация не найдена')
-    return {'message': 'Консультация успешно удалена'}
+            elif not lesson_data['challenge']['description']:
+                lesson_data['challenge']['description'] += line + '\n'
 
-# Upload endpoints for consultations
-@api_router.post('/admin/consultations/upload-video')
-async def upload_consultation_video(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Загрузка видео файла для консультации"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)  # Позволяем обычным админам
-    
-    # Проверяем тип файла
-    if not file.content_type.startswith('video/'):
-        raise HTTPException(status_code=400, detail='Файл должен быть видео')
-    
-    try:
-        # Генерируем уникальное имя файла
-        file_id = str(uuid.uuid4())
-        file_extension = Path(file.filename).suffix
-        file_path = CONSULTATIONS_VIDEO_DIR / f"{file_id}{file_extension}"
-        
-        # Сохраняем файл
-        with open(file_path, 'wb') as f:
-            content = await file.read()
-            f.write(content)
-        
-        # Сохраняем информацию в базу данных
-        video_record = {
-            'id': file_id,
-            'original_filename': file.filename,
-            'file_path': str(file_path),
-            'content_type': file.content_type,
-            'file_size': len(content),
-            'uploaded_by': current_user['user_id'],
-            'created_at': datetime.utcnow(),
-            'file_type': 'consultation_video'
-        }
-        
-        await db.uploaded_files.insert_one(video_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'video_url': f'/api/consultations/video/{file_id}'
-        }
-    except Exception as e:
-        logger.error(f'Video upload error: {e}')
-        raise HTTPException(status_code=500, detail=f'Ошибка при загрузке видео: {str(e)}')
-@api_router.post('/admin/consultations/upload-pdf')
-async def upload_consultation_pdf(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Загрузка PDF файла для консультации"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)  # Позволяем обычным админам
-    
-    # Проверяем тип файла
-    if file.content_type != 'application/pdf':
-        raise HTTPException(status_code=400, detail='Файл должен быть PDF')
-    
-    try:
-        # Генерируем уникальное имя файла
-        file_id = str(uuid.uuid4())
-        file_path = CONSULTATIONS_PDF_DIR / f"{file_id}.pdf"
-        
-        # Сохраняем файл
-        with open(file_path, 'wb') as f:
-            content = await file.read()
-            f.write(content)
-        
-        # Сохраняем информацию в базу данных
-        pdf_record = {
-            'id': file_id,
-            'original_filename': file.filename,
-            'file_path': str(file_path),
-            'content_type': file.content_type,
-            'file_size': len(content),
-            'uploaded_by': current_user['user_id'],
-            'created_at': datetime.utcnow(),
-            'file_type': 'consultation_pdf'
-        }
-        
-        await db.uploaded_files.insert_one(pdf_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'pdf_url': f'/api/consultations/pdf/{file_id}'
-        }
-    except Exception as e:
-        logger.error(f'PDF upload error: {e}')
-        raise HTTPException(status_code=500, detail=f'Ошибка при загрузке PDF: {str(e)}')
+        elif current_section == 'quiz' and line:
+            # Обрабатываем тест
+            if not lesson_data['quiz']:
+                lesson_data['quiz'] = {
+                    'title': 'Тест по материалу урока',
+                    'description': 'Проверьте свои знания',
+                    'questions': [],
+                    'passing_score': 70
+                }
 
-@api_router.post('/admin/consultations/upload-subtitles')
-async def upload_consultation_subtitles(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Загрузка файла субтитров для консультации"""
-    admin_user = await check_admin_rights(current_user, require_super_admin=False)  # Позволяем обычным админам
-    
-    # Проверяем тип файла
-    allowed_types = ['text/vtt', 'application/x-subrip', 'text/plain']
-    if file.content_type not in allowed_types and not file.filename.lower().endswith(('.vtt', '.srt')):
-        raise HTTPException(status_code=400, detail='Файл должен быть субтитрами (.vtt или .srt)')
-    
-    try:
-        # Генерируем уникальное имя файла
-        file_id = str(uuid.uuid4())
-        file_extension = Path(file.filename).suffix
-        file_path = CONSULTATIONS_SUBTITLES_DIR / f"{file_id}{file_extension}"
-        
-        # Сохраняем файл
-        with open(file_path, 'wb') as f:
-            content = await file.read()
-            f.write(content)
-        
-        # Сохраняем информацию в базу данных
-        subtitles_record = {
-            'id': file_id,
-            'original_filename': file.filename,
-            'file_path': str(file_path),
-            'content_type': file.content_type or 'text/vtt',
-            'file_size': len(content),
-            'uploaded_by': current_user['user_id'],
-            'created_at': datetime.utcnow(),
-            'file_type': 'consultation_subtitles'
-        }
-        
-        await db.uploaded_files.insert_one(subtitles_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'subtitles_url': f'/api/consultations/subtitles/{file_id}'
-        }
-    except Exception as e:
-        logger.error(f'Subtitles upload error: {e}')
-        raise HTTPException(status_code=500, detail=f'Ошибка при загрузке субтитров: {str(e)}')
+            # Ищем вопросы (начинаются с цифры и точки)
+            if line.strip() and line.strip()[0].isdigit() and line.strip().split('.')[0].isdigit():
+                question_text = line.strip().split('.', 1)[1].strip() if '.' in line else line.strip()
 
-# Serving endpoints for consultation files
-@api_router.get('/consultations/video/{file_id}')
-async def serve_consultation_video(file_id: str):
-    """Стриминг видео файлов консультаций"""
-    file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'consultation_video'})
-    if not file_record:
-        raise HTTPException(status_code=404, detail='Видео файл не найден')
-    
-    file_path = Path(file_record['file_path'])
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail='Видео файл не найден на сервере')
-    
-    return FileResponse(
-        path=str(file_path),
-        media_type=file_record['content_type'],
-        filename=file_record['original_filename'],
-        headers={
-            'Accept-Ranges': 'bytes',
-            'Content-Disposition': 'inline',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-        }
-    )
+                # Читаем варианты ответов
+                options = []
+                i += 1
+                while i < len(lines) and not (lines[i].strip() and lines[i].strip()[0].isdigit() and '───' not in lines[i]):
+                    option_line = lines[i].strip()
+                    if option_line.startswith(('A.', 'B.', 'C.', 'D.', 'E.')):
+                        option_text = option_line[2:].strip()
+                        options.append(option_text)
+                    i += 1
 
-@api_router.get('/consultations/pdf/{file_id}')
-async def serve_consultation_pdf(file_id: str):
-    """Стриминг PDF файлов консультаций"""
-    file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'consultation_pdf'})
-    if not file_record:
-        raise HTTPException(status_code=404, detail='PDF файл не найден')
-    
-    file_path = Path(file_record['file_path'])
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail='PDF файл не найден на сервере')
-    
-    return FileResponse(
-        path=str(file_path),
-        media_type=file_record.get('content_type', 'application/pdf'),  # Default to PDF if missing
-        filename=file_record['original_filename'],
-        headers={
-            'Accept-Ranges': 'bytes',
-            'Content-Disposition': 'inline',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-        }
-    )
+                if question_text and options:
+                    lesson_data['quiz']['questions'].append({
+                        'question': question_text,
+                        'type': 'multiple_choice',
+                        'options': options,
+                        'correct_answer': options[0] if options else '',  # Пока первый вариант
+                        'explanation': 'Правильный ответ',
+                        'points': 1
+                    })
+                continue
 
-@api_router.get('/consultations/subtitles/{file_id}')
-async def serve_consultation_subtitles(file_id: str):
-    """Стриминг файлов субтитров консультаций"""
-    file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'consultation_subtitles'})
-    if not file_record:
-        raise HTTPException(status_code=404, detail='Файл субтитров не найден')
-    
-    file_path = Path(file_record['file_path'])
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail='Файл субтитров не найден на сервере')
-    
-    return FileResponse(
-        path=str(file_path),
-        media_type=file_record['content_type'],
-        filename=file_record['original_filename'],
-        headers={
-            'Accept-Ranges': 'bytes',
-            'Content-Disposition': 'inline',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-        }
-    )
+        i += 1
 
-# User endpoints for consultations
-@api_router.get('/user/consultations')
-async def get_user_consultations(current_user: dict = Depends(get_current_user)):
-    """Получить консультации назначенные текущему пользователю"""
-    user_id = current_user['user_id']
-    
-    # Получаем консультации назначенные пользователю
-    consultations = await db.personal_consultations.find({'assigned_user_id': user_id, 'is_active': True}).to_list(100)
-    
-    # Получаем информацию о покупках пользователя
-    purchases = await db.consultation_purchases.find({'user_id': user_id}).to_list(100)
-    purchased_consultation_ids = {purchase['consultation_id'] for purchase in purchases}
-    
-    # Подготавливаем ответ
-    result = []
-    for consultation in consultations:
-        consultation_dict = dict(consultation)
-        consultation_dict.pop('_id', None)
-        consultation_dict['is_purchased'] = consultation['id'] in purchased_consultation_ids
-        result.append(consultation_dict)
-    
-    return result
+    # Создаем объекты моделей
+    theory_blocks = [
+        TheoryBlock(
+            title=block['title'],
+            content=block['content'],
+            order=block['order']
+        ) for block in lesson_data['theory']
+    ]
 
-# Auto Quiz Generation from Video Subtitles
-@api_router.post('/learning/generate-quiz')
-async def generate_quiz_from_video(
-    lesson_data: dict,
-    current_user: dict = Depends(get_current_user)
-):
-    """Автоматическая генерация Quiz на основе субтитров видео"""
-    try:
-        lesson_id = lesson_data.get('lesson_id')
-        video_url = lesson_data.get('video_url')
-        video_file_id = lesson_data.get('video_file_id')
-        
-        # Получаем информацию об уроке
-        lesson = await db.video_lessons.find_one({'id': lesson_id})
-        if not lesson:
-            raise HTTPException(status_code=404, detail='Урок не найден')
-        
-        # Пытаемся извлечь субтитры из видео
-        subtitles_text = await extract_subtitles_from_video(video_url, video_file_id)
-        
-        if not subtitles_text:
-            # Fallback: используем title и description урока для генерации
-            subtitles_text = f"{lesson.get('title', '')}. {lesson.get('description', '')}"
-        
-        # Генерируем Quiz на основе субтитров с помощью AI
-        quiz_questions = await generate_quiz_questions(subtitles_text, lesson.get('title'))
-        
-        return {
-            'questions': quiz_questions,
-            'lesson_title': lesson.get('title'),
-            'total_points': len(quiz_questions) * 5,
-            'generated_from': 'auto_subtitles'
-        }
-        
-    except Exception as e:
-        logger.error(f'Quiz generation error: {e}')
-        
-        # Fallback quiz if auto generation fails
-        fallback_questions = [
-            {
-                'id': 1,
-                'question': 'Вы внимательно просмотрели весь видеоурок?',
-                'options': [
-                    'Да, просмотрел полностью и внимательно',
-                    'Просмотрел, но отвлекался',
-                    'Просмотрел частично',
-                    'Только прослушал фрагменты'
-                ],
-                'correct_answer': 0,
-                'explanation': 'Для лучшего усвоения материала рекомендуется внимательный просмотр всего урока.'
-            },
-            {
-                'id': 2,
-                'question': 'Какие новые знания вы получили из этого урока?',
-                'options': [
-                    'Углубил понимание ведической нумерологии',
-                    'Изучил практические методы расчетов',
-                    'Узнал историческую информацию',
-                    'Все перечисленное выше'
-                ],
-                'correct_answer': 3,
-                'explanation': 'Каждый урок по нумерологии содержит комплексную информацию: теорию, практику и контекст.'
-            }
+    exercises = [
+        Exercise(
+            title=ex['title'],
+            description=ex['instructions'][:200] + '...' if len(ex['instructions']) > 200 else ex['instructions'],
+            type='reflection',
+            instructions=ex['instructions'],
+            expected_outcome='Осознание и применение полученных знаний',
+            order=ex['order']
+        ) for ex in lesson_data['exercises']
+    ]
+
+    # Создаем челлендж, если есть данные
+    challenge_obj = None
+    if lesson_data['challenge'] and lesson_data['challenge']['daily_tasks']:
+        daily_tasks = [
+            ChallengeDay(
+                day=task['day'],
+                title=task['title'],
+                description=task['description'],
+                tasks=task['tasks']
+            ) for task in lesson_data['challenge']['daily_tasks']
         ]
-        
-        return {
-            'questions': fallback_questions,
-            'lesson_title': lesson.get('title', 'Урок'),
-            'total_points': 10,
-            'generated_from': 'fallback'
-        }
+        challenge_obj = Challenge(
+            title=lesson_data['challenge']['title'],
+            description=lesson_data['challenge']['description'],
+            duration_days=lesson_data['challenge']['duration_days'],
+            daily_tasks=daily_tasks
+        )
 
-async def extract_subtitles_from_video(video_url, video_file_id):
-    """Извлечение субтитров из видео файла"""
+    # Создаем тест, если есть данные
+    quiz_obj = None
+    if lesson_data['quiz'] and lesson_data['quiz']['questions']:
+        questions = [
+            QuizQuestion(
+                question=q['question'],
+                type=q['type'],
+                options=q['options'],
+                correct_answer=q['correct_answer'],
+                explanation=q['explanation'],
+                points=q['points']
+            ) for q in lesson_data['quiz']['questions']
+        ]
+        quiz_obj = Quiz(
+            title=lesson_data['quiz']['title'],
+            description=lesson_data['quiz']['description'],
+            questions=questions,
+            passing_score=lesson_data['quiz']['passing_score']
+        )
+
+    # Создаем урок V2
+    lesson = LessonV2(
+        title=lesson_data['title'],
+        description=lesson_data['description'],
+        module=lesson_data['module'],
+        level=lesson_data['level'],
+        order=lesson_data['order'],
+        theory=theory_blocks,
+        exercises=exercises,
+        challenge=challenge_obj,
+        quiz=quiz_obj,
+        created_by="admin_system",
+        updated_by="admin_system"
+    )
+
+    return lesson
+
+# ==================== ADMIN API ====================
+
+@app.get("/api/admin/users")
+async def get_all_users(current_user: dict = Depends(get_current_user)):
+    """Получить всех пользователей для админа"""
     try:
-        if video_file_id:
-            # Для локальных видео файлов
-            file_record = await db.uploaded_files.find_one({'id': video_file_id})
-            if file_record and file_record.get('file_path'):
-                # TODO: Интеграция с Speech-to-Text API (Whisper, Google Speech, etc.)
-                # Пока возвращаем None, чтобы использовать fallback
-                return None
-        elif video_url and ('youtube.com' in video_url or 'youtu.be' in video_url):
-            # Для YouTube видео можно использовать YouTube API для получения субтитров
-            # TODO: Интеграция с YouTube API для получения субтитров
-            return None
-            
-        return None
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Получаем всех пользователей
+        users = await db.users.find({}).to_list(1000)
+
+        users_list = []
+        for user_doc in users:
+            user_dict = dict(user_doc)
+            user_dict.pop('_id', None)
+            user_dict.pop('password_hash', None)  # Не показываем хэш пароля
+            users_list.append(user_dict)
+
+        return {"users": users_list}
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f'Subtitle extraction error: {e}')
-        return None
+        logger.error(f"Error getting users: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting users: {str(e)}")
 
-async def generate_quiz_questions(text_content, lesson_title):
-    """Генерация вопросов Quiz на основе текстового содержимого"""
-    try:
-        # TODO: Интеграция с LLM для генерации вопросов
-        # Можно использовать OpenAI, Claude или локальные модели
-        
-        # Пока создаем базовые вопросы на основе содержимого
-        questions = []
-        
-        # Анализируем текст и создаем вопросы
-        words = text_content.lower().split()
-        
-        # Ищем ключевые термины нумерологии
-        numerology_terms = ['число', 'цифра', 'расчет', 'планета', 'энергия', 'судьба', 'имя']
-        found_terms = [term for term in numerology_terms if any(term in word for word in words)]
-        
-        if 'число' in text_content.lower() or 'цифра' in text_content.lower():
-            questions.append({
-                'id': len(questions) + 1,
-                'question': f'О каких числовых значениях говорится в уроке "{lesson_title}"?',
-                'options': [
-                    'О числах судьбы и планетарных влияниях',
-                    'О математических формулах',
-                    'О статистических данных', 
-                    'О номерах телефонов'
-                ],
-                'correct_answer': 0,
-                'explanation': 'В ведической нумерологии изучаются числа судьбы и их планетарные влияния на жизнь человека.'
-            })
-        
-        if 'планета' in text_content.lower() or 'энергия' in text_content.lower():
-            questions.append({
-                'id': len(questions) + 1,
-                'question': 'Как планетарные энергии влияют на числа в ведической нумерологии?',
-                'options': [
-                    'Каждому числу соответствует планета со своей энергией',
-                    'Планеты не влияют на числа',
-                    'Влияние зависит от времени года',
-                    'Влияние только на четные числа'
-                ],
-                'correct_answer': 0,
-                'explanation': 'В ведической системе каждое число от 1 до 9 связано с определенной планетой и ее энергетическими качествами.'
-            })
-        
-        # Если не нашли специфичных терминов, добавляем общие вопросы
-        if len(questions) == 0:
-            questions.extend([
-                {
-                    'id': 1,
-                    'question': f'Какая основная тема рассматривается в уроке "{lesson_title}"?',
-                    'options': [
-                        'Ведическая нумерология и числовые влияния',
-                        'Современная математика',
-                        'История древней Индии',
-                        'Астрономические расчеты'
-                    ],
-                    'correct_answer': 0,
-                    'explanation': 'Урок посвящен изучению ведической нумерологии и влиянию чисел на жизнь человека.'
-                }
-            ])
-        
-        # Всегда добавляем практический вопрос
-        questions.append({
-            'id': len(questions) + 1,
-            'question': 'Как лучше всего применить полученные знания на практике?',
-            'options': [
-                'Рассчитать свои личные числа и изучить их влияние',
-                'Заучить все формулы наизусть',
-                'Игнорировать полученную информацию',
-                'Рассказать друзьям без изучения'
-            ],
-            'correct_answer': 0,
-            'explanation': 'Практическое применение знаний через расчет и анализ личных чисел помогает лучше понять и использовать нумерологические принципы.'
-        })
-        
-        return questions
-        
-    except Exception as e:
-        logger.error(f'Question generation error: {e}')
-        return []
-
-# Regular learning endpoints continue below...
-
-@api_router.post('/user/consultations/{consultation_id}/purchase')
-async def purchase_consultation(consultation_id: str, current_user: dict = Depends(get_current_user)):
-    """Купить персональную консультацию - ФИКСИРОВАННАЯ стоимость 6667 баллов"""
-    user_id = current_user['user_id']
-    
-    # Проверяем существование консультации и что она назначена этому пользователю
-    consultation = await db.personal_consultations.find_one({
-        'id': consultation_id,
-        'assigned_user_id': user_id,
-        'is_active': True
-    })
-    if not consultation:
-        raise HTTPException(status_code=404, detail='Консультация не найдена или не назначена вам')
-    
-    # Проверяем, не была ли уже куплена
-    existing_purchase = await db.consultation_purchases.find_one({
-        'user_id': user_id,
-        'consultation_id': consultation_id
-    })
-    if existing_purchase:
-        raise HTTPException(status_code=400, detail='Консультация уже приобретена')
-    
-    # Получаем информацию о пользователе
-    user = await db.users.find_one({'id': user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    
-    # ИСПРАВЛЕНО: Фиксированная стоимость персональной консультации
-    consultation_cost = 6667  # Всегда 6667 баллов, не зависит от настроек консультации
-    
-    # Проверяем что у пользователя достаточно баллов
-    user_credits = user.get('credits_remaining', 0)
-    if user_credits < consultation_cost:
-        raise HTTPException(status_code=402, detail=f'Недостаточно баллов. Нужно: {consultation_cost}, у вас: {user_credits}')
-    
-    # ИСПРАВЛЕНО: Проверяем дублирование запроса (защита от двойных кликов)
-    # Добавляем проверку на недавние покупки (в течение 30 секунд)
-    from datetime import datetime, timedelta
-    recent_purchase = await db.consultation_purchases.find_one({
-        'user_id': user_id,
-        'created_at': {'$gte': datetime.utcnow() - timedelta(seconds=30)}
-    })
-    if recent_purchase:
-        raise HTTPException(status_code=429, detail='Подождите 30 секунд между покупками консультаций')
-    
-    # Списываем баллы
-    await deduct_credits(
-        user_id,
-        consultation_cost,
-        f'Покупка персональной консультации: {consultation.get("title", "Без названия")}',
-        'consultation',
-        {
-            'consultation_id': consultation_id,
-            'consultation_title': consultation.get('title'),
-            'remaining_credits': user_credits - consultation_cost
-        }
-    )
-    
-    # Создаем запись о покупке
-    purchase = ConsultationPurchase(
-        user_id=user_id,
-        consultation_id=consultation_id,
-        credits_spent=consultation_cost
-    )
-    await db.consultation_purchases.insert_one(purchase.dict())
-    
-    # ИСПРАВЛЕНО: Обновляем консультацию - добавляем данные покупателя СРАЗУ
-    user_data = {
-        'purchased_by_user_id': user_id,
-        'purchased_at': datetime.utcnow(),
-        'buyer_full_name': user.get('full_name', user.get('name', '')),
-        'buyer_email': user.get('email', ''),
-        'buyer_birth_date': user.get('birth_date', ''),
-        'buyer_city': user.get('city', ''),
-        'buyer_phone': user.get('phone_number', ''),  # ИСПРАВЛЕНО: правильное поле
-        'buyer_address': user.get('address', ''),
-        'credits_spent': consultation_cost,
-        'is_purchased': True
-    }
-    
-    await db.personal_consultations.update_one(
-        {'id': consultation_id},
-        {'$set': user_data}
-    )
-    
-    return {
-        'message': 'Персональная консультация успешно приобретена!',
-        'credits_spent': consultation_cost,
-        'remaining_credits': user_credits - consultation_cost,
-        'consultation_title': consultation.get('title', 'Персональная консультация')
-    }
-
-# ----------------- REPORTS -----------------
-
-# Получение доступных расчётов для отчёта
-@api_router.get('/reports/available-calculations')
-async def get_available_calculations(current_user: dict = Depends(get_current_user)):
-    """
-    Возвращает список всех расчётов, которые пользователь может включить в отчёт
-    """
-    user_dict = await db.users.find_one({'id': current_user['user_id']})
-    if not user_dict:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    
-    user = User(**user_dict)
-    
-    # Получаем историю расчётов пользователя
-    calculations = await db.numerology_calculations.find({'user_id': current_user['user_id']}).to_list(100)
-    
-    available_calculations = {
-        'personal_numbers': {
-            'id': 'personal_numbers',
-            'name': 'Персональные числа',
-            'description': 'Числа судьбы, души, ума, правления и другие',
-            'available': True,  # Всегда доступно для пользователя
-            'icon': '🌟'
-        },
-        'name_numerology': {
-            'id': 'name_numerology', 
-            'name': 'Нумерология имени и фамилии',
-            'description': 'Анализ имени и фамилии пользователя',
-            'available': bool(user.full_name),
-            'icon': '📝'
-        },
-        'car_numerology': {
-            'id': 'car_numerology',
-            'name': 'Нумерология автомобиля',
-            'description': 'Анализ номера автомобиля',
-            'available': bool(user.car_number),
-            'icon': '🚗'
-        },
-        'address_numerology': {
-            'id': 'address_numerology',
-            'name': 'Нумерология адреса',
-            'description': 'Анализ адреса проживания',
-            'available': bool(user.street or user.house_number or user.apartment_number or user.postal_code),
-            'icon': '🏠'
-        },
-        'pythagorean_square': {
-            'id': 'pythagorean_square',
-            'name': 'Квадрат Пифагора',
-            'description': 'Психоматрица и анализ характера',
-            'available': True,
-            'icon': '⬜'
-        },
-        'vedic_times': {
-            'id': 'vedic_times',
-            'name': 'Ведические времена',
-            'description': 'Рahu Kala, Abhijit Muhurta и другие',
-            'available': bool(user.city),
-            'icon': '⏰'
-        },
-        'planetary_route': {
-            'id': 'planetary_route',
-            'name': 'Планетарный маршрут',
-            'description': 'Ежедневный планетарный анализ',
-            'available': True,
-            'icon': '🌍'
-        }
-    }
-    
-    # Проверяем, какие расчёты совместимости доступны
-    compatibility_calculations = [calc for calc in calculations if calc.get('calculation_type') == 'compatibility']
-    if compatibility_calculations:
-        available_calculations['compatibility'] = {
-            'id': 'compatibility',
-            'name': 'Анализ совместимости',
-            'description': f'Сохранённые расчёты совместимости ({len(compatibility_calculations)} шт.)',
-            'available': True,
-            'icon': '❤️'
-        }
-    
-    # Проверяем групповую совместимость
-    group_calculations = [calc for calc in calculations if calc.get('calculation_type') == 'group_compatibility']
-    if group_calculations:
-        available_calculations['group_compatibility'] = {
-            'id': 'group_compatibility',
-            'name': 'Групповая совместимость',
-            'description': f'Групповые анализы ({len(group_calculations)} шт.)',
-            'available': True,
-            'icon': '👥'
-        }
-    
-    return {
-        'available_calculations': available_calculations,
-        'user_has_data': {
-            'full_name': bool(user.full_name),
-            'car_number': bool(user.car_number),
-            'address': bool(user.street or user.house_number),
-            'city': bool(user.city)
-        }
-    }
-
-# ============= SCORING SYSTEM CONFIGURATION =============
-
-@api_router.get('/admin/scoring-config')
-async def get_scoring_config(current_user: dict = Depends(get_current_user)):
-    """Получить текущую конфигурацию системы оценки"""
-    admin_user = await check_admin_rights(current_user)
-    
-    # Получаем активную конфигурацию
-    config = await db.scoring_config.find_one({'is_active': True})
-    
-    if not config:
-        # Создаём конфигурацию по умолчанию
-        from models import ScoringSystemConfig
-        default_config = ScoringSystemConfig()
-        await db.scoring_config.insert_one(default_config.dict())
-        config = default_config.dict()
-    
-    # Удаляем _id для JSON сериализации
-    if '_id' in config:
-        config.pop('_id')
-    
-    return config
-
-@api_router.put('/admin/scoring-config')
-async def update_scoring_config(
-    config_update: dict,
+@app.patch("/api/admin/users/{target_user_id}/credits")
+async def update_user_credits(
+    target_user_id: str,
+    request_data: dict,
     current_user: dict = Depends(get_current_user)
 ):
-    """Обновить конфигурацию системы оценки"""
-    admin_user = await check_admin_rights(current_user)
-    
-    # Получаем текущую активную конфигурацию
-    current_config = await db.scoring_config.find_one({'is_active': True})
-    
-    if not current_config:
-        raise HTTPException(status_code=404, detail='Конфигурация не найдена')
-    
-    # Обновляем метаданные
-    config_update['updated_at'] = datetime.utcnow()
-    config_update['updated_by'] = admin_user['email']
-    config_update['version'] = current_config.get('version', 1) + 1
-    
-    # Обновляем конфигурацию
-    await db.scoring_config.update_one(
-        {'id': current_config['id']},
-        {'$set': config_update}
-    )
-    
-    # Логируем изменение
-    await db.admin_actions.insert_one({
-        'action': 'update_scoring_config',
-        'target_type': 'scoring_config',
-        'target_id': current_config['id'],
-        'details': {
-            'old_version': current_config.get('version', 1),
-            'new_version': config_update['version'],
-            'changes': config_update
-        },
-        'performed_by': admin_user['email'],
-        'performed_at': datetime.utcnow()
-    })
-    
-    # Получаем обновлённую конфигурацию
-    updated_config = await db.scoring_config.find_one({'id': current_config['id']})
-    if '_id' in updated_config:
-        updated_config.pop('_id')
-    
-    return {
-        'message': 'Конфигурация успешно обновлена',
-        'config': updated_config
-    }
-
-@api_router.post('/admin/scoring-config/reset')
-async def reset_scoring_config(current_user: dict = Depends(get_current_user)):
-    """Сбросить конфигурацию к значениям по умолчанию"""
-    admin_user = await check_admin_rights(current_user)
-    
-    # Деактивируем текущую конфигурацию
-    await db.scoring_config.update_many(
-        {'is_active': True},
-        {'$set': {'is_active': False}}
-    )
-    
-    # Создаём новую конфигурацию по умолчанию
-    from models import ScoringSystemConfig
-    default_config = ScoringSystemConfig()
-    default_config.updated_by = admin_user['email']
-    
-    await db.scoring_config.insert_one(default_config.dict())
-    
-    # Логируем действие
-    await db.admin_actions.insert_one({
-        'action': 'reset_scoring_config',
-        'target_type': 'scoring_config',
-        'target_id': default_config.id,
-        'details': {
-            'message': 'Конфигурация сброшена к значениям по умолчанию'
-        },
-        'performed_by': admin_user['email'],
-        'performed_at': datetime.utcnow()
-    })
-    
-    config_dict = default_config.dict()
-    if '_id' in config_dict:
-        config_dict.pop('_id')
-    
-    return {
-        'message': 'Конфигурация сброшена к значениям по умолчанию',
-        'config': config_dict
-    }
-
-@api_router.get('/admin/scoring-config/history')
-async def get_scoring_config_history(current_user: dict = Depends(get_current_user)):
-    """Получить историю изменений конфигурации"""
-    admin_user = await check_admin_rights(current_user)
-    
-    # Получаем все версии конфигурации
-    configs = await db.scoring_config.find().sort('version', -1).to_list(100)
-    
-    # Удаляем _id для JSON сериализации
-    for config in configs:
-        if '_id' in config:
-            config.pop('_id')
-    
-    return {
-        'total': len(configs),
-        'configs': configs
-    }
-
-# ============= HTML EXPORT =============
-
-@api_router.post('/reports/html/numerology')
-async def generate_numerology_html(html_request: HTMLReportRequest, current_user: dict = Depends(get_current_user)):
-    user_dict = await db.users.find_one({'id': current_user['user_id']})
-    if not user_dict:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    user = User(**user_dict)
-    if user.subscription_expires_at and user.subscription_expires_at < datetime.utcnow():
-        await db.users.update_one({'id': user.id}, {'$set': {'is_premium': False, 'subscription_type': None, 'subscription_expires_at': None}})
-        user.is_premium = False
-        user.subscription_type = None
-    if not user.is_premium and (user.credits_remaining is None or user.credits_remaining <= 0):
-        raise HTTPException(status_code=402, detail='Недостаточно кредитов. Требуется подписка или дополнительные кредиты.')
-    user_data = {
-        'full_name': user.full_name, 
-        'email': user.email, 
-        'birth_date': user.birth_date, 
-        'city': user.city,
-        'phone_number': user.phone_number,
-        'car_number': user.car_number,
-        'street': user.street,
-        'house_number': user.house_number,
-        'apartment_number': user.apartment_number,
-        'postal_code': user.postal_code
-    }
-    
-    # Основные персональные числа
-    calculations = calculate_personal_numbers(user.birth_date)
-    
-    # Квадрат Пифагора с дополнительными числами
-    pythagorean_data = None
+    """Обновить кредиты пользователя (администратор)"""
     try:
-        d, m, y = parse_birth_date(user.birth_date)
-        pythagorean_data = create_pythagorean_square(d, m, y)
-    except:
-        pass
-    
-    # Параметры отчета
-    selected_calculations = html_request.selected_calculations
-    
-    # Для совместимости со старой системой
-    if not selected_calculations:
-        selected_calculations = []
-        if html_request.include_vedic:
-            selected_calculations.append('vedic_numerology')
-        if html_request.include_charts:
-            selected_calculations.extend(['personal_numbers', 'pythagorean_square'])
-        if html_request.include_compatibility:
-            selected_calculations.append('compatibility')
-        
-        # Если ничего не выбрано, добавляем базовые расчёты
-        if not selected_calculations:
-            selected_calculations = ['personal_numbers', 'pythagorean_square']
-    
-    # Проверяем что выбран хотя бы один расчёт
-    if not selected_calculations:
-        raise HTTPException(status_code=400, detail='Необходимо выбрать хотя бы один раздел для отчёта')
-    
-    # Ведические времена
-    vedic_data = None
-    vedic_times = None
-    if 'vedic_times' in selected_calculations and user.city:
-        try:
-            from vedic_time_calculations import get_vedic_day_schedule
-            vedic_times = get_vedic_day_schedule(city=user.city, date=datetime.utcnow())
-        except:
-            pass
-    
-    # Планетарный маршрут
-    planetary_route = None
-    if 'planetary_route' in selected_calculations and user.city:
-        try:
-            planetary_route = {
-                'date': datetime.utcnow().strftime('%Y-%m-%d'),
-                'city': user.city,
-                'daily_route': ['Солнце: Утро (6:00-12:00)', 'Луна: День (12:00-18:00)', 'Марс: Вечер (18:00-24:00)']
-            }
-        except:
-            pass
-    
-    # Планетарные энергии
-    charts_data = {'planetary_energy': generate_weekly_planetary_energy(user.birth_date)} if any(calc in selected_calculations for calc in ['personal_numbers', 'pythagorean_square']) else None
-    
-    # Объединяем все данные
-    all_data = {
-        'personal_numbers': calculations,
-        'pythagorean_square': pythagorean_data,
-        'vedic_times': vedic_times,
-        'planetary_route': planetary_route,
-        'charts': charts_data
-    }
-    
-    # Добавляем данные из профиля пользователя для новых расчётов
-    user_data_dict = user_data
-    
-    try:
-        # Генерируем HTML отчет с выбранными расчётами
-        html_str = create_numerology_report_html(
-            user_data=user_data_dict,
-            all_data=all_data,
-            vedic_data=vedic_data,
-            charts_data=charts_data,
-            theme=html_request.theme,
-            selected_calculations=selected_calculations
-        )
-        
-        # Проверяем что HTML сгенерирован корректно
-        if not html_str or len(html_str) < 100:
-            raise HTTPException(status_code=500, detail='Ошибка генерации HTML: пустой результат')
-            
-        # Списываем кредит только после успешной генерации
-        if not user.is_premium:
-            await db.users.update_one({'id': user.id}, {'$inc': {'credits_remaining': -1}})
-        
-        return Response(content=html_str, media_type='text/html; charset=utf-8')
-        
-    except Exception as e:
-        print(f"HTML generation error: {str(e)}")  # Debug log
-        raise HTTPException(status_code=500, detail=f'Ошибка генерации HTML отчёта: {str(e)}')
+        # Проверка прав администратора
+        admin_user_id = current_user.get("user_id")
+        if not admin_user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
 
-@api_router.post('/reports/pdf/numerology')
-async def generate_numerology_pdf(pdf_request: PDFReportRequest, current_user: dict = Depends(get_current_user)):
-    user_dict = await db.users.find_one({'id': current_user['user_id']})
-    if not user_dict:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    user = User(**user_dict)
-    if user.subscription_expires_at and user.subscription_expires_at < datetime.utcnow():
-        await db.users.update_one({'id': user.id}, {'$set': {'is_premium': False, 'subscription_type': None, 'subscription_expires_at': None}})
-        user.is_premium = False
-        user.subscription_type = None
-    if not user.is_premium and (user.credits_remaining is None or user.credits_remaining <= 0):
-        raise HTTPException(status_code=402, detail='Недостаточно кредитов. Требуется подписка или дополнительные кредиты.')
-    user_data = {
-        'full_name': user.full_name, 
-        'email': user.email, 
-        'birth_date': user.birth_date, 
-        'city': user.city,
-        'phone_number': user.phone_number,
-        'car_number': user.car_number,
-        'street': user.street,
-        'house_number': user.house_number,
-        'apartment_number': user.apartment_number,
-        'postal_code': user.postal_code
-    }
-    calculations = calculate_personal_numbers(user.birth_date)
-    vedic_data = calculate_comprehensive_vedic_numerology(user.birth_date, user.full_name) if pdf_request.include_vedic else None
-    charts_data = {'planetary_energy': generate_weekly_planetary_energy(user.birth_date)} if pdf_request.include_charts else None
-    compatibility_result = None
-    if pdf_request.include_compatibility and pdf_request.partner_birth_date:
-        from enhanced_numerology import get_compatibility_score
-        compatibility_result = get_compatibility_score(user.birth_date, pdf_request.partner_birth_date)
-    if compatibility_result:
-        partner_data = {'birth_date': pdf_request.partner_birth_date}
-        pdf_bytes = create_compatibility_pdf(user_data, partner_data, compatibility_result)
-        filename = f"numerom_compatibility_{current_user['user_id']}_{datetime.now().strftime('%Y%m%d')}.pdf"
-    else:
-        pdf_bytes = create_numerology_report_pdf(user_data, calculations, vedic_data, charts_data)
-        filename = f"numerom_report_{current_user['user_id']}_{datetime.now().strftime('%Y%m%d')}.pdf"
-    if not user.is_premium:
-        await db.users.update_one({'id': user.id}, {'$inc': {'credits_remaining': -1}})
-    return StreamingResponse(io.BytesIO(pdf_bytes), media_type='application/pdf', headers={'Content-Disposition': f'attachment; filename={filename}'})
+        admin_user = await db.users.find_one({"id": admin_user_id})
+        if not admin_user:
+            raise HTTPException(status_code=404, detail="Admin user not found")
 
+        if not admin_user.get('is_super_admin', False) and not admin_user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
 
+        # Получаем целевого пользователя
+        target_user = await db.users.find_one({"id": target_user_id})
+        if not target_user:
+            raise HTTPException(status_code=404, detail="Target user not found")
 
-# ----------------- USER -----------------
-@api_router.get('/user/profile', response_model=UserResponse)
-async def get_profile(current_user: dict = Depends(get_current_user)):
-    user_dict = await db.users.find_one({'id': current_user['user_id']})
-    if not user_dict:
-        raise HTTPException(status_code=404, detail='User not found')
-    return create_user_response(User(**user_dict))
+        # Получаем новое значение кредитов
+        new_credits = request_data.get("credits_remaining")
+        if new_credits is None:
+            raise HTTPException(status_code=400, detail="credits_remaining is required")
 
-@api_router.patch('/user/profile')
-async def update_user_profile(profile_data: UserProfileUpdate, current_user: dict = Depends(get_current_user)):
-    user = await db.users.find_one({'id': current_user['user_id']})
-    if not user:
-        raise HTTPException(status_code=404, detail='User not found')
-    
-    # Подготавливаем данные для обновления (только не None поля)
-    update_data = {}
-    for field, value in profile_data.dict(exclude_unset=True).items():
-        if value is not None:
-            update_data[field] = value
-    
-    if update_data:
-        update_data['updated_at'] = datetime.utcnow()
+        new_credits = int(new_credits)
+        old_credits = target_user.get("credits_remaining", 0)
+        credits_difference = new_credits - old_credits
+
+        # Обновляем кредиты
         await db.users.update_one(
-            {'id': current_user['user_id']},
-            {'$set': update_data}
+            {"id": target_user_id},
+            {"$set": {"credits_remaining": new_credits}}
         )
-    
-    # Возвращаем обновленный профиль
-    updated_user = await db.users.find_one({'id': current_user['user_id']})
-    return create_user_response(User(**updated_user))
 
-@api_router.post('/user/change-city')
-async def change_user_city(city_request: Dict[str, str], current_user: dict = Depends(get_current_user)):
-    city = city_request.get('city')
-    if not city:
-        raise HTTPException(status_code=400, detail='city required')
-    await db.users.update_one({'id': current_user['user_id']}, {'$set': {'city': city, 'updated_at': datetime.utcnow()}})
-    return {'message': f'Город изменен на {city}', 'city': city}
+        # Записываем транзакцию в историю
+        if credits_difference != 0:
+            await record_credit_transaction(
+                user_id=target_user_id,
+                amount=credits_difference,
+                description=f"Изменение баланса администратором {admin_user.get('email', admin_user_id)}",
+                category='admin',
+                details={
+                    'added_by_admin': True,
+                    'admin_user_id': admin_user_id,
+                    'admin_email': admin_user.get('email', ''),
+                    'old_credits': old_credits,
+                    'new_credits': new_credits,
+                    'difference': credits_difference
+                }
+            )
 
-@api_router.get('/')
-async def root():
-    return {'message': 'NUMEROM API - Self-Knowledge Through Numbers'}
+        return {
+            "message": "Кредиты успешно обновлены",
+            "old_credits": old_credits,
+            "new_credits": new_credits,
+            "difference": credits_difference
+        }
 
-@api_router.post('/status', response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_obj = StatusCheck(**input.dict())
-    await db.status_checks.insert_one(status_obj.dict())
-    return status_obj
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user credits: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error updating user credits: {str(e)}")
 
-@api_router.get('/status', response_model=List[StatusCheck])
-async def get_status_checks():
-    checks = await db.status_checks.find().to_list(1000)
-    clean_checks = []
-    for c in checks:
-        check_dict = dict(c)
-        check_dict.pop('_id', None)
-        clean_checks.append(check_dict)
-    return [StatusCheck(**c) for c in clean_checks]
+# ==================== API УРОКОВ V2 ====================
 
-# Router will be included at the end of the file
-
-# =================== QUIZ GENERATION ===================
-@app.post("/api/admin/generate-quiz/{lesson_id}")
-async def generate_quiz_for_lesson(
-    lesson_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Generate a quiz for a specific lesson using AI"""
-    if not current_user.get("is_super_admin"):
-        raise HTTPException(status_code=403, detail="Access denied")
-    
+@app.get("/api/admin/lessons-v2/{lesson_id}")
+async def get_lesson_v2_admin(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить урок V2 по ID"""
     try:
-        # Find the lesson
-        lesson = await db.lessons.find_one({"_id": lesson_id, "type": "lesson"})
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+
+        lesson_dict = dict(lesson)
+        lesson_dict.pop('_id', None)
+
+        return {"lesson": lesson_dict}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting lesson V2: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting lesson: {str(e)}")
+
+# REMOVED: First upload_lesson_file_v2 function (conflicts with the second one)
+# Function body removed - conflicts with duplicate function below
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Проверяем существование урока
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
         if not lesson:
             raise HTTPException(status_code=404, detail="Lesson not found")
         
-        # Generate quiz questions based on lesson content
-        quiz_questions = [
-            {
-                "question": f"Основной вопрос по теме '{lesson['title']}'?",
-                "options": ["Вариант A", "Вариант B", "Вариант C", "Вариант D"],
-                "correct_answer": "A",
-                "explanation": "Объяснение правильного ответа"
-            }
-        ]
-        
-        # Update lesson with quiz
-        await db.lessons.update_one(
-            {"_id": lesson_id},
-            {"$set": {"quiz_questions": quiz_questions}}
+        # Сохраняем файл
+        file_content = await file.read()
+        file_id = str(uuid.uuid4())
+        filename = f"{file_id}_{file.filename}"
+
+        # Определяем тип файла
+        file_extension = file.filename.split('.')[-1].lower()
+        if file_extension in ['mp4', 'avi', 'mov', 'mp3', 'wav']:
+            file_type = 'media'
+            detailed_type = 'video' if file_extension in ['mp4', 'avi', 'mov'] else 'audio'
+        elif file_extension in ['pdf', 'doc', 'docx', 'txt', 'xls', 'xlsx']:
+            file_type = 'document'
+            if file_extension == 'pdf':
+                detailed_type = 'pdf'
+            elif file_extension in ['doc', 'docx']:
+                detailed_type = 'word'
+            elif file_extension == 'txt':
+                detailed_type = 'txt'
+            elif file_extension in ['xls', 'xlsx']:
+                detailed_type = 'excel'
+            else:
+                detailed_type = 'other'
+        else:
+            file_type = 'other'
+            detailed_type = 'other'
+
+        # Сохраняем файл на диск
+        import os
+        upload_dir = f"uploads/lessons_v2/{lesson_id}"
+        os.makedirs(upload_dir, exist_ok=True)
+
+        file_path = os.path.join(upload_dir, filename)
+        with open(file_path, "wb") as f:
+            f.write(file_content)
+
+        # Создаем запись о файле
+        from models import LessonFile
+        lesson_file = LessonFile(
+            filename=filename,
+            original_filename=file.filename,
+            file_type=detailed_type,  # Сохраняем детальный тип для урока
+            file_size=len(file_content),
+            lesson_section=section
         )
+
+        # Добавляем файл к уроку
+        await db.lessons_v2.update_one(
+            {"id": lesson_id},
+            {"$push": {"files": lesson_file.dict()}}
+        )
+
+        # Также сохраняем в коллекцию files для статистики
+        file_record = {
+            "id": lesson_file.id,
+            "lesson_id": lesson_id,
+            "filename": filename,
+            "original_name": file.filename,
+            "stored_name": filename,
+            "file_type": file_type,  # Сохраняем общий тип (media/document) для статистики
+            "detailed_type": detailed_type,  # Детальный тип для совместимости
+            "section": section,
+            "file_size": len(file_content),
+            "mime_type": file.content_type,
+            "extension": file_extension,
+            "uploaded_by": user_id,
+            "uploaded_at": datetime.utcnow()
+        }
+
+        await db.files.insert_one(file_record)
         
-        return {"message": "Quiz generated successfully", "questions": quiz_questions}
+        return {
+            "message": "Файл успешно загружен",
+            "file_id": lesson_file.id,
+            "filename": filename,
+            "file_type": file_type
+        }
         
     except Exception as e:
-        logger.error(f"Error generating quiz: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error generating quiz: {str(e)}")
+        logger.error(f"Error uploading file to lesson V2: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
 
-# =================== ПЕРВОЕ ЗАНЯТИЕ NUMEROM ===================
-@app.get("/api/lessons/first-lesson")
-async def get_first_lesson():
-    """Получить первое занятие NumerOM"""
+# ==================== API ДЛЯ СТУДЕНТОВ V2 ====================
+
+@app.get("/api/learning-v2/lessons")
+async def get_all_lessons_v2_student(current_user: dict = Depends(get_current_user)):
+    """Получить все доступные уроки V2 для студентов"""
     try:
-        lesson = lesson_system.get_lesson("lesson_numerom_intro")
+        logger.info(f"get_all_lessons_v2_student called, current_user: {current_user}")
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            logger.error(f"Invalid current_user object: {current_user}")
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        # Проверяем уровень пользователя
+        user = await db.users.find_one({'id': user_id})
+        user_level = user.get('level', 1) if user else 1
+
+        # Получаем активные уроки до текущего уровня пользователя
+        # Временно убираем фильтр по уровню, чтобы показывать все активные уроки
+        # TODO: Восстановить фильтр по уровню после настройки системы уровней
+        lessons = await db.lessons_v2.find({
+            "is_active": True
+        }).sort("order", 1).to_list(1000)
+
+        lessons_list = []
+        for lesson in lessons:
+            lesson_dict = dict(lesson)
+            lesson_dict.pop('_id', None)
+            # Убираем чувствительную информацию
+            lesson_dict.pop('created_by', None)
+            lesson_dict.pop('updated_by', None)
+            lessons_list.append(lesson_dict)
+        
+        logger.info(f"Returning {len(lessons_list)} lessons for user {user_id} (level {user_level})")
+        return {
+            "lessons": lessons_list,
+            "user_level": user_level
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting lessons V2 for student: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting lessons: {str(e)}")
+
+@app.get("/api/learning-v2/lessons/{lesson_id}")
+async def get_lesson_v2_student(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить урок V2 для студента"""
+    try:
+        user_id = current_user['user_id']
+
+        lesson = await db.lessons_v2.find_one({"id": lesson_id, "is_active": True})
         if not lesson:
-            raise HTTPException(status_code=404, detail="First lesson not found")
+            raise HTTPException(status_code=404, detail="Lesson not found")
 
-        # Преобразуем структуру для фронтенда
-        lesson_dict = lesson.dict()
+        lesson_dict = dict(lesson)
+        lesson_dict.pop('_id', None)
+        lesson_dict.pop('created_by', None)
+        lesson_dict.pop('updated_by', None)
 
-        # Перемещаем exercises, quiz, challenges внутрь content для фронтенда
-        if "content" not in lesson_dict:
-            lesson_dict["content"] = {}
-
-        # Загружаем кастомные изменения в контенте (теория и т.д.)
-        custom_content = await db.lesson_content.find({
-            "lesson_id": "lesson_numerom_intro",
-            "type": "content_update"
-        }).to_list(100)
-
-        if custom_content:
-            for item in custom_content:
-                section = item.get("section")
-                field = item.get("field")
-                value = item.get("value")
-
-                if section and field and value is not None:
-                    if section not in lesson_dict["content"]:
-                        lesson_dict["content"][section] = {}
-                    lesson_dict["content"][section][field] = value
-
-        # Загружаем кастомные упражнения из БД (если есть)
-        custom_exercises = await db.lesson_exercises.find({
-            "lesson_id": "lesson_numerom_intro",
-            "content_type": "exercise_update"
-        }).to_list(100)
-
-        if custom_exercises:
-            # Создаем словарь для быстрого поиска кастомных упражнений
-            custom_exercises_dict = {ex["exercise_id"]: ex for ex in custom_exercises}
-
-            # Обновляем базовые упражнения кастомными (если есть)
-            if "exercises" not in lesson_dict or not lesson_dict["exercises"]:
-                lesson_dict["exercises"] = []
-
-            updated_exercises = []
-            existing_ids = set()
-
-            # Обновляем существующие упражнения
-            for exercise in lesson_dict["exercises"]:
-                exercise_id = exercise.get("id")
-                existing_ids.add(exercise_id)
-                if exercise_id in custom_exercises_dict:
-                    # Используем кастомное упражнение
-                    custom = custom_exercises_dict[exercise_id]
-                    updated_exercises.append({
-                        "id": custom["exercise_id"],
-                        "title": custom["title"],
-                        "type": custom["type"],
-                        "content": custom["content"],
-                        "instructions": custom["instructions"],
-                        "expected_outcome": custom.get("expected_outcome", "")
-                    })
-                else:
-                    # Используем базовое упражнение
-                    updated_exercises.append(exercise)
-
-            # Добавляем НОВЫЕ упражнения которых нет в базовом уроке
-            for exercise_id, custom in custom_exercises_dict.items():
-                if exercise_id not in existing_ids:
-                    updated_exercises.append({
-                        "id": custom["exercise_id"],
-                        "title": custom["title"],
-                        "type": custom["type"],
-                        "content": custom["content"],
-                        "instructions": custom["instructions"],
-                        "expected_outcome": custom.get("expected_outcome", "")
-                    })
-
-            lesson_dict["exercises"] = updated_exercises
-
-        # Присваиваем ID базовым упражнениям (если их нет)
-        if "exercises" in lesson_dict:
-            for idx, exercise in enumerate(lesson_dict["exercises"]):
-                if isinstance(exercise, dict):
-                    if "id" not in exercise or not exercise["id"]:
-                        exercise["id"] = f"exercise_{idx + 1}"
-
-        # Добавляем exercises в content
-        if "exercises" in lesson_dict and lesson_dict["exercises"]:
-            lesson_dict["content"]["exercises"] = lesson_dict["exercises"]
-
-        # Присваиваем ID базовым вопросам (если их нет)
-        if "quiz" in lesson_dict and lesson_dict["quiz"] and "questions" in lesson_dict["quiz"]:
-            for idx, question in enumerate(lesson_dict["quiz"]["questions"]):
-                if "id" not in question or not question["id"]:
-                    question["id"] = f"q{idx + 1}"
-
-        # Загружаем кастомные вопросы теста из БД (если есть)
-        custom_quiz_questions = await db.lesson_quiz_questions.find({
-            "lesson_id": "lesson_numerom_intro",
-            "content_type": "quiz_question_update"
-        }).to_list(100)
-
-        if custom_quiz_questions:
-            # Создаем словарь для быстрого поиска кастомных вопросов
-            custom_questions_dict = {q["question_id"]: q for q in custom_quiz_questions}
-            logger.info(f"Found {len(custom_quiz_questions)} custom quiz questions: {list(custom_questions_dict.keys())}")
-
-            # Обновляем базовые вопросы кастомными (если есть)
-            if "quiz" in lesson_dict and lesson_dict["quiz"]:
-                if "questions" not in lesson_dict["quiz"]:
-                    lesson_dict["quiz"]["questions"] = []
-
-                updated_questions = []
-                existing_ids = set()
-
-                # Обновляем существующие вопросы
-                for question in lesson_dict["quiz"]["questions"]:
-                    question_id = question.get("id")
-                    existing_ids.add(question_id)
-                    if question_id in custom_questions_dict:
-                        # Используем кастомный вопрос
-                        logger.info(f"Replacing base question {question_id} with custom version")
-                        custom = custom_questions_dict[question_id]
-                        updated_questions.append({
-                            "id": custom["question_id"],
-                            "question": custom["question"],
-                            "options": custom["options"],
-                            "correct_answer": custom["correct_answer"],
-                            "explanation": custom.get("explanation", "")
-                        })
-                    else:
-                        # Используем базовый вопрос
-                        logger.info(f"Using base question {question_id}")
-                        updated_questions.append(question)
-
-                # Добавляем НОВЫЕ вопросы которых нет в базовом уроке
-                for question_id, custom in custom_questions_dict.items():
-                    if question_id not in existing_ids:
-                        logger.info(f"Adding NEW custom question {question_id}")
-                        updated_questions.append({
-                            "id": custom["question_id"],
-                            "question": custom["question"],
-                            "options": custom["options"],
-                            "correct_answer": custom["correct_answer"],
-                            "explanation": custom.get("explanation", "")
-                        })
-
-                lesson_dict["quiz"]["questions"] = updated_questions
-                logger.info(f"Final quiz has {len(updated_questions)} questions")
-
-        # Добавляем quiz в content
-        if "quiz" in lesson_dict and lesson_dict["quiz"]:
-            lesson_dict["content"]["quiz"] = lesson_dict["quiz"]
-
-        # Загружаем кастомные дни челленджа из БД (если есть)
-        custom_challenge_days = await db.lesson_challenge_days.find({
-            "lesson_id": "lesson_numerom_intro",
-            "content_type": "challenge_day_update"
-        }).to_list(100)
-
-        # Применяем кастомные дни к челленджу
-        if custom_challenge_days and "challenges" in lesson_dict and lesson_dict["challenges"]:
-            custom_days_dict = {day["day"]: day for day in custom_challenge_days}
-
-            # Получаем первый челлендж
-            challenge = lesson_dict["challenges"][0]
-            if "daily_tasks" in challenge:
-                updated_daily_tasks = []
-
-                # Обновляем существующие дни или добавляем новые
-                existing_days = {task.get("day"): task for task in challenge["daily_tasks"]}
-                all_days = set(existing_days.keys()) | set(custom_days_dict.keys())
-
-                for day_num in sorted(all_days):
-                    if day_num in custom_days_dict:
-                        # Используем кастомный день
-                        custom = custom_days_dict[day_num]
-                        updated_daily_tasks.append({
-                            "day": custom["day"],
-                            "title": custom["title"],
-                            "tasks": custom["tasks"]
-                        })
-                    elif day_num in existing_days:
-                        # Используем оригинальный день
-                        updated_daily_tasks.append(existing_days[day_num])
-
-                challenge["daily_tasks"] = updated_daily_tasks
-
-        # Загружаем кастомный habit_tracker из MongoDB (если есть)
-        lesson_in_db = await db.lessons.find_one({"id": "lesson_numerom_intro"})
-        if lesson_in_db and "habit_tracker" in lesson_in_db:
-            # Если урок существует в MongoDB и имеет habit_tracker, используем его
-            lesson_dict["habit_tracker"] = lesson_in_db["habit_tracker"]
-
-        # Добавляем первый challenge как challenge (не challenges[0])
-        if "challenges" in lesson_dict and lesson_dict["challenges"]:
-            lesson_dict["content"]["challenge"] = lesson_dict["challenges"][0]
-
+        # Получаем прогресс пользователя по уроку
+        progress = await db.lesson_progress_v2.find_one({
+            "lesson_id": lesson_id,
+            "user_id": user_id
+        })
+        
         return {
             "lesson": lesson_dict,
-            "message": "Первое занятие успешно загружено"
+            "progress": progress or {}
         }
-    except Exception as e:
-        logger.error(f"Error getting first lesson: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting first lesson: {str(e)}")
-
-@app.get("/api/lessons/{lesson_id}")
-async def get_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить урок по ID (для кастомных уроков из MongoDB или первого урока из lesson_system)"""
-    try:
-        # Если это первый урок - используем endpoint first-lesson
-        if lesson_id == "lesson_numerom_intro":
-            lesson = lesson_system.get_lesson(lesson_id)
-            if not lesson:
-                raise HTTPException(status_code=404, detail="Lesson not found")
-            lesson_dict = lesson.dict()
-
-            # Перемещаем exercises, quiz, challenges внутрь content для единообразия
-            if "content" not in lesson_dict:
-                lesson_dict["content"] = {}
-
-            return {"lesson": lesson_dict}
-
-        # Для кастомных уроков - загружаем из MongoDB
-        custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
-
-        if custom_lesson:
-            lesson_dict = dict(custom_lesson)
-            lesson_dict.pop('_id', None)
-            logger.info(f"Loaded custom lesson {lesson_id} from MongoDB")
-            return {"lesson": lesson_dict}
-
-        # Если не нашли нигде - 404
-        logger.error(f"Lesson {lesson_id} not found")
-        raise HTTPException(status_code=404, detail="Lesson not found")
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting lesson {lesson_id}: {str(e)}")
+        logger.error(f"Error getting lesson V2 for student: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting lesson: {str(e)}")
-
-@app.post("/api/lessons/start-challenge/{challenge_id}")
-async def start_challenge(
-    challenge_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Начать челлендж для пользователя"""
-    try:
-        user_id = current_user["user_id"]
-
-        # Попытка извлечь lesson_id из challenge_id (формат: challenge_lesson_XXXXX или challenge_sun_7days)
-        lesson_id = None
-        if challenge_id.startswith("challenge_lesson_"):
-            lesson_id = challenge_id.replace("challenge_", "")
-        elif challenge_id == "challenge_sun_7days":
-            lesson_id = "lesson_numerom_intro"
-
-        # Попытка найти урок в MongoDB (для кастомных уроков)
-        custom_lesson = None
-        challenge_dict = None
-
-        if lesson_id:
-            custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
-
-        if custom_lesson and custom_lesson.get("content", {}).get("challenge"):
-            # Урок найден в MongoDB
-            challenge_dict = custom_lesson["content"]["challenge"]
-            if challenge_dict.get("id") != challenge_id:
-                challenge_dict = None
-        else:
-            # Попытка найти в lesson_system (для первого урока)
-            lesson = lesson_system.get_lesson("lesson_numerom_intro")
-            if lesson and lesson.challenges:
-                for ch in lesson.challenges:
-                    if ch.id == challenge_id:
-                        challenge_dict = ch.dict()
-                        break
-
-        if not challenge_dict:
-            logger.error(f"Challenge {challenge_id} not found in any lesson")
-            raise HTTPException(status_code=404, detail="Challenge not found")
-        
-        # Сохранить начало челленджа в базе данных
-        challenge_progress = {
-            "_id": f"{user_id}_{challenge_id}",
-            "user_id": user_id,
-            "challenge_id": challenge_id,
-            "type": "challenge_progress",
-            "start_date": datetime.now().isoformat(),
-            "current_day": 1,
-            "completed_days": [],
-            "status": "active",
-            "daily_completions": {}
-        }
-        
-        await db.challenge_progress.insert_one(challenge_progress)
-
-        return {
-            "message": "Челлендж успешно начат",
-            "challenge": challenge_dict,
-            "start_date": challenge_progress["start_date"],
-            "current_day": 1
-        }
-        
-    except Exception as e:
-        logger.error(f"Error starting challenge: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error starting challenge: {str(e)}")
-
-@app.post("/api/lessons/complete-challenge-day")
-async def complete_challenge_day(
-    challenge_id: str = Form(...),
-    day: int = Form(...),
-    notes: str = Form(""),
-    current_user: dict = Depends(get_current_user)
-):
-    """Отметить день челленджа как выполненный"""
-    try:
-        user_id = current_user["user_id"]
-        progress_id = f"{user_id}_{challenge_id}"
-        
-        # Найти прогресс челленджа
-        progress = await db.challenge_progress.find_one({"_id": progress_id, "type": "challenge_progress"})
-        if not progress:
-            raise HTTPException(status_code=404, detail="Challenge progress not found")
-        
-        # Обновить прогресс
-        today = datetime.now().strftime("%Y-%m-%d")
-        if day not in progress.get("completed_days", []):
-            await db.challenge_progress.update_one(
-                {"_id": progress_id},
-                {
-                    "$push": {"completed_days": day},
-                    "$set": {
-                        f"daily_completions.{today}": {
-                            "day": day,
-                            "completed": True,
-                            "notes": notes,
-                            "completion_time": datetime.now().isoformat()
-                        },
-                        "current_day": day + 1 if day + 1 <= 7 else 7
-                    }
-                }
-            )
-        
-        return {"message": f"День {day} челленджа отмечен как выполненный"}
-        
-    except Exception as e:
-        logger.error(f"Error completing challenge day: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error completing challenge day: {str(e)}")
-
-@app.get("/api/lessons/challenge-progress/{challenge_id}")
-async def get_challenge_progress(
-    challenge_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Получить прогресс челленджа пользователя"""
-    try:
-        user_id = current_user["user_id"]
-        progress_id = f"{user_id}_{challenge_id}"
-        
-        progress = await db.challenge_progress.find_one({"_id": progress_id, "type": "challenge_progress"})
-        if not progress:
-            return {"message": "Challenge not started", "progress": None}
-        
-        # Конвертировать ObjectId в строку для JSON
-        progress["_id"] = str(progress["_id"])
-        
-        return {"progress": progress}
-        
-    except Exception as e:
-        logger.error(f"Error getting challenge progress: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting challenge progress: {str(e)}")
-
-@app.post("/api/lessons/submit-quiz")
-async def submit_quiz(
-    quiz_id: str = Form(...),
-    answers: str = Form(...),  # JSON string with answers
-    current_user: dict = Depends(get_current_user)
-):
-    """Отправить ответы на квиз"""
-    try:
-        user_id = current_user["user_id"]
-
-        # Парс ответов
-        import json
-        user_answers = json.loads(answers)
-
-        # Попытка извлечь lesson_id из quiz_id (формат: quiz_lesson_XXXXX или quiz_intro_1)
-        lesson_id = None
-        if quiz_id.startswith("quiz_lesson_"):
-            lesson_id = quiz_id.replace("quiz_", "")
-        elif quiz_id.startswith("quiz_intro"):
-            lesson_id = "lesson_numerom_intro"
-
-        # Попытка найти урок в MongoDB (для кастомных уроков)
-        custom_lesson = None
-        quiz_dict = None
-
-        if lesson_id:
-            custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
-
-        if custom_lesson and custom_lesson.get("content", {}).get("quiz"):
-            # Урок найден в MongoDB
-            quiz_dict = custom_lesson["content"]["quiz"]
-            if quiz_dict.get("id") != quiz_id:
-                quiz_dict = None
-        else:
-            # Попытка найти в lesson_system (для первого урока)
-            lesson = lesson_system.get_lesson("lesson_numerom_intro")
-            if lesson and lesson.quiz and lesson.quiz.id == quiz_id:
-                quiz_dict = lesson.quiz.dict()
-
-        if not quiz_dict:
-            logger.error(f"Quiz {quiz_id} not found in any lesson")
-            raise HTTPException(status_code=404, detail="Quiz not found")
-
-        # Проверить ответы
-        score = 0
-        questions = quiz_dict.get("questions", [])
-        total_questions = len(questions)
-
-        results = []
-        for i, question in enumerate(questions):
-            question_id = question.get("id", f"q{i+1}")
-            user_answer = user_answers.get(question_id, "")
-
-            # Для новой структуры correct_answer находится в самом вопросе
-            correct_answer = question.get("correct_answer", "")
-            explanation = question.get("explanation", "")
-
-            # Если нет в вопросе, попытка получить из старой структуры
-            if not correct_answer and "correct_answers" in quiz_dict:
-                correct_answer = quiz_dict["correct_answers"][i] if i < len(quiz_dict["correct_answers"]) else ""
-            if not explanation and "explanations" in quiz_dict:
-                explanation = quiz_dict["explanations"][i] if i < len(quiz_dict["explanations"]) else ""
-
-            is_correct = user_answer.lower() == correct_answer.lower()
-
-            if is_correct:
-                score += 1
-
-            results.append({
-                "question": question.get("question", ""),
-                "user_answer": user_answer,
-                "correct_answer": correct_answer,
-                "is_correct": is_correct,
-                "explanation": explanation
-            })
-        
-        percentage = (score / total_questions) * 100
-        passed = percentage >= 60  # 60% для прохождения
-        
-        # Сохранить результат
-        quiz_result = {
-            "_id": f"{user_id}_{quiz_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            "user_id": user_id,
-            "quiz_id": quiz_id,
-            "type": "quiz_result",
-            "score": score,
-            "total_questions": total_questions,
-            "percentage": percentage,
-            "passed": passed,
-            "answers": user_answers,
-            "results": results,
-            "completed_at": datetime.now().isoformat()
-        }
-        
-        await db.quiz_results.insert_one(quiz_result)
-        
-        return {
-            "message": "Квиз успешно пройден",
-            "score": score,
-            "total_questions": total_questions,
-            "percentage": percentage,
-            "passed": passed,
-            "results": results
-        }
-        
-    except Exception as e:
-        logger.error(f"Error submitting quiz: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error submitting quiz: {str(e)}")
-
-@app.post("/api/lessons/add-habit-tracker")
-async def add_habit_tracker(
-    lesson_id: str = Form(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Добавить трекер привычек к пользователю"""
-    try:
-        user_id = current_user["user_id"]
-
-        # Получить привычки из урока (с учетом кастомизаций из админ-панели)
-        active_habits = []
-
-        # Сначала проверяем MongoDB (кастомные привычки)
-        lesson_in_db = await db.lessons.find_one({"id": lesson_id})
-        if lesson_in_db and "habit_tracker" in lesson_in_db:
-            # Если есть кастомный habit_tracker в MongoDB
-            habit_tracker = lesson_in_db["habit_tracker"]
-            planet_habits = habit_tracker.get("planet_habits", {})
-
-            # Берем привычки для планеты sun (для первого урока)
-            sun_habits = planet_habits.get("sun", [])
-            active_habits = [h["habit"] for h in sun_habits if isinstance(h, dict) and "habit" in h]
-
-        # Если нет кастомных привычек, берем из lesson_system
-        if not active_habits:
-            lesson = lesson_system.get_lesson(lesson_id)
-            if lesson and lesson.habit_tracker:
-                sun_habits = lesson.habit_tracker.planet_habits.get("sun", [])
-                active_habits = [h["habit"] for h in sun_habits if isinstance(h, dict) and "habit" in h]
-
-        # Если все еще нет привычек, используем дефолтные
-        if not active_habits:
-            active_habits = [
-                "Утренняя аффирмация или медитация",
-                "Осознание лидерских качеств",
-                "Проявление инициативы",
-                "Контроль осанки и речи",
-                "Вечернее подведение итогов"
-            ]
-
-        # Добавить пользователя к трекеру привычек урока
-        lesson_system.add_user_to_tracker(lesson_id, user_id)
-
-        # Сохранить трекер в базе данных
-        habit_tracker_data = {
-            "_id": f"{user_id}_{lesson_id}_tracker",
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "type": "habit_tracker",
-            "start_date": datetime.now().isoformat(),
-            "daily_completions": {},
-            "active_habits": active_habits
-        }
-
-        await db.habit_trackers.insert_one(habit_tracker_data)
-
-        return {"message": "Трекер привычек успешно добавлен"}
-
-    except Exception as e:
-        logger.error(f"Error adding habit tracker: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding habit tracker: {str(e)}")
-
-@app.get("/api/lessons/habit-tracker/{lesson_id}")
-async def get_habit_tracker(
-    lesson_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Получить трекер привычек пользователя для урока"""
-    try:
-        user_id = current_user["user_id"]
-        tracker_id = f"{user_id}_{lesson_id}_tracker"
-
-        # Получить трекер из базы данных
-        tracker = await db.habit_trackers.find_one({"_id": tracker_id, "type": "habit_tracker"})
-
-        if not tracker:
-            return {"tracker": None, "message": "Трекер привычек не найден"}
-
-        # Удалить _id для JSON сериализации
-        tracker["_id"] = str(tracker["_id"])
-
-        return {"tracker": tracker, "message": "Трекер привычек успешно загружен"}
-
-    except Exception as e:
-        logger.error(f"Error getting habit tracker: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting habit tracker: {str(e)}")
-
-@app.post("/api/lessons/update-habit")
-async def update_habit(
-    lesson_id: str = Form(...),
-    habit_name: str = Form(...),
-    completed: bool = Form(...),
-    notes: str = Form(""),
-    current_user: dict = Depends(get_current_user)
-):
-    """Обновить статус выполнения привычки"""
-    try:
-        user_id = current_user["user_id"]
-        tracker_id = f"{user_id}_{lesson_id}_tracker"
-        today = datetime.now().strftime("%Y-%m-%d")
-        
-        # Обновить в системе уроков
-        lesson_system.update_habit_completion(lesson_id, user_id, habit_name, completed)
-        
-        # Обновить в базе данных
-        await db.habit_trackers.update_one(
-            {"_id": tracker_id, "type": "habit_tracker"},
-            {
-                "$set": {
-                    f"daily_completions.{today}.{habit_name}": {
-                        "completed": completed,
-                        "notes": notes,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                }
-            }
-        )
-        
-        return {"message": f"Привычка '{habit_name}' обновлена"}
-        
-    except Exception as e:
-        logger.error(f"Error updating habit: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating habit: {str(e)}")
-
-@app.get("/api/lessons/user-progress/{lesson_id}")
-async def get_user_lesson_progress(
-    lesson_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Получить прогресс пользователя по уроку"""
-    try:
-        user_id = current_user["user_id"]
-        
-        # Получить прогресс из системы уроков
-        progress = lesson_system.get_user_progress(lesson_id, user_id)
-        
-        # Получить дополнительные данные из базы
-        quiz_results = await db.quiz_results.find({
-            "user_id": user_id,
-            "type": "quiz_result"
-        }).to_list(100)
-        
-        challenge_progress = await db.challenge_progress.find({
-            "user_id": user_id,
-            "type": "challenge_progress"
-        }).to_list(100)
-        
-        habit_tracker = await db.habit_trackers.find_one({
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "type": "habit_tracker"
-        })
-        
-        # Очистить ObjectId
-        for result in quiz_results:
-            result["_id"] = str(result["_id"])
-        
-        for challenge in challenge_progress:
-            challenge["_id"] = str(challenge["_id"])
-        
-        if habit_tracker:
-            habit_tracker["_id"] = str(habit_tracker["_id"])
-        
-        return {
-            "lesson_progress": progress,
-            "quiz_results": quiz_results,
-            "challenge_progress": challenge_progress,
-            "habit_tracker": habit_tracker
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting user progress: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting user progress: {str(e)}")
-
-@app.post("/api/lessons/save-exercise-response")
-async def save_exercise_response(
-    lesson_id: str = Form(...),
-    exercise_id: str = Form(...),
-    response_text: str = Form(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Сохранить ответ на упражнение"""
-    try:
-        user_id = current_user["user_id"]
-        
-        # Создать или обновить ответ на упражнение
-        exercise_response = {
-            "_id": f"{user_id}_{lesson_id}_{exercise_id}",
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "exercise_id": exercise_id,
-            "type": "exercise_response",
-            "response_text": response_text,
-            "completed": True,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
-        }
-        
-        # Использовать upsert для обновления существующего или создания нового
-        await db.exercise_responses.update_one(
-            {"_id": f"{user_id}_{lesson_id}_{exercise_id}"},
-            {"$set": exercise_response},
-            upsert=True
-        )
-        
-        return {"message": "Ответ на упражнение сохранен"}
-        
-    except Exception as e:
-        logger.error(f"Error saving exercise response: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error saving exercise response: {str(e)}")
-
-@app.get("/api/lessons/exercise-responses/{lesson_id}")
-async def get_exercise_responses(
-    lesson_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Получить все ответы пользователя на упражнения урока"""
-    try:
-        user_id = current_user["user_id"]
-        
-        responses = await db.exercise_responses.find({
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "type": "exercise_response"
-        }).to_list(100)
-        
-        # Очистить ObjectId и преобразовать в удобный формат
-        result = {}
-        for response in responses:
-            result[response["exercise_id"]] = {
-                "response_text": response["response_text"],
-                "completed": response["completed"],
-                "updated_at": response["updated_at"]
-            }
-        
-        return {"responses": result}
-        
-    except Exception as e:
-        logger.error(f"Error getting exercise responses: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting exercise responses: {str(e)}")
-
-@app.post("/api/lessons/complete-challenge")
-async def complete_challenge(
-    challenge_id: str = Form(...),
-    rating: int = Form(...),  # Оценка от 1 до 5
-    notes: str = Form(""),
-    current_user: dict = Depends(get_current_user)
-):
-    """Завершить челлендж с оценкой"""
-    try:
-        user_id = current_user["user_id"]
-        progress_id = f"{user_id}_{challenge_id}"
-        
-        # Найти прогресс челленджа
-        progress = await db.challenge_progress.find_one({"_id": progress_id, "type": "challenge_progress"})
-        if not progress:
-            raise HTTPException(status_code=404, detail="Challenge progress not found")
-        
-        # Обновить статус на завершен
-        await db.challenge_progress.update_one(
-            {"_id": progress_id},
-            {
-                "$set": {
-                    "status": "completed",
-                    "completion_date": datetime.now().isoformat(),
-                    "rating": rating,
-                    "final_notes": notes,
-                    "current_day": 7
-                }
-            }
-        )
-        
-        return {
-            "message": "Челлендж успешно завершен",
-            "rating": rating,
-            "completed_days": len(progress.get("completed_days", []))
-        }
-        
-    except Exception as e:
-        logger.error(f"Error completing challenge: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error completing challenge: {str(e)}")
-
-@app.get("/api/lessons/overall-progress/{lesson_id}")
-async def get_overall_progress(
-    lesson_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Получить общий прогресс урока в процентах"""
-    try:
-        user_id = current_user["user_id"]
-        logger.info(f"Getting overall progress for lesson {lesson_id}, user {user_id}")
-
-        # Получить данные урока (сначала MongoDB, потом lesson_system)
-        custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
-
-        lesson = None
-        if custom_lesson:
-            # Урок существует в MongoDB
-            logger.info(f"Found custom lesson {lesson_id} in MongoDB")
-            lesson_exists = True
-        else:
-            # Проверяем lesson_system
-            logger.info(f"Checking lesson_system for {lesson_id}")
-            lesson = lesson_system.get_lesson(lesson_id)
-            if not lesson:
-                logger.error(f"Lesson {lesson_id} not found in MongoDB or lesson_system")
-                raise HTTPException(status_code=404, detail="Lesson not found")
-            lesson_exists = True
-        
-        # Подсчитать общий прогресс
-        total_components = 5  # теория, упражнения, квиз, челлендж, привычки
-        completed_components = 0
-        
-        # 1. Проверить упражнения (20%)
-        exercise_responses = await db.exercise_responses.find({
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "type": "exercise_response"
-        }).to_list(100)
-
-        # Получить общее количество упражнений
-        total_exercises_count = 0
-        if lesson:
-            total_exercises_count = len(lesson.exercises) if lesson.exercises else 0
-        elif custom_lesson and custom_lesson.get("content", {}).get("exercises"):
-            total_exercises_count = len(custom_lesson["content"]["exercises"])
-
-        exercises_completed = total_exercises_count > 0 and len(exercise_responses) >= total_exercises_count
-        if exercises_completed:
-            completed_components += 1
-        
-        # 2. Проверить квиз (20%)
-        quiz_results = await db.quiz_results.find({
-            "user_id": user_id,
-            "type": "quiz_result"
-        }).to_list(1)
-        
-        quiz_completed = len(quiz_results) > 0 and any(r.get("passed", False) for r in quiz_results)
-        if quiz_completed:
-            completed_components += 1
-        
-        # 3. Проверить челлендж (20%)
-        challenge_progress = await db.challenge_progress.find_one({
-            "user_id": user_id,
-            "type": "challenge_progress"
-        })
-        
-        challenge_completed = challenge_progress and challenge_progress.get("status") == "completed"
-        if challenge_completed:
-            completed_components += 1
-        
-        # 4. Проверить трекер привычек (20%)
-        habit_tracker = await db.habit_trackers.find_one({
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "type": "habit_tracker"
-        })
-        
-        habits_active = habit_tracker is not None
-        if habits_active:
-            completed_components += 1
-        
-        # 5. Теория (считаем завершенной если есть хотя бы одно выполненное упражнение) (20%)
-        theory_completed = exercises_completed
-        if theory_completed:
-            completed_components += 1
-        
-        overall_percentage = int((completed_components / total_components) * 100)
-        
-        # Получить общее количество упражнений
-        total_exercises = 0
-        if lesson:
-            total_exercises = len(lesson.exercises)
-        elif custom_lesson and custom_lesson.get("content", {}).get("exercises"):
-            total_exercises = len(custom_lesson["content"]["exercises"])
-
-        return {
-            "lesson_id": lesson_id,
-            "overall_percentage": overall_percentage,
-            "completed_components": completed_components,
-            "total_components": total_components,
-            "breakdown": {
-                "theory": theory_completed,
-                "exercises": exercises_completed,
-                "quiz": quiz_completed,
-                "challenge": challenge_completed,
-                "habits": habits_active
-            },
-            "exercise_count": len(exercise_responses),
-            "total_exercises": total_exercises
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting overall progress: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting overall progress: {str(e)}")
-
-# ==================== ADMIN ENDPOINTS ====================
-
-@app.post("/api/admin/update-lesson-content")
-async def update_lesson_content(
-    lesson_id: str = Form(...),
-    section: str = Form(...),
-    field: str = Form(...),
-    value: str = Form(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Обновить содержимое урока (только для администраторов)"""
-    try:
-        user_id = current_user["user_id"]
-
-        # Проверить права администратора из базы данных
-        user = await db.users.find_one({"id": user_id})
-        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
-            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
-
-        logger.info(f"Updating lesson content: lesson_id={lesson_id}, section={section}, field={field}, value_length={len(value)}")
-
-        # Сохранить изменения в коллекции lesson_content
-        content_update = {
-            "_id": f"{lesson_id}_{section}_{field}",
-            "lesson_id": lesson_id,
-            "section": section,
-            "field": field,
-            "value": value,
-            "updated_by": user_id,
-            "updated_at": datetime.now().isoformat(),
-            "type": "content_update"
-        }
-
-        await db.lesson_content.update_one(
-            {"_id": f"{lesson_id}_{section}_{field}"},
-            {"$set": content_update},
-            upsert=True
-        )
-
-        logger.info(f"Successfully updated {section}.{field}")
-        return {"message": f"Content updated successfully for {section}.{field}"}
-
-    except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        logger.error(f"Error updating lesson content: {str(e)}\n{error_details}")
-        raise HTTPException(status_code=500, detail=f"Error updating lesson content: {str(e)}")
-
-@app.post("/api/admin/upload-video")
-async def upload_video(
-    lesson_id: str = Form(...),
-    section: str = Form(...),
-    video: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Загрузить видео для урока (только для администраторов)"""
-    try:
-        # Проверить права администратора из базы данных
-        user = await db.users.find_one({"id": current_user["user_id"]})
-        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
-            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
-        
-        # Проверить формат файла
-        if not video.content_type.startswith('video/'):
-            raise HTTPException(status_code=400, detail="Invalid file format. Only video files are allowed.")
-        
-        # Создать директорию для загрузки если не существует
-        upload_dir = Path("uploads/videos")
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Сгенерировать уникальное имя файла
-        file_extension = Path(video.filename).suffix
-        unique_filename = f"{lesson_id}_{section}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{file_extension}"
-        file_path = upload_dir / unique_filename
-        
-        # Сохранить файл
-        with open(file_path, "wb") as buffer:
-            content = await video.read()
-            buffer.write(content)
-        
-        # Сохранить информацию в базе данных
-        video_info = {
-            "_id": f"{lesson_id}_{section}_video",
-            "lesson_id": lesson_id,
-            "section": section,
-            "file_path": str(file_path),
-            "original_filename": video.filename,
-            "file_size": len(content),
-            "content_type": video.content_type,
-            "uploaded_by": current_user["user_id"],
-            "uploaded_at": datetime.now().isoformat(),
-            "type": "video_upload"
-        }
-        
-        await db.lesson_media.update_one(
-            {"_id": f"{lesson_id}_{section}_video"},
-            {"$set": video_info},
-            upsert=True
-        )
-        
-        return {
-            "message": "Video uploaded successfully",
-            "video_url": f"/uploads/videos/{unique_filename}",
-            "file_size": len(content)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error uploading video: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error uploading video: {str(e)}")
-
-@app.post("/api/admin/upload-pdf")
-async def upload_pdf(
-    lesson_id: str = Form(...),
-    section: str = Form(...),
-    pdf: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Загрузить PDF для урока (только для администраторов)"""
-    try:
-        # Проверить права администратора из базы данных
-        user = await db.users.find_one({"id": current_user["user_id"]})
-        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
-            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
-        
-        # Проверить формат файла
-        if pdf.content_type != 'application/pdf':
-            raise HTTPException(status_code=400, detail="Invalid file format. Only PDF files are allowed.")
-        
-        # Создать директорию для загрузки если не существует
-        upload_dir = Path("uploads/pdfs")
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Сгенерировать уникальное имя файла
-        unique_filename = f"{lesson_id}_{section}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        file_path = upload_dir / unique_filename
-        
-        # Сохранить файл
-        with open(file_path, "wb") as buffer:
-            content = await pdf.read()
-            buffer.write(content)
-        
-        # Сохранить информацию в базе данных
-        pdf_info = {
-            "_id": f"{lesson_id}_{section}_pdf",
-            "lesson_id": lesson_id,
-            "section": section,
-            "file_path": str(file_path),
-            "original_filename": pdf.filename,
-            "file_size": len(content),
-            "content_type": pdf.content_type,
-            "uploaded_by": current_user["user_id"],
-            "uploaded_at": datetime.now().isoformat(),
-            "type": "pdf_upload"
-        }
-        
-        await db.lesson_media.update_one(
-            {"_id": f"{lesson_id}_{section}_pdf"},
-            {"$set": pdf_info},
-            upsert=True
-        )
-        
-        return {
-            "message": "PDF uploaded successfully",
-            "pdf_url": f"/uploads/pdfs/{unique_filename}",
-            "file_size": len(content)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error uploading PDF: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error uploading PDF: {str(e)}")
-
-@app.get("/api/admin/lesson-media/{lesson_id}")
-async def get_lesson_media(
-    lesson_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Получить загруженные медиафайлы урока"""
-    try:
-        # Проверить права администратора из базы данных
-        user = await db.users.find_one({"id": current_user["user_id"]})
-        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
-            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
-        
-        media_files = await db.lesson_media.find({
-            "lesson_id": lesson_id,
-            "type": {"$in": ["video_upload", "pdf_upload"]}
-        }).to_list(100)
-        
-        # Очистить ObjectId
-        for media in media_files:
-            media["_id"] = str(media["_id"])
-        
-        return {"media_files": media_files}
-        
-    except Exception as e:
-        logger.error(f"Error getting lesson media: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting lesson media: {str(e)}")
-
-@app.post("/api/admin/lessons/{lesson_id}/add-pdf")
-async def add_lesson_additional_pdf(
-    lesson_id: str,
-    title: str = Form(...),
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Добавить дополнительный PDF файл к уроку (используем consultations endpoint)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Используем тот же endpoint что и для консультаций - УНИФИКАЦИЯ!
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-        content = await file.read()
-        temp_file.write(content)
-        temp_file.close()
-        
-        # Генерируем уникальный ID для файла
-        file_id = str(uuid.uuid4())
-        file_path = CONSULTATIONS_PDF_DIR / f"{file_id}.pdf"
-        
-        # Копируем файл в директорию консультаций
-        import shutil
-        shutil.move(temp_file.name, file_path)
-        
-        # Сохраняем запись в uploaded_files с типом consultation_pdf
-        file_record = {
-            'id': file_id,
-            'original_filename': file.filename,
-            'file_path': str(file_path),
-            'file_type': 'consultation_pdf',  # Используем тот же тип что и консультации
-            'content_type': 'application/pdf',  # Добавляем content_type для совместимости
-            'uploaded_by': current_user['user_id'],
-            'uploaded_at': datetime.utcnow(),
-            'lesson_id': lesson_id,  # Дополнительное поле для связи с уроком
-            'pdf_title': title  # Пользовательское название
-        }
-        
-        await db.uploaded_files.insert_one(file_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'title': title,
-            'pdf_url': f'/api/consultations/pdf/{file_id}',
-            'message': 'Дополнительный PDF успешно добавлен к уроку'
-        }
-        
-    except Exception as e:
-        logger.error(f"Error adding additional PDF to lesson: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding PDF: {str(e)}")
-
-@app.get("/api/lessons/{lesson_id}/additional-pdfs")
-async def get_lesson_additional_pdfs(lesson_id: str):
-    """Получить все дополнительные PDF файлы урока"""
-    try:
-        # Ищем все PDF файлы связанные с уроком
-        pdf_cursor = db.uploaded_files.find({
-            'lesson_id': lesson_id,
-            'file_type': 'consultation_pdf'  # Используем consultations тип
-        })
-        
-        pdfs = []
-        async for pdf_record in pdf_cursor:
-            pdfs.append({
-                'file_id': pdf_record['id'],
-                'filename': pdf_record['original_filename'],
-                'title': pdf_record.get('pdf_title', pdf_record['original_filename']),
-                'pdf_url': f'/api/consultations/pdf/{pdf_record["id"]}',
-                'uploaded_at': pdf_record.get('uploaded_at')
-            })
-        
-        return {
-            'lesson_id': lesson_id,
-            'additional_pdfs': pdfs,
-            'count': len(pdfs)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting lesson additional PDFs: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting PDFs: {str(e)}")
-
-@app.post("/api/admin/lessons/{lesson_id}/add-video")
-async def add_lesson_additional_video(
-    lesson_id: str,
-    title: str = Form(...),
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Добавить дополнительный видео файл к уроку (используем consultations endpoint)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Используем тот же endpoint что и для консультаций - УНИФИКАЦИЯ!
-        temp_file = tempfile.NamedTemporaryFile(delete=False)
-        content = await file.read()
-        temp_file.write(content)
-        temp_file.close()
-        
-        # Генерируем уникальный ID для файла
-        file_id = str(uuid.uuid4())
-        file_extension = Path(file.filename).suffix.lower()
-        file_path = CONSULTATIONS_VIDEO_DIR / f"{file_id}{file_extension}"
-        
-        # Копируем файл в директорию консультаций
-        import shutil
-        shutil.move(temp_file.name, file_path)
-        
-        # Сохраняем запись в uploaded_files с типом consultation_video
-        file_record = {
-            'id': file_id,
-            'original_filename': file.filename,
-            'file_path': str(file_path),
-            'file_type': 'consultation_video',  # Используем тот же тип что и консультации
-            'content_type': file.content_type or 'video/mp4',
-            'uploaded_by': current_user['user_id'],
-            'uploaded_at': datetime.utcnow(),
-            'lesson_id': lesson_id,  # Дополнительное поле для связи с уроком
-            'video_title': title  # Пользовательское название
-        }
-        
-        await db.uploaded_files.insert_one(file_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'title': title,
-            'video_url': f'/api/consultations/video/{file_id}',
-            'message': 'Дополнительное видео успешно добавлено к уроку'
-        }
-        
-    except Exception as e:
-        logger.error(f"Error adding additional video to lesson: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding video: {str(e)}")
-
-@app.get("/api/lessons/{lesson_id}/additional-videos")
-async def get_lesson_additional_videos(lesson_id: str):
-    """Получить все дополнительные видео файлы урока"""
-    try:
-        # Ищем все видео файлы связанные с уроком
-        video_cursor = db.uploaded_files.find({
-            'lesson_id': lesson_id,
-            'file_type': 'consultation_video'  # Используем consultations тип
-        })
-        
-        videos = []
-        async for video_record in video_cursor:
-            videos.append({
-                'file_id': video_record['id'],
-                'filename': video_record['original_filename'],
-                'title': video_record.get('video_title', video_record['original_filename']),
-                'video_url': f'/api/consultations/video/{video_record["id"]}',
-                'uploaded_at': video_record.get('uploaded_at')
-            })
-        
-        return {
-            'lesson_id': lesson_id,
-            'additional_videos': videos,
-            'count': len(videos)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting lesson additional videos: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting videos: {str(e)}")
-
-# ==================== SIMPLE LESSON FILE UPLOAD ENDPOINTS ====================
-
-@app.post("/api/admin/lessons/upload-video")
-async def upload_lesson_video(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Загрузка видео файла для урока (упрощенный endpoint)"""
-    try:
-        logger.info(f"Starting lesson video upload for user: {current_user.get('user_id')}")
-
-        # Проверить права администратора
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        logger.info(f"Admin rights verified for user: {admin_user}")
-
-        # Проверяем тип файла
-        if not file.content_type.startswith('video/'):
-            raise HTTPException(status_code=400, detail='Файл должен быть видео')
-
-        # Генерируем уникальное имя файла
-        file_id = str(uuid.uuid4())
-        file_extension = Path(file.filename).suffix
-        file_path = LESSONS_VIDEO_DIR / f"{file_id}{file_extension}"
-
-        logger.info(f"Saving video file to: {file_path}")
-
-        # Сохраняем файл
-        with open(file_path, 'wb') as f:
-            content = await file.read()
-            f.write(content)
-
-        logger.info(f"Video file saved successfully. Size: {len(content)} bytes")
-
-        # Сохраняем информацию в базу данных
-        video_record = {
-            'id': file_id,
-            'original_filename': file.filename,
-            'file_path': str(file_path),
-            'content_type': file.content_type,
-            'file_size': len(content),
-            'uploaded_by': current_user['user_id'],
-            'created_at': datetime.now().isoformat(),
-            'file_type': 'lesson_video'
-        }
-
-        logger.info(f"Inserting video record into DB: {video_record}")
-        result = await db.uploaded_files.insert_one(video_record)
-        logger.info(f"Video record inserted with _id: {result.inserted_id}")
-
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'video_url': f'/api/lessons/video/{file_id}',
-            'message': 'Видео успешно загружено для урока'
-        }
-        
-    except HTTPException:
-        # Re-raise HTTPExceptions (like 400, 403, 404) without modification
-        raise
-    except Exception as e:
-        logger.error(f'Lesson video upload error: {e}')
-        raise HTTPException(status_code=500, detail=f'Ошибка при загрузке видео урока: {str(e)}')
-
-@app.post("/api/admin/lessons/upload-pdf")
-async def upload_lesson_pdf(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Загрузка PDF файла для урока (упрощенный endpoint)"""
-    try:
-        # Проверить права администратора
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Проверяем тип файла
-        if file.content_type != 'application/pdf':
-            raise HTTPException(status_code=400, detail='Файл должен быть PDF')
-        
-        # Генерируем уникальное имя файла
-        file_id = str(uuid.uuid4())
-        file_path = LESSONS_PDF_DIR / f"{file_id}.pdf"
-        
-        # Сохраняем файл
-        with open(file_path, 'wb') as f:
-            content = await file.read()
-            f.write(content)
-        
-        # Сохраняем информацию в базу данных
-        pdf_record = {
-            'id': file_id,
-            'original_filename': file.filename,
-            'file_path': str(file_path),
-            'content_type': file.content_type,
-            'file_size': len(content),
-            'uploaded_by': current_user['user_id'],
-            'created_at': datetime.now().isoformat(),
-            'file_type': 'lesson_pdf'
-        }
-        
-        await db.uploaded_files.insert_one(pdf_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'pdf_url': f'/api/lessons/pdf/{file_id}',
-            'message': 'PDF успешно загружен для урока'
-        }
-        
-    except HTTPException:
-        # Re-raise HTTPExceptions (like 400, 403, 404) without modification
-        raise
-    except Exception as e:
-        logger.error(f'Lesson PDF upload error: {e}')
-        raise HTTPException(status_code=500, detail=f'Ошибка при загрузке PDF урока: {str(e)}')
-
-@app.post("/api/admin/lessons/upload-word")
-async def upload_lesson_word_simple(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Загрузка Word файла для урока (упрощенный endpoint)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Проверяем тип файла
-        allowed_types = [
-            'application/msword',  # .doc
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'  # .docx
-        ]
-        filename_lower = file.filename.lower() if file.filename else ''
-        is_docx = filename_lower.endswith('.docx')
-        is_doc = filename_lower.endswith('.doc')
-        
-        if file.content_type not in allowed_types and not (is_docx or is_doc):
-            raise HTTPException(status_code=400, detail='Файл должен быть Word документом (.doc или .docx)')
-        
-        # Определяем расширение
-        file_extension = '.docx' if is_docx else '.doc'
-        
-        # Генерируем уникальное имя файла
-        file_id = str(uuid.uuid4())
-        file_path = LESSONS_WORD_DIR / f"{file_id}{file_extension}"
-        
-        # Сохраняем файл
-        with open(file_path, 'wb') as f:
-            content = await file.read()
-            f.write(content)
-        
-        # Сохраняем информацию в базу данных
-        word_record = {
-            'id': file_id,
-            'original_filename': file.filename,
-            'file_path': str(file_path),
-            'content_type': file.content_type or ('application/vnd.openxmlformats-officedocument.wordprocessingml.document' if is_docx else 'application/msword'),
-            'file_size': len(content),
-            'file_extension': file_extension,
-            'uploaded_by': current_user['user_id'],
-            'created_at': datetime.now().isoformat(),
-            'file_type': 'lesson_word'
-        }
-        
-        await db.uploaded_files.insert_one(word_record)
-        
-        return {
-            'success': True,
-            'file_id': file_id,
-            'filename': file.filename,
-            'word_url': f'/api/lessons/word/{file_id}',
-            'download_url': f'/api/lessons/word/{file_id}/download',
-            'message': 'Word файл успешно загружен для урока'
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f'Lesson Word upload error: {e}')
-        raise HTTPException(status_code=500, detail=f'Ошибка при загрузке Word файла урока: {str(e)}')
-
-# Endpoints для получения файлов уроков
-@app.api_route("/api/lessons/video/{file_id}", methods=["GET", "HEAD"])
-async def get_lesson_video(file_id: str, request: Request):
-    """Получить видео урока по ID с поддержкой Range requests"""
-    try:
-        file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'lesson_video'})
-        if not file_record:
-            raise HTTPException(status_code=404, detail="Video not found")
-
-        file_path = Path(file_record['file_path'])
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Video file not found on disk")
-
-        file_size = file_record['file_size']
-
-        # Обработка Range запросов для HEAD и GET
-        range_header = request.headers.get('range')
-
-        # Для HEAD запросов возвращаем только заголовки
-        if request.method == "HEAD":
-            if range_header:
-                # Parse range header для HEAD запроса
-                import re
-                match = re.search(r'bytes=(\d+)-(\d*)', range_header)
-                if match:
-                    start = int(match.group(1))
-                    end = int(match.group(2)) if match.group(2) else file_size - 1
-                    end = min(end, file_size - 1)
-                    content_length = end - start + 1
-
-                    return Response(
-                        status_code=206,
-                        headers={
-                            'Content-Range': f'bytes {start}-{end}/{file_size}',
-                            'Accept-Ranges': 'bytes',
-                            'Content-Length': str(content_length),
-                            'Content-Type': file_record['content_type'],
-                            'Access-Control-Allow-Origin': '*',
-                        }
-                    )
-
-            return Response(
-                headers={
-                    'Accept-Ranges': 'bytes',
-                    'Content-Type': file_record['content_type'],
-                    'Content-Length': str(file_size),
-                    'Access-Control-Allow-Origin': '*',
-                }
-            )
-
-        if range_header:
-            # Parse range header (format: "bytes=start-end")
-            import re
-            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
-            if match:
-                start = int(match.group(1))
-                end = int(match.group(2)) if match.group(2) else file_size - 1
-                end = min(end, file_size - 1)
-
-                content_length = end - start + 1
-
-                # Read the requested range
-                with open(file_path, 'rb') as f:
-                    f.seek(start)
-                    data = f.read(content_length)
-
-                return Response(
-                    content=data,
-                    status_code=206,
-                    headers={
-                        'Content-Range': f'bytes {start}-{end}/{file_size}',
-                        'Accept-Ranges': 'bytes',
-                        'Content-Length': str(content_length),
-                        'Content-Type': file_record['content_type'],
-                        'Access-Control-Allow-Origin': '*',
-                        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                        'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
-                    },
-                    media_type=file_record['content_type']
-                )
-
-        # Если Range не запрошен, возвращаем весь файл
-        return FileResponse(
-            path=str(file_path),
-            media_type=file_record['content_type'],
-            filename=file_record['original_filename'],
-            headers={
-                'Accept-Ranges': 'bytes',
-                'Content-Disposition': 'inline',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                'Access-Control-Allow-Headers': 'Range, Authorization, Content-Type',
-            }
-        )
-    except HTTPException:
-        # Re-raise HTTPExceptions (like 404) without modification
-        raise
-    except Exception as e:
-        logger.error(f"Error serving lesson video: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error serving video")
-@app.get("/api/lessons/pdf/{file_id}")
-async def get_lesson_pdf(file_id: str):
-    """Получить PDF урока по ID"""
-    try:
-        file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'lesson_pdf'})
-        if not file_record:
-            raise HTTPException(status_code=404, detail="PDF not found")
-        
-        file_path = Path(file_record['file_path'])
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail="PDF file not found on disk")
-        
-        return FileResponse(
-            path=str(file_path),
-            media_type='application/pdf',
-            filename=file_record['original_filename'],
-            headers={
-                'Accept-Ranges': 'bytes',
-                'Content-Disposition': 'inline',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-            }
-        )
-    except HTTPException:
-        # Re-raise HTTPExceptions (like 404) without modification
-        raise
-    except Exception as e:
-        logger.error(f"Error serving lesson PDF: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error serving PDF")
-
-@app.get("/api/lessons/word/{file_id}")
-async def get_lesson_word(file_id: str, request: Request):
-    """Получить Word файл урока по ID для просмотра"""
-    try:
-        file_record = await db.lesson_word_files.find_one({'id': file_id})
-        if not file_record:
-            # Проверяем в старой коллекции uploaded_files
-            file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'lesson_word'})
-        
-        if not file_record:
-            raise HTTPException(status_code=404, detail="Word file not found")
-        
-        file_path = Path(file_record['file_path'])
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Word file not found on disk")
-        
-        # Возвращаем файл с правильным MIME type
-        content_type = file_record.get('content_type', 
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' if file_record.get('file_extension') == '.docx' 
-            else 'application/msword')
-        
-        return FileResponse(
-            path=str(file_path),
-            media_type=content_type,
-            filename=file_record['original_filename'],
-            headers={
-                'Accept-Ranges': 'bytes',
-                'Content-Disposition': 'inline',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error serving lesson Word file: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error serving Word file")
-
-@app.get("/api/lessons/word/{file_id}/download")
-async def download_lesson_word(file_id: str):
-    """Скачать Word файл урока по ID"""
-    try:
-        file_record = await db.lesson_word_files.find_one({'id': file_id})
-        if not file_record:
-            file_record = await db.uploaded_files.find_one({'id': file_id, 'file_type': 'lesson_word'})
-        
-        if not file_record:
-            raise HTTPException(status_code=404, detail="Word file not found")
-        
-        file_path = Path(file_record['file_path'])
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail="Word file not found on disk")
-        
-        content_type = file_record.get('content_type',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' if file_record.get('file_extension') == '.docx'
-            else 'application/msword')
-        
-        return FileResponse(
-            path=str(file_path),
-            media_type=content_type,
-            filename=file_record['original_filename'],
-            headers={
-                'Content-Disposition': f'attachment; filename="{file_record["original_filename"]}"',
-                'Access-Control-Allow-Origin': '*',
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error downloading lesson Word file: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error downloading Word file")
-
-# Obsolete endpoints removed - moved to proper location above
-
-# Обновляем endpoints удаления для работы с консультационной системой
-@api_router.delete('/admin/lessons/video/{file_id}')
-async def delete_lesson_video(file_id: str, current_user: dict = Depends(get_current_user)):
-    """Удалить видео файл урока (через консультационную систему)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Удаляем из lesson_videos (связь с уроком)
-        lesson_video_result = await db.lesson_videos.delete_one({'id': file_id})
-        
-        # Удаляем из uploaded_files (консультационная система)
-        uploaded_file_result = await db.uploaded_files.delete_one({
-            'id': file_id, 
-            'file_type': 'consultation_video'
-        })
-        
-        # Находим и удаляем физический файл
-        file_record = await db.uploaded_files.find_one({'id': file_id})
-        if file_record and file_record.get('file_path'):
-            file_path = Path(file_record['file_path'])
-            if file_path.exists():
-                file_path.unlink()
-        
-        return {
-            'success': True,
-            'message': 'Видео файл успешно удален из урока и системы',
-            'deleted_from_lesson': lesson_video_result.deleted_count > 0,
-            'deleted_from_system': uploaded_file_result.deleted_count > 0
-        }
-        
-    except Exception as e:
-        logger.error(f"Error deleting lesson video: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка удаления видео: {str(e)}")
-
-@api_router.delete('/admin/lessons/pdf/{file_id}')
-async def delete_lesson_pdf(file_id: str, current_user: dict = Depends(get_current_user)):
-    """Удалить PDF файл урока (через консультационную систему)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Удаляем из lesson_pdfs (связь с уроком)
-        lesson_pdf_result = await db.lesson_pdfs.delete_one({'id': file_id})
-        
-        # Удаляем из uploaded_files (консультационная система)
-        uploaded_file_result = await db.uploaded_files.delete_one({
-            'id': file_id, 
-            'file_type': 'consultation_pdf'
-        })
-        
-        # Находим и удаляем физический файл
-        file_record = await db.uploaded_files.find_one({'id': file_id})
-        if file_record and file_record.get('file_path'):
-            file_path = Path(file_record['file_path'])
-            if file_path.exists():
-                file_path.unlink()
-        
-        return {
-            'success': True,
-            'message': 'PDF файл успешно удален из урока и системы',
-            'deleted_from_lesson': lesson_pdf_result.deleted_count > 0,
-            'deleted_from_system': uploaded_file_result.deleted_count > 0
-        }
-        
-    except Exception as e:
-        logger.error(f"Error deleting lesson PDF: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка удаления PDF: {str(e)}")
-
-# Унифицированные endpoints для связывания медиа файлов с уроками (используют консультационную систему)
-@api_router.post('/admin/lessons/{lesson_id}/link-video')
-async def link_video_to_lesson(lesson_id: str, video_data: dict, current_user: dict = Depends(get_current_user)):
-    """Связать загруженное через консультационную систему видео с уроком"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Добавляем источник
-        video_data['source'] = 'consultation_system'
-        video_data['linked_at'] = datetime.utcnow()
-        
-        # Сохраняем связь в lesson_videos коллекции
-        await db.lesson_videos.insert_one(video_data)
-        
-        return {'success': True, 'message': 'Видео успешно связано с уроком'}
-        
-    except Exception as e:
-        logger.error(f"Error linking video to lesson: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка связывания видео: {str(e)}")
-
-@api_router.post('/admin/lessons/{lesson_id}/link-pdf')
-async def link_pdf_to_lesson(lesson_id: str, pdf_data: dict, current_user: dict = Depends(get_current_user)):
-    """Связать загруженный через консультационную систему PDF с уроком"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Добавляем источник
-        pdf_data['source'] = 'consultation_system'
-        pdf_data['linked_at'] = datetime.utcnow()
-        
-        # Сохраняем связь в lesson_pdfs коллекции
-        await db.lesson_pdfs.insert_one(pdf_data)
-        
-        return {'success': True, 'message': 'PDF успешно связан с уроком'}
-        
-    except Exception as e:
-        logger.error(f"Error linking PDF to lesson: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка связывания PDF: {str(e)}")
-
-# Обновляем endpoint получения медиа файлов для использования консультационных URLs
-@app.get("/api/lessons/media/{lesson_id}")
-async def get_lesson_media(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Get all media files (videos and PDFs) for a lesson - UNIFIED SYSTEM"""
-    try:
-        # Получаем видео файлы урока
-        video_files = await db.lesson_videos.find({
-            'lesson_id': lesson_id
-        }).to_list(length=None)
-        
-        # Получаем PDF файлы урока
-        pdf_files = await db.lesson_pdfs.find({
-            'lesson_id': lesson_id
-        }).to_list(length=None)
-        
-        # Очищаем MongoDB ObjectIds и унифицируем URLs
-        for video in video_files:
-            video.pop('_id', None)
-            if video.get('id'):
-                # ИСПОЛЬЗУЕМ КОНСУЛЬТАЦИОННУЮ СИСТЕМУ ДЛЯ ВСЕХ ФАЙЛОВ
-                video['video_url'] = f'/api/consultations/video/{video["id"]}'
-            # Добавляем поле filename для совместимости
-            if video.get('original_filename'):
-                video['filename'] = video['original_filename']
-        
-        for pdf in pdf_files:
-            pdf.pop('_id', None)
-            if pdf.get('id'):
-                # ИСПОЛЬЗУЕМ КОНСУЛЬТАЦИОННУЮ СИСТЕМУ ДЛЯ ВСЕХ ФАЙЛОВ
-                pdf['pdf_url'] = f'/api/consultations/pdf/{pdf["id"]}'
-            # Добавляем поле filename для совместимости
-            if pdf.get('original_filename'):
-                pdf['filename'] = pdf['original_filename']
-        
-        return {
-            'lesson_id': lesson_id,
-            'videos': video_files,
-            'pdfs': pdf_files,
-            'success': True
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting lesson media: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting lesson media: {str(e)}")
-
-@app.post("/api/admin/update-exercise")
-async def update_exercise(
-    lesson_id: str = Form(...),
-    exercise_id: str = Form(...),
-    title: str = Form(...),
-    content: str = Form(""),
-    instructions: str = Form(""),
-    expected_outcome: str = Form(""),
-    exercise_type: str = Form("reflection"),
-    current_user: dict = Depends(get_current_user)
-):
-    """Обновить упражнение (только для администраторов)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        user_id = current_user["user_id"]
-        
-        # Разделить инструкции по переносам строк
-        instructions_list = [inst.strip() for inst in instructions.split('\n') if inst.strip()]
-        
-        exercise_update = {
-            "_id": f"{lesson_id}_{exercise_id}",
-            "lesson_id": lesson_id,
-            "exercise_id": exercise_id,
-            "title": title,
-            "content": content,
-            "instructions": instructions_list,
-            "expected_outcome": expected_outcome,
-            "type": exercise_type,
-            "updated_by": user_id,
-            "updated_at": datetime.now().isoformat(),
-            "content_type": "exercise_update"
-        }
-        
-        await db.lesson_exercises.update_one(
-            {"_id": f"{lesson_id}_{exercise_id}"},
-            {"$set": exercise_update},
-            upsert=True
-        )
-        
-        return {"message": f"Exercise {exercise_id} updated successfully"}
-        
-    except Exception as e:
-        logger.error(f"Error updating exercise: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating exercise: {str(e)}")
-
-@app.post("/api/admin/add-exercise")
-async def add_exercise(
-    lesson_id: str = Form(...),
-    title: str = Form(...),
-    content: str = Form(...),
-    instructions: str = Form(...),
-    expected_outcome: str = Form(...),
-    exercise_type: str = Form("reflection"),
-    current_user: dict = Depends(get_current_user)
-):
-    """Добавить новое упражнение (только для администраторов)"""
-    try:
-        user_id = current_user["user_id"]
-
-        # Проверить права администратора из базы данных
-        user = await db.users.find_one({"id": user_id})
-        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
-            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
-
-        # Сгенерировать ID для нового упражнения с учетом базовых и кастомных
-        max_exercise_num = 0
-
-        # Получить базовый урок и посмотреть существующие ID
-        lesson = lesson_system.get_lesson(lesson_id)
-        if lesson and lesson.exercises:
-            for ex in lesson.exercises:
-                # Извлекаем номер из ID типа "exercise_1", "exercise_2"
-                # ex может быть dict или Pydantic объектом
-                exid = ex.id if hasattr(ex, 'id') else ex.get('id', '')
-                if exid.startswith('exercise_') and exid[9:].isdigit():
-                    max_exercise_num = max(max_exercise_num, int(exid[9:]))
-
-        # Проверяем кастомные упражнения в MongoDB
-        custom_exercises = await db.lesson_exercises.find({"lesson_id": lesson_id}).to_list(100)
-        for ex in custom_exercises:
-            exid = ex.get("exercise_id", "")
-            if exid.startswith('exercise_') and exid[9:].isdigit():
-                max_exercise_num = max(max_exercise_num, int(exid[9:]))
-
-        exercise_id = f"exercise_{max_exercise_num + 1}"
-        logger.info(f"Generated new exercise_id: {exercise_id}")
-        
-        instructions_list = [inst.strip() for inst in instructions.split('\n') if inst.strip()]
-        
-        new_exercise = {
-            "_id": f"{lesson_id}_{exercise_id}",
-            "lesson_id": lesson_id,
-            "exercise_id": exercise_id,
-            "title": title,
-            "content": content,
-            "instructions": instructions_list,
-            "expected_outcome": expected_outcome,
-            "type": exercise_type,
-            "created_by": user_id,
-            "created_at": datetime.now().isoformat(),
-            "content_type": "exercise_update"
-        }
-        
-        await db.lesson_exercises.insert_one(new_exercise)
-        
-        return {"message": f"Exercise {exercise_id} added successfully", "exercise_id": exercise_id}
-        
-    except Exception as e:
-        logger.error(f"Error adding exercise: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding exercise: {str(e)}")
-
-@app.post("/api/admin/update-quiz-question")
-async def update_quiz_question(
-    lesson_id: str = Form(...),
-    question_id: str = Form(...),
-    question_text: str = Form(...),
-    options: str = Form(...),
-    correct_answer: str = Form(...),
-    explanation: str = Form(""),  # Сделаем необязательным
-    current_user: dict = Depends(get_current_user)
-):
-    """Обновить вопрос квиза (только для администраторов)"""
-    try:
-        user_id = current_user["user_id"]
-
-        # Проверить права администратора из базы данных
-        user = await db.users.find_one({"id": user_id})
-        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
-            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
-
-        logger.info(f"Updating quiz question: lesson_id={lesson_id}, question_id={question_id}, question={question_text[:50]}")
-        
-        # Разделить варианты ответов по переносам строк
-        options_list = [opt.strip() for opt in options.split('\n') if opt.strip()]
-        
-        question_update = {
-            "_id": f"{lesson_id}_{question_id}",
-            "lesson_id": lesson_id,
-            "question_id": question_id,
-            "question": question_text,
-            "options": options_list,
-            "correct_answer": correct_answer,
-            "explanation": explanation,
-            "updated_by": user_id,
-            "updated_at": datetime.now().isoformat(),
-            "content_type": "quiz_question_update"
-        }
-        
-        await db.lesson_quiz_questions.update_one(
-            {"_id": f"{lesson_id}_{question_id}"},
-            {"$set": question_update},
-            upsert=True
-        )
-        
-        return {"message": f"Quiz question {question_id} updated successfully"}
-        
-    except Exception as e:
-        logger.error(f"Error updating quiz question: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating quiz question: {str(e)}")
-
-@app.post("/api/admin/add-quiz-question")
-async def add_quiz_question(
-    lesson_id: str = Form(...),
-    question_text: str = Form(...),
-    options: str = Form(...),
-    correct_answer: str = Form(...),
-    explanation: str = Form(""),  # Сделаем необязательным
-    current_user: dict = Depends(get_current_user)
-):
-    """Добавить новый вопрос в квиз (только для администраторов)"""
-    try:
-        user_id = current_user["user_id"]
-
-        # Проверить права администратора из базы данных
-        user = await db.users.find_one({"id": user_id})
-        if not user or (not user.get("is_admin") and not user.get("is_super_admin")):
-            raise HTTPException(status_code=403, detail="Access denied. Admin rights required.")
-
-        logger.info(f"Adding quiz question: lesson_id={lesson_id}, question={question_text[:50]}, options={options[:100]}, correct={correct_answer}")
-
-        # Сгенерировать ID для нового вопроса с учетом базовых и кастомных
-        max_question_num = 0
-
-        # Получить базовый урок и посмотреть существующие ID
-        lesson = lesson_system.get_lesson(lesson_id)
-        if lesson and lesson.quiz and lesson.quiz.questions:
-            for q in lesson.quiz.questions:
-                # Извлекаем номер из ID типа "q1", "q2"
-                # q может быть dict или Pydantic объектом
-                qid = q.id if hasattr(q, 'id') else q.get('id', '')
-                if qid.startswith('q') and qid[1:].isdigit():
-                    max_question_num = max(max_question_num, int(qid[1:]))
-
-        # Проверяем кастомные вопросы в MongoDB
-        custom_questions = await db.lesson_quiz_questions.find({"lesson_id": lesson_id}).to_list(100)
-        for q in custom_questions:
-            qid = q.get("question_id", "")
-            if qid.startswith('q') and qid[1:].isdigit():
-                max_question_num = max(max_question_num, int(qid[1:]))
-
-        question_id = f"q{max_question_num + 1}"
-        logger.info(f"Generated new question_id: {question_id}")
-        
-        options_list = [opt.strip() for opt in options.split('\n') if opt.strip()]
-        
-        new_question = {
-            "_id": f"{lesson_id}_{question_id}",
-            "lesson_id": lesson_id,
-            "question_id": question_id,
-            "question": question_text,
-            "options": options_list,
-            "correct_answer": correct_answer,
-            "explanation": explanation,
-            "created_by": user_id,
-            "created_at": datetime.now().isoformat(),
-            "content_type": "quiz_question_update"
-        }
-        
-        await db.lesson_quiz_questions.insert_one(new_question)
-        
-        return {"message": f"Quiz question {question_id} added successfully", "question_id": question_id}
-        
-    except Exception as e:
-        logger.error(f"Error adding quiz question: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding quiz question: {str(e)}")
-
-@app.post("/api/admin/update-challenge-day")
-async def update_challenge_day(
-    lesson_id: str = Form(...),
-    challenge_id: str = Form(...),
-    day: int = Form(...),
-    title: str = Form(...),
-    tasks: str = Form(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Обновить день челленджа (только для администраторов)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        user_id = current_user["user_id"]
-        
-        # Разделить задачи по переносам строк
-        tasks_list = [task.strip() for task in tasks.split('\n') if task.strip()]
-        
-        day_update = {
-            "_id": f"{lesson_id}_{challenge_id}_day_{day}",
-            "lesson_id": lesson_id,
-            "challenge_id": challenge_id,
-            "day": day,
-            "title": title,
-            "tasks": tasks_list,
-            "updated_by": user_id,
-            "updated_at": datetime.now().isoformat(),
-            "content_type": "challenge_day_update"
-        }
-        
-        await db.lesson_challenge_days.update_one(
-            {"_id": f"{lesson_id}_{challenge_id}_day_{day}"},
-            {"$set": day_update},
-            upsert=True
-        )
-        
-        return {"message": f"Challenge day {day} updated successfully"}
-        
-    except Exception as e:
-        logger.error(f"Error updating challenge day: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating challenge day: {str(e)}")
-
-@app.post("/api/admin/add-challenge-day")
-async def add_challenge_day(
-    lesson_id: str = Form(...),
-    challenge_id: str = Form(...),
-    title: str = Form(...),
-    tasks: str = Form(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Добавить новый день в челлендж (только для администраторов)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        user_id = current_user["user_id"]
-        
-        # Найти следующий номер дня
-        existing_days = await db.lesson_challenge_days.find({
-            "lesson_id": lesson_id,
-            "challenge_id": challenge_id
-        }).to_list(100)
-        
-        next_day = len(existing_days) + 1
-        tasks_list = [task.strip() for task in tasks.split('\n') if task.strip()]
-        
-        new_day = {
-            "_id": f"{lesson_id}_{challenge_id}_day_{next_day}",
-            "lesson_id": lesson_id,
-            "challenge_id": challenge_id,
-            "day": next_day,
-            "title": title,
-            "tasks": tasks_list,
-            "created_by": user_id,
-            "created_at": datetime.now().isoformat(),
-            "content_type": "challenge_day_update"
-        }
-        
-        await db.lesson_challenge_days.insert_one(new_day)
-        
-        return {"message": f"Challenge day {next_day} added successfully", "day": next_day}
-
-    except Exception as e:
-        logger.error(f"Error adding challenge day: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding challenge day: {str(e)}")
-
-# ==================== HABITS MANAGEMENT (ADMIN) ====================
-
-@app.post("/api/admin/add-habit")
-async def add_habit(
-    lesson_id: str = Form(...),
-    planet: str = Form(...),
-    habit: str = Form(...),
-    description: str = Form(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Добавить привычку к планете в уроке (только для администраторов)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
-        # Проверяем существование урока в MongoDB
-        lesson_in_db = await db.lessons.find_one({"id": lesson_id})
-
-        if not lesson_in_db:
-            # Если урока нет в MongoDB, получаем его из lesson_system
-            lesson_from_system = lesson_system.get_lesson(lesson_id)
-            if not lesson_from_system:
-                raise HTTPException(status_code=404, detail="Lesson not found")
-
-            # Создаем урок в MongoDB с базовой структурой
-            lesson_dict = lesson_from_system.dict()
-            lesson_dict["_id"] = lesson_id
-
-            # Если у урока нет habit_tracker, создаем его
-            if "habit_tracker" not in lesson_dict or not lesson_dict["habit_tracker"]:
-                lesson_dict["habit_tracker"] = {
-                    "planet_habits": {
-                        "sun": [], "moon": [], "jupiter": [], "rahu": [],
-                        "mercury": [], "venus": [], "ketu": [], "saturn": [], "mars": []
-                    }
-                }
-            else:
-                # Если habit_tracker существует, убеждаемся что все планеты инициализированы
-                if "planet_habits" not in lesson_dict["habit_tracker"]:
-                    lesson_dict["habit_tracker"]["planet_habits"] = {}
-
-                planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
-                for planet in planets:
-                    if planet not in lesson_dict["habit_tracker"]["planet_habits"]:
-                        lesson_dict["habit_tracker"]["planet_habits"][planet] = []
-
-            await db.lessons.insert_one(lesson_dict)
-
-        new_habit = {
-            "habit": habit,
-            "description": description
-        }
-
-        # Обновить habit_tracker урока, добавив привычку в массив для планеты
-        await db.lessons.update_one(
-            {"id": lesson_id},
-            {"$push": {f"habit_tracker.planet_habits.{planet}": new_habit}}
-        )
-
-        return {"message": f"Habit added to {planet} successfully"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error adding habit: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding habit: {str(e)}")
-
-@app.post("/api/admin/update-habit-content")
-async def update_habit_content(
-    lesson_id: str = Form(...),
-    planet: str = Form(...),
-    habit_index: str = Form(...),
-    habit: str = Form(...),
-    description: str = Form(""),
-    current_user: dict = Depends(get_current_user)
-):
-    """Обновить привычку в уроке (только для администраторов)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
-        logger.info(f"Updating habit - lesson_id: {lesson_id}, planet: {planet}, habit_index: {habit_index}")
-
-        # Конвертируем habit_index в int
-        try:
-            index = int(habit_index)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid habit_index")
-
-        # Проверяем существование урока в MongoDB
-        lesson = await db.lessons.find_one({"id": lesson_id})
-
-        if not lesson:
-            logger.info(f"Lesson {lesson_id} not found in MongoDB, trying to get from lesson_system")
-            # Если урока нет в MongoDB, получаем его из lesson_system
-            lesson_from_system = lesson_system.get_lesson(lesson_id)
-            if not lesson_from_system:
-                raise HTTPException(status_code=404, detail=f"Lesson {lesson_id} not found in lesson_system")
-
-            # Создаем урок в MongoDB с базовой структурой
-            lesson_dict = lesson_from_system.dict()
-            lesson_dict["_id"] = lesson_id
-
-            # Если у урока нет habit_tracker, создаем его
-            if "habit_tracker" not in lesson_dict or not lesson_dict["habit_tracker"]:
-                lesson_dict["habit_tracker"] = {
-                    "planet_habits": {
-                        "sun": [], "moon": [], "jupiter": [], "rahu": [],
-                        "mercury": [], "venus": [], "ketu": [], "saturn": [], "mars": []
-                    }
-                }
-            else:
-                # Если habit_tracker существует, убеждаемся что все планеты инициализированы
-                if "planet_habits" not in lesson_dict["habit_tracker"]:
-                    lesson_dict["habit_tracker"]["planet_habits"] = {}
-
-                planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
-                for planet in planets:
-                    if planet not in lesson_dict["habit_tracker"]["planet_habits"]:
-                        lesson_dict["habit_tracker"]["planet_habits"][planet] = []
-
-            await db.lessons.insert_one(lesson_dict)
-            lesson = await db.lessons.find_one({"id": lesson_id})
-
-        if "habit_tracker" not in lesson:
-            raise HTTPException(status_code=404, detail="Habit tracker not found in lesson")
-
-        # Убеждаемся что все планеты инициализированы
-        if "planet_habits" not in lesson["habit_tracker"]:
-            lesson["habit_tracker"]["planet_habits"] = {}
-            await db.lessons.update_one(
-                {"id": lesson_id},
-                {"$set": {"habit_tracker.planet_habits": {}}}
-            )
-
-        planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
-        for p in planets:
-            if p not in lesson["habit_tracker"]["planet_habits"]:
-                await db.lessons.update_one(
-                    {"id": lesson_id},
-                    {"$set": {f"habit_tracker.planet_habits.{p}": []}}
-                )
-                lesson["habit_tracker"]["planet_habits"][p] = []
-
-        # Получаем привычки планеты
-        planet_habits = lesson.get("habit_tracker", {}).get("planet_habits", {}).get(planet, [])
-
-        if index < 0 or index >= len(planet_habits):
-            raise HTTPException(status_code=400, detail=f"Invalid habit index: {index}, planet has {len(planet_habits)} habits")
-
-        # Обновить конкретную привычку в массиве планеты
-        update_fields = {
-            f"habit_tracker.planet_habits.{planet}.{index}.habit": habit,
-            f"habit_tracker.planet_habits.{planet}.{index}.description": description
-        }
-
-        await db.lessons.update_one(
-            {"id": lesson_id},
-            {"$set": update_fields}
-        )
-
-        return {"message": f"Habit {index} for {planet} updated successfully"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating habit: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating habit: {str(e)}")
-
-@app.post("/api/admin/delete-habit")
-async def delete_habit(
-    lesson_id: str = Form(...),
-    planet: str = Form(...),
-    habit_index: str = Form(...),
-    current_user: dict = Depends(get_current_user)
-):
-    """Удалить привычку из урока (только для администраторов)"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
-        # Конвертируем habit_index в int
-        try:
-            index = int(habit_index)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid habit_index")
-
-        # Сначала получим текущие привычки планеты
-        lesson = await db.lessons.find_one({"id": lesson_id})
-        if not lesson:
-            # Пытаемся загрузить из lesson_system
-            lesson_from_system = lesson_system.get_lesson(lesson_id)
-            if not lesson_from_system:
-                raise HTTPException(status_code=404, detail="Lesson not found")
-
-            # Создаем урок в MongoDB
-            lesson_dict = lesson_from_system.dict()
-            lesson_dict["_id"] = lesson_id
-
-            if "habit_tracker" not in lesson_dict or not lesson_dict["habit_tracker"]:
-                lesson_dict["habit_tracker"] = {
-                    "planet_habits": {
-                        "sun": [], "moon": [], "jupiter": [], "rahu": [],
-                        "mercury": [], "venus": [], "ketu": [], "saturn": [], "mars": []
-                    }
-                }
-            else:
-                if "planet_habits" not in lesson_dict["habit_tracker"]:
-                    lesson_dict["habit_tracker"]["planet_habits"] = {}
-
-                planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
-                for p in planets:
-                    if p not in lesson_dict["habit_tracker"]["planet_habits"]:
-                        lesson_dict["habit_tracker"]["planet_habits"][p] = []
-
-            await db.lessons.insert_one(lesson_dict)
-            lesson = await db.lessons.find_one({"id": lesson_id})
-
-        if "habit_tracker" not in lesson:
-            raise HTTPException(status_code=404, detail="Habit tracker not found in lesson")
-
-        # Убеждаемся что все планеты инициализированы
-        if "planet_habits" not in lesson["habit_tracker"]:
-            lesson["habit_tracker"]["planet_habits"] = {}
-            await db.lessons.update_one(
-                {"id": lesson_id},
-                {"$set": {"habit_tracker.planet_habits": {}}}
-            )
-
-        planets = ["sun", "moon", "jupiter", "rahu", "mercury", "venus", "ketu", "saturn", "mars"]
-        for p in planets:
-            if p not in lesson["habit_tracker"]["planet_habits"]:
-                await db.lessons.update_one(
-                    {"id": lesson_id},
-                    {"$set": {f"habit_tracker.planet_habits.{p}": []}}
-                )
-                lesson["habit_tracker"]["planet_habits"][p] = []
-
-        planet_habits = lesson.get("habit_tracker", {}).get("planet_habits", {}).get(planet, [])
-
-        if index < 0 or index >= len(planet_habits):
-            raise HTTPException(status_code=400, detail=f"Invalid habit index: {index}")
-
-        # Удалить привычку из массива
-        planet_habits.pop(index)
-
-        # Обновить весь массив привычек планеты
-        await db.lessons.update_one(
-            {"id": lesson_id},
-            {"$set": {f"habit_tracker.planet_habits.{planet}": planet_habits}}
-        )
-
-        return {"message": f"Habit {index} deleted from {planet} successfully"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting habit: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error deleting habit: {str(e)}")
 
 # ==================== ADMIN: GET LESSONS ====================
 
 @app.get("/api/admin/lessons")
 async def get_all_lessons_admin(current_user: dict = Depends(get_current_user)):
-    """Получить список всех уроков для админа"""
+    """Получить список всех уроков для админа из единой коллекции"""
     try:
         admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
-        # Получить все уроки из системы (in-memory)
-        system_lessons = lesson_system.get_all_lessons()
+        
+        # Получить все уроки из единой коллекции MongoDB
+        all_lessons = await db.lessons.find({}).sort("order", 1).to_list(1000)
 
         lessons_list = []
-        for lesson in system_lessons:
+        for lesson in all_lessons:
             lessons_list.append({
-                "id": lesson.id,
-                "title": lesson.title,
-                "module": lesson.module,
-                "points_required": lesson.points_required
+                "id": lesson["id"],
+                "title": lesson.get("title", "Без названия"),
+                "module": lesson.get("module", "numerology"),
+                "points_required": lesson.get("points_required", 0),
+                "is_active": lesson.get("is_active", True)
             })
 
-        # Добавить кастомные уроки из MongoDB (из обеих коллекций)
-        custom_lessons_from_lessons = await db.lessons.find({}).to_list(1000)
-        custom_lessons_from_custom = await db.custom_lessons.find({}).to_list(1000)
-
-        all_custom_lessons = custom_lessons_from_lessons + custom_lessons_from_custom
-
-        for lesson in all_custom_lessons:
-            # Проверяем что этого урока нет в system_lessons
-            if not any(sl["id"] == lesson["id"] for sl in lessons_list):
-                lessons_list.append({
-                    "id": lesson["id"],
-                    "title": lesson.get("title", "Без названия"),
-                    "module": lesson.get("module", "numerology"),
-                    "points_required": lesson.get("points_required", 0)
-                })
-
-        logger.info(f"Returning {len(lessons_list)} lessons ({len(system_lessons)} from system + {len(all_custom_lessons)} custom from both collections)")
+        logger.info(f"Returning {len(lessons_list)} lessons from unified collection")
         return {"lessons": lessons_list}
     except Exception as e:
         logger.error(f"Error getting all lessons: {str(e)}")
@@ -7677,169 +4153,26 @@ async def get_lesson_admin(lesson_id: str, current_user: dict = Depends(get_curr
     """Получить урок со всеми кастомными изменениями для редактирования"""
     try:
         admin_user = await check_admin_rights(current_user, require_super_admin=False)
+        
+        # Получить урок из единой коллекции
+        lesson = await db.lessons.find_one({"id": lesson_id})
 
-        # Сначала проверяем custom_lessons (новые уроки)
-        custom_lesson = await db.custom_lessons.find_one({"id": lesson_id})
-
-        if custom_lesson:
-            # Это кастомный урок из MongoDB
-            lesson_dict = dict(custom_lesson)
-            lesson_dict.pop('_id', None)
-            
-            # Убеждаемся, что все поля медиафайлов присутствуют (даже если None)
-            lesson_dict.setdefault('video_file_id', None)
-            lesson_dict.setdefault('video_filename', None)
-            lesson_dict.setdefault('pdf_file_id', None)
-            lesson_dict.setdefault('pdf_filename', None)
-            lesson_dict.setdefault('word_file_id', None)
-            lesson_dict.setdefault('word_filename', None)
-            
-            logger.info(f"Loaded custom lesson {lesson_id} from MongoDB")
-            logger.info(f"PDF file_id: {lesson_dict.get('pdf_file_id')}, PDF filename: {lesson_dict.get('pdf_filename')}")
-            return {"lesson": lesson_dict}
-
-        # Если не нашли в custom_lessons, ищем в lesson_system
-        lesson = lesson_system.get_lesson(lesson_id)
         if not lesson:
             raise HTTPException(status_code=404, detail="Lesson not found")
 
-        # Преобразуем структуру для фронтенда
-        lesson_dict = lesson.dict()
-        logger.info(f"Loaded system lesson {lesson_id}")
+        # Преобразуем в словарь и удаляем MongoDB ObjectId
+        lesson_dict = dict(lesson)
+        lesson_dict.pop('_id', None)
 
-        # Подготовим content
-        if "content" not in lesson_dict:
-            lesson_dict["content"] = {}
+        logger.info(f"Loaded lesson {lesson_id} from unified collection")
+        return {"lesson": lesson_dict}
 
-        # Загружаем кастомные изменения в контенте
-        custom_content = await db.lesson_content.find({
-            "lesson_id": lesson_id,
-            "type": "content_update"
-        }).to_list(100)
-
-        if custom_content:
-            for item in custom_content:
-                section = item.get("section")
-                field = item.get("field")
-                value = item.get("value")
-
-                if section and field and value is not None:
-                    if section not in lesson_dict["content"]:
-                        lesson_dict["content"][section] = {}
-                    lesson_dict["content"][section][field] = value
-
-        # Загружаем кастомные упражнения из БД (если есть)
-        custom_exercises = await db.lesson_exercises.find({
-            "lesson_id": lesson_id,
-            "content_type": "exercise_update"
-        }).to_list(100)
-
-        if custom_exercises:
-            custom_exercises_dict = {ex["exercise_id"]: ex for ex in custom_exercises}
-
-            if "exercises" in lesson_dict and lesson_dict["exercises"]:
-                updated_exercises = []
-                for exercise in lesson_dict["exercises"]:
-                    if exercise.get("id") in custom_exercises_dict:
-                        custom = custom_exercises_dict[exercise["id"]]
-                        updated_exercises.append({
-                            "id": custom["exercise_id"],
-                            "title": custom["title"],
-                            "type": custom["type"],
-                            "content": custom["content"],
-                            "instructions": custom["instructions"],
-                            "expected_outcome": custom["expected_outcome"]
-                        })
-                    else:
-                        updated_exercises.append(exercise)
-                lesson_dict["exercises"] = updated_exercises
-
-        # Загружаем кастомные вопросы теста из БД (если есть)
-        custom_quiz_questions = await db.lesson_quiz_questions.find({
-            "lesson_id": lesson_id,
-            "content_type": "quiz_question_update"
-        }).to_list(100)
-
-        if custom_quiz_questions:
-            custom_questions_dict = {q["question_id"]: q for q in custom_quiz_questions}
-
-            if "quiz" in lesson_dict and lesson_dict["quiz"] and "questions" in lesson_dict["quiz"]:
-                updated_questions = []
-                for question in lesson_dict["quiz"]["questions"]:
-                    if question.get("id") in custom_questions_dict:
-                        custom = custom_questions_dict[question["id"]]
-                        updated_questions.append({
-                            "id": custom["question_id"],
-                            "question": custom["question"],
-                            "options": custom["options"],
-                            "correct_answer": custom["correct_answer"],
-                            "explanation": custom["explanation"]
-                        })
-                    else:
-                        updated_questions.append(question)
-                lesson_dict["quiz"]["questions"] = updated_questions
-
-        # Загружаем кастомные дни челленджа из БД (если есть)
-        custom_challenge_days = await db.lesson_challenge_days.find({
-            "lesson_id": lesson_id,
-            "content_type": "challenge_day_update"
-        }).to_list(100)
-
-        # Применяем кастомные дни к челленджу
-        if custom_challenge_days and "challenges" in lesson_dict and lesson_dict["challenges"]:
-            custom_days_dict = {day["day"]: day for day in custom_challenge_days}
-
-            # Получаем первый челлендж
-            challenge = lesson_dict["challenges"][0]
-            if "daily_tasks" in challenge:
-                updated_daily_tasks = []
-
-                # Обновляем существующие дни или добавляем новые
-                existing_days = {task.get("day"): task for task in challenge["daily_tasks"]}
-                all_days = set(existing_days.keys()) | set(custom_days_dict.keys())
-
-                for day_num in sorted(all_days):
-                    if day_num in custom_days_dict:
-                        # Используем кастомный день
-                        custom = custom_days_dict[day_num]
-                        updated_daily_tasks.append({
-                            "day": custom["day"],
-                            "title": custom["title"],
-                            "tasks": custom["tasks"]
-                        })
-                    elif day_num in existing_days:
-                        # Используем оригинальный день
-                        updated_daily_tasks.append(existing_days[day_num])
-
-                challenge["daily_tasks"] = updated_daily_tasks
-
-        # Загружаем кастомный habit_tracker из MongoDB (если есть)
-        lesson_in_db = await db.lessons.find_one({"id": lesson_id})
-        if lesson_in_db and "habit_tracker" in lesson_in_db:
-            # Если урок существует в MongoDB и имеет habit_tracker, используем его
-            lesson_dict["habit_tracker"] = lesson_in_db["habit_tracker"]
-
-        # Добавляем exercises в content
-        if "exercises" in lesson_dict and lesson_dict["exercises"]:
-            lesson_dict["content"]["exercises"] = lesson_dict["exercises"]
-
-        # Добавляем quiz в content
-        if "quiz" in lesson_dict and lesson_dict["quiz"]:
-            lesson_dict["content"]["quiz"] = lesson_dict["quiz"]
-
-        # Добавляем первый challenge как challenge (не challenges[0])
-        if "challenges" in lesson_dict and lesson_dict["challenges"]:
-            lesson_dict["content"]["challenge"] = lesson_dict["challenges"][0]
-
-        return {
-            "lesson": lesson_dict,
-            "message": "Урок успешно загружен"
-        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting lesson for admin: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting lesson for admin: {str(e)}")
 
-@app.post("/api/admin/lessons/create")
 async def create_lesson(
     lesson_data: dict,
     current_user: dict = Depends(get_current_user)
@@ -7847,20 +4180,15 @@ async def create_lesson(
     """Создать новый урок"""
     try:
         admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
+        
         # Проверяем обязательные поля
         if not lesson_data.get("id") or not lesson_data.get("title"):
             raise HTTPException(status_code=400, detail="Missing required fields: id and title")
 
         # Проверяем, не существует ли урок с таким ID
-        existing_lesson = await db.custom_lessons.find_one({"id": lesson_data["id"]})
+        existing_lesson = await db.lessons.find_one({"id": lesson_data["id"]})
         if existing_lesson:
             raise HTTPException(status_code=400, detail=f"Lesson with id {lesson_data['id']} already exists")
-
-        # Также проверяем в системных уроках
-        system_lesson = lesson_system.get_lesson(lesson_data["id"])
-        if system_lesson:
-            raise HTTPException(status_code=400, detail=f"Lesson with id {lesson_data['id']} already exists in system")
 
         # Создаем новый урок
         new_lesson = {
@@ -7874,6 +4202,8 @@ async def create_lesson(
             "exercises": lesson_data.get("exercises", []),
             "quiz": lesson_data.get("quiz"),
             "challenges": lesson_data.get("challenges", []),
+            "additional_pdfs": lesson_data.get("additional_pdfs", []),
+            "additional_resources": lesson_data.get("additional_resources", []),
             "video_file_id": lesson_data.get("video_file_id"),
             "video_filename": lesson_data.get("video_filename"),
             "pdf_file_id": lesson_data.get("pdf_file_id"),
@@ -7886,9 +4216,17 @@ async def create_lesson(
             "created_by": admin_user["id"]
         }
 
-        # Сохраняем в MongoDB
-        result = await db.custom_lessons.insert_one(new_lesson)
-        logger.info(f"Created new lesson {lesson_data['id']} by admin {admin_user['id']}")
+        # Сохраняем в единой коллекции MongoDB
+        print(f"DEBUG: Saving lesson data to unified collection: additional_resources={len(new_lesson.get('additional_resources', []))}, additional_pdfs={len(new_lesson.get('additional_pdfs', []))}")
+        result = await db.lessons.insert_one(new_lesson)
+        print(f"DEBUG: Created new lesson {lesson_data['id']} in unified collection")
+        print(f"DEBUG: Saved lesson keys: {list(new_lesson.keys())}")
+
+        # Проверим, что сохранилось
+        saved_lesson = await db.lessons.find_one({"id": lesson_data["id"]})
+        if saved_lesson:
+            print(f"DEBUG: Verified saved lesson has additional_resources: {len(saved_lesson.get('additional_resources', []))}")
+            print(f"DEBUG: Verified saved lesson has additional_pdfs: {len(saved_lesson.get('additional_pdfs', []))}")
 
         return {
             "message": "Lesson created successfully",
@@ -7907,84 +4245,41 @@ async def update_lesson(
     lesson_data: dict,
     current_user: dict = Depends(get_current_user)
 ):
-    """Обновить существующий урок"""
+    """Обновить существующий урок в единой коллекции"""
     try:
         admin_user = await check_admin_rights(current_user, require_super_admin=False)
+        
+        # Проверяем, существует ли урок в единой коллекции
+        existing_lesson = await db.lessons.find_one({"id": lesson_id})
 
-        # Проверяем, существует ли урок в custom_lessons
-        existing_lesson = await db.custom_lessons.find_one({"id": lesson_id})
+        if not existing_lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
 
-        if existing_lesson:
-            # Обновляем существующий кастомный урок
-            # Явно обновляем все поля, включая медиафайлы, даже если они None
-            update_data = {
-                "title": lesson_data.get("title", existing_lesson.get("title")),
-                "module": lesson_data.get("module", existing_lesson.get("module")),
-                "description": lesson_data.get("description", existing_lesson.get("description")),
-                "points_required": lesson_data.get("points_required", existing_lesson.get("points_required")),
-                "is_active": lesson_data.get("is_active", existing_lesson.get("is_active")),
-                "content": lesson_data.get("content", existing_lesson.get("content")),
-                "updated_at": datetime.utcnow().isoformat(),
-                "updated_by": admin_user["id"]
-            }
+        # Подготавливаем данные для обновления
+        update_data = {
+            "updated_at": datetime.utcnow().isoformat(),
+            "updated_by": admin_user["id"]
+        }
 
-            # Добавляем exercises, quiz и challenges если они есть в lesson_data
-            if "exercises" in lesson_data:
-                update_data["exercises"] = lesson_data.get("exercises")
-            if "quiz" in lesson_data:
-                update_data["quiz"] = lesson_data.get("quiz")
-            if "challenges" in lesson_data:
-                update_data["challenges"] = lesson_data.get("challenges")
-            
-            # Явно обновляем медиафайлы (даже если они None - это позволит очистить поля)
-            if "video_file_id" in lesson_data:
-                update_data["video_file_id"] = lesson_data.get("video_file_id")
-            if "video_filename" in lesson_data:
-                update_data["video_filename"] = lesson_data.get("video_filename")
-            if "pdf_file_id" in lesson_data:
-                update_data["pdf_file_id"] = lesson_data.get("pdf_file_id")
-            if "pdf_filename" in lesson_data:
-                update_data["pdf_filename"] = lesson_data.get("pdf_filename")
-            if "word_file_id" in lesson_data:
-                update_data["word_file_id"] = lesson_data.get("word_file_id")
-            if "word_filename" in lesson_data:
-                update_data["word_filename"] = lesson_data.get("word_filename")
+        # Обновляем поля, которые переданы в lesson_data
+        updateable_fields = [
+            "title", "module", "description", "points_required", "is_active",
+            "content", "exercises", "quiz", "challenges", "level", "order",
+            "additional_pdfs", "additional_resources",
+            "video_file_id", "video_filename", "pdf_file_id", "pdf_filename",
+            "word_file_id", "word_filename", "word_url"
+        ]
 
-            result = await db.custom_lessons.update_one(
-                {"id": lesson_id},
-                {"$set": update_data}
-            )
-            logger.info(f"Updated custom lesson {lesson_id} by admin {admin_user['id']}")
-            logger.info(f"Update result - matched: {result.matched_count}, modified: {result.modified_count}")
-            logger.info(f"Update data: pdf_file_id={update_data.get('pdf_file_id')}, pdf_filename={update_data.get('pdf_filename')}")
+        for field in updateable_fields:
+            if field in lesson_data:
+                update_data[field] = lesson_data[field]
 
-        else:
-            # Это системный урок - создаем запись в custom_lessons
-            system_lesson = lesson_system.get_lesson(lesson_id)
-            if not system_lesson:
-                raise HTTPException(status_code=404, detail=f"Lesson {lesson_id} not found")
+        await db.lessons.update_one(
+            {"id": lesson_id},
+            {"$set": update_data}
+        )
 
-            new_custom_lesson = {
-                "id": lesson_id,
-                "title": lesson_data.get("title", system_lesson.title),
-                "module": lesson_data.get("module", system_lesson.module),
-                "description": lesson_data.get("description", ""),
-                "points_required": lesson_data.get("points_required", system_lesson.points_required),
-                "is_active": lesson_data.get("is_active", True),
-                "content": lesson_data.get("content", {}),
-                "video_file_id": lesson_data.get("video_file_id"),
-                "video_filename": lesson_data.get("video_filename"),
-                "pdf_file_id": lesson_data.get("pdf_file_id"),
-                "pdf_filename": lesson_data.get("pdf_filename"),
-                "word_file_id": lesson_data.get("word_file_id"),
-                "word_filename": lesson_data.get("word_filename"),
-                "created_at": datetime.utcnow().isoformat(),
-                "created_by": admin_user["id"]
-            }
-
-            await db.custom_lessons.insert_one(new_custom_lesson)
-            logger.info(f"Created custom override for system lesson {lesson_id} by admin {admin_user['id']}")
-
+        logger.info(f"Updated lesson {lesson_id} in unified collection")
         return {
             "message": "Lesson updated successfully",
             "lesson_id": lesson_id
@@ -8001,22 +4296,22 @@ async def delete_lesson(
     lesson_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    """Удалить урок (только кастомные уроки, не системные)"""
+    """Удалить урок из единой коллекции"""
     try:
         admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
+        
         # Нельзя удалить первый урок
         if lesson_id == "lesson_numerom_intro":
             raise HTTPException(status_code=403, detail="Cannot delete the first lesson")
 
-        # Проверяем, это системный урок или кастомный
-        system_lesson = lesson_system.get_lesson(lesson_id)
-        if system_lesson:
-            raise HTTPException(status_code=403, detail="Cannot delete system lessons. You can only delete custom lessons.")
+        # Проверяем, существует ли урок
+        existing_lesson = await db.lessons.find_one({"id": lesson_id})
+        if not existing_lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
 
-        # Удаляем из custom_lessons
-        result = await db.custom_lessons.delete_one({"id": lesson_id})
-
+        # Удаляем из единой коллекции
+        result = await db.lessons.delete_one({"id": lesson_id})
+        
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Lesson not found")
 
@@ -8028,7 +4323,7 @@ async def delete_lesson(
         await db.lessons.delete_many({"id": lesson_id})
 
         logger.info(f"Deleted lesson {lesson_id} by admin {admin_user['id']}")
-
+        
         return {
             "message": "Lesson deleted successfully",
             "lesson_id": lesson_id
@@ -8041,59 +4336,6 @@ async def delete_lesson(
         raise HTTPException(status_code=500, detail=f"Error deleting lesson: {str(e)}")
 
 @app.get("/api/admin/lesson-content/{lesson_id}")
-async def get_lesson_content_for_editing(
-    lesson_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Получить все кастомизированное содержимое урока для редактирования"""
-    try:
-        admin_user = await check_admin_rights(current_user, require_super_admin=False)
-        
-        # Получить базовое содержимое урока
-        lesson = lesson_system.get_lesson(lesson_id)
-        if not lesson:
-            raise HTTPException(status_code=404, detail="Lesson not found")
-        
-        # Получить кастомизированные упражнения
-        custom_exercises = await db.lesson_exercises.find({
-            "lesson_id": lesson_id,
-            "content_type": "exercise_update"
-        }).to_list(100)
-        
-        # Получить кастомизированные вопросы квиза
-        custom_quiz_questions = await db.lesson_quiz_questions.find({
-            "lesson_id": lesson_id,
-            "content_type": "quiz_question_update"
-        }).to_list(100)
-        
-        # Получить кастомизированные дни челленджа
-        custom_challenge_days = await db.lesson_challenge_days.find({
-            "lesson_id": lesson_id,
-            "content_type": "challenge_day_update"
-        }).to_list(100)
-        
-        # Получить кастомизированный контент
-        custom_content = await db.lesson_content.find({
-            "lesson_id": lesson_id,
-            "type": "content_update"
-        }).to_list(100)
-        
-        # Очистить ObjectId
-        for item in custom_exercises + custom_quiz_questions + custom_challenge_days + custom_content:
-            item["_id"] = str(item["_id"])
-        
-        return {
-            "lesson": lesson.dict() if lesson else None,
-            "custom_exercises": custom_exercises,
-            "custom_quiz_questions": custom_quiz_questions, 
-            "custom_challenge_days": custom_challenge_days,
-            "custom_content": custom_content
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting lesson content for editing: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting lesson content for editing: {str(e)}")
-
 # ==================== THEORY SECTIONS MANAGEMENT ====================
 
 @app.get("/api/admin/theory-sections")
@@ -8427,7 +4669,7 @@ async def send_test_notification(
             )
             if success:
                 sent_count += 1
-
+        
         return {
             "success": True,
             "message": f"Отправлено {sent_count} уведомлений"
@@ -8493,9 +4735,11 @@ async def custom_cors_handler(request, call_next):
             "Vary": "Origin",
         }
         return Response(status_code=200, headers=headers)
-
+    
+    # Обрабатываем обычные запросы - добавляем CORS заголовки к ответу
     response = await call_next(request)
-
+    
+    # Добавляем CORS заголовки к ответу, если origin разрешен
     if origin and is_allowed_origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -8507,8 +4751,6654 @@ async def custom_cors_handler(request, call_next):
                 response.headers["Vary"] = f"{vary_header}, Origin"
         else:
             response.headers["Vary"] = "Origin"
-
+    elif not origin:
+        # Если нет origin (например, запрос из того же домена), разрешаем
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
     return response
+
+# ===== LEARNING SYSTEM V2 ENDPOINTS =====
+# Интеграция системы обучения V2 в основной проект
+
+# Простая аутентификация для тестирования системы обучения V2
+@app.post("/api/auth/login-v2")
+async def login_v2(request_data: dict):
+    """Простая аутентификация для системы обучения V2"""
+    email = request_data.get("email", "")
+    password = request_data.get("password", "")
+
+    # Для тестирования принимаем любые credentials
+    # В реальной системе здесь должна быть проверка с основной БД
+    if email and password:
+        # Создаем тестовый токен
+        test_token = create_access_token({"sub": email, "user_id": "test_user_v2", "is_admin": True})
+
+        return {
+            "access_token": test_token,
+            "token_type": "bearer",
+            "user": {
+                "id": "test_user_v2",
+                "email": email,
+                "name": "Test User V2",
+                "is_admin": True,
+                "is_super_admin": True
+            }
+        }
+
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+@app.get("/api/user/profile-v2")
+async def get_user_profile_v2(current_user: dict = Depends(get_current_user)):
+    """Получить профиль пользователя для системы обучения V2"""
+    try:
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        # Получаем реальные данные пользователя из базы данных
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Удаляем MongoDB _id перед возвратом
+        user_dict = dict(user)
+        user_dict.pop("_id", None)
+        
+        # Возвращаем все поля пользователя, включая личные данные
+        return {
+            "id": user_dict.get("id", ""),
+            "email": user_dict.get("email", ""),
+            "name": user_dict.get("name", user_dict.get("full_name", "Пользователь")),
+            "full_name": user_dict.get("full_name", ""),
+            "surname": user_dict.get("surname", ""),
+            "full_name_number": user_dict.get("full_name_number", None),
+            "birth_date": user_dict.get("birth_date", ""),
+            "phone_number": user_dict.get("phone_number", ""),
+            "city": user_dict.get("city", ""),
+            "car_number": user_dict.get("car_number", ""),
+            "street": user_dict.get("street", ""),
+            "house_number": user_dict.get("house_number", ""),
+            "apartment_number": user_dict.get("apartment_number", ""),
+            "postal_code": user_dict.get("postal_code", ""),
+            "is_admin": user_dict.get("is_admin", False),
+            "is_super_admin": user_dict.get("is_super_admin", False),
+            "credits_remaining": user_dict.get("credits_remaining", 0),
+            "level": user_dict.get("level", 1)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user profile V2: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting user profile: {str(e)}")
+
+
+@app.patch("/api/user/profile-v2")
+async def update_user_profile_v2(request_data: dict, current_user: dict = Depends(get_current_user)):
+    """Обновить профиль пользователя для системы обучения V2"""
+    try:
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        allowed_fields = [
+            "full_name",
+            "name",
+            "surname",
+            "birth_date",
+            "city",
+            "phone_number",
+            "car_number",
+            "street",
+            "house_number",
+            "apartment_number",
+            "postal_code"
+        ]
+
+        update_payload = {}
+        for field in allowed_fields:
+            if field in request_data:
+                value = request_data.get(field)
+                if isinstance(value, str):
+                    value = value.strip()
+                update_payload[field] = value
+
+        if not update_payload:
+            raise HTTPException(status_code=400, detail="No valid fields provided for update")
+
+        update_payload["updated_at"] = datetime.utcnow()
+
+        await db.users.update_one({"id": user_id}, {"$set": update_payload})
+        # Пересчитываем число имени ТОЛЬКО по name+surname (латиница)
+        if any(f in request_data for f in ["name", "surname"]):
+            fresh = await db.users.find_one({"id": user_id})
+            if fresh:
+                name_val = fresh.get("name", "")
+                surname_val = fresh.get("surname", "")
+                fn_number = calculate_full_name_number(name_val, surname_val)
+                await db.users.update_one({"id": user_id}, {"$set": {"full_name_number": fn_number}})
+
+        updated_user = await db.users.find_one({"id": user_id})
+        if not updated_user:
+            raise HTTPException(status_code=404, detail="User not found after update")
+
+        updated_user.pop("_id", None)
+        return updated_user
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user profile V2: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating user profile: {str(e)}")
+
+# Этот эндпоинт уже определен выше (строка 2790), удаляем дубликат
+
+@app.get("/api/learning-v2/lessons/{lesson_id}")
+async def get_lesson_v2_student(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить урок V2 для студента"""
+    try:
+        user_id = current_user['user_id']
+
+        lesson = await db.lessons_v2.find_one({"id": lesson_id, "is_active": True})
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+
+        lesson_dict = dict(lesson)
+        lesson_dict.pop('_id', None)
+        lesson_dict.pop('created_by', None)
+        lesson_dict.pop('updated_by', None)
+
+        return {
+            "lesson": lesson_dict,
+            "progress": {}  # Пока без прогресса
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting lesson V2 for student: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting lesson: {str(e)}")
+
+@app.get("/api/admin/lessons-v2")
+async def get_all_lessons_v2_admin(current_user: dict = Depends(get_current_user)):
+    """Получить все уроки V2 для админа"""
+    try:
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        logger.info("Access granted, querying lessons...")
+        lessons = await db.lessons_v2.find({}).sort("order", 1).to_list(1000)
+        logger.info(f"Found {len(lessons)} lessons")
+
+        lessons_list = []
+        for lesson in lessons:
+            lesson_dict = dict(lesson)
+            lesson_dict.pop('_id', None)
+            lessons_list.append(lesson_dict)
+
+        logger.info("Successfully processed lessons")
+        return {"lessons": lessons_list}
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting lessons V2: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting lessons: {str(e)}")
+
+@app.put("/api/admin/lessons-v2/{lesson_id}")
+async def update_lesson_v2(
+    lesson_id: str,
+    lesson_data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить урок V2 (полное обновление всех разделов)"""
+    try:
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Подготовим данные для обновления
+        update_data = {
+            "title": lesson_data.get("title"),
+            "description": lesson_data.get("description"),
+            "level": lesson_data.get("level", 1),
+            "order": lesson_data.get("order", 0),
+            "points_required": lesson_data.get("points_required", 0),
+            "is_active": lesson_data.get("is_active", True),
+            "analytics_enabled": lesson_data.get("analytics_enabled", True),
+            "updated_by": current_user.get('user_id', current_user.get('id', 'admin_system')),
+            "updated_at": datetime.utcnow()
+        }
+
+        # Если указан модуль, обновим его тоже
+        if "module" in lesson_data:
+            update_data["module"] = lesson_data["module"]
+
+        # Обновляем теорию если передана
+        if "theory" in lesson_data:
+            update_data["theory"] = lesson_data["theory"]
+
+        # Обновляем упражнения если переданы
+        if "exercises" in lesson_data:
+            update_data["exercises"] = lesson_data["exercises"]
+
+        # Обновляем челлендж если передан
+        if "challenge" in lesson_data:
+            update_data["challenge"] = lesson_data["challenge"]
+
+        # Обновляем тест если передан
+        if "quiz" in lesson_data:
+            update_data["quiz"] = lesson_data["quiz"]
+
+        # Обновляем файлы если переданы
+        if "files" in lesson_data:
+            update_data["files"] = lesson_data["files"]
+
+        # Обновляем урок в базе данных
+        result = await db.lessons_v2.update_one(
+            {"id": lesson_id},
+            {"$set": update_data}
+        )
+
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+
+        logger.info(f"Lesson {lesson_id} updated successfully with all sections")
+        return {"message": "Урок успешно обновлен", "lesson_id": lesson_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error updating lesson V2 {lesson_id}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error updating lesson: {str(e)}")
+
+@app.delete("/api/admin/lessons-v2/{lesson_id}")
+async def delete_lesson_v2(
+    lesson_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Удалить урок V2 с каскадным удалением всех связанных данных"""
+    try:
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Проверяем существование урока
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Урок не найден")
+
+        # Каскадное удаление связанных данных
+        # 1. Удаляем прогресс студентов по этому уроку (если есть коллекция)
+        if "lesson_progress" in await db.list_collection_names():
+            progress_result = await db.lesson_progress.delete_many({"lesson_id": lesson_id})
+            logger.info(f"Deleted {progress_result.deleted_count} progress records for lesson {lesson_id}")
+
+        # 2. Удаляем ответы студентов на упражнения (если есть коллекция)
+        if "exercise_responses" in await db.list_collection_names():
+            responses_result = await db.exercise_responses.delete_many({"lesson_id": lesson_id})
+            logger.info(f"Deleted {responses_result.deleted_count} exercise responses for lesson {lesson_id}")
+
+        # 3. Удаляем результаты тестов (если есть коллекция)
+        if "quiz_results" in await db.list_collection_names():
+            quiz_result = await db.quiz_results.delete_many({"lesson_id": lesson_id})
+            logger.info(f"Deleted {quiz_result.deleted_count} quiz results for lesson {lesson_id}")
+
+        # 4. Удаляем прогресс челленджей (если есть коллекция)
+        if "challenge_progress" in await db.list_collection_names():
+            challenge_result = await db.challenge_progress.delete_many({"lesson_id": lesson_id})
+            logger.info(f"Deleted {challenge_result.deleted_count} challenge progress records for lesson {lesson_id}")
+
+        # 5. Удаляем сам урок
+        delete_result = await db.lessons_v2.delete_one({"id": lesson_id})
+
+        if delete_result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Не удалось удалить урок")
+
+        logger.info(f"Lesson {lesson_id} and all related data deleted successfully by {current_user.get('user_id')}")
+        
+        return {
+            "message": "Урок и все связанные данные успешно удалены",
+            "lesson_id": lesson_id,
+            "deleted_by": current_user.get('user_id', current_user.get('id', 'admin'))
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error deleting lesson V2 {lesson_id}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Ошибка при удалении урока: {str(e)}")
+
+@app.post("/api/admin/lessons-v2/upload-from-file")
+async def upload_lesson_from_file_v2(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Загрузить урок V2 из текстового файла"""
+    try:
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+            content = await file.read()
+        text_content = content.decode('utf-8')
+
+        # Парсим урок из текста
+        lesson_obj = parse_lesson_from_text_v2(text_content)
+
+        # Сохраняем в базу данных
+        lesson_dict = lesson_obj.dict()
+        lesson_dict['created_by'] = user.get('id', 'admin_system')
+        lesson_dict['updated_by'] = user.get('id', 'admin_system')
+
+        result = await db.lessons_v2.insert_one(lesson_dict)
+        
+        return {
+            "message": "Урок V2 успешно загружен",
+            "lesson_id": lesson_obj.id,
+            "sections": {
+                "theory_blocks": len(lesson_obj.theory),
+                "exercises": len(lesson_obj.exercises),
+                "has_challenge": lesson_obj.challenge is not None,
+                "has_quiz": lesson_obj.quiz is not None,
+                "analytics_enabled": lesson_obj.analytics_enabled
+            }
+        }
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Error uploading lesson V2: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error uploading lesson: {str(e)}")
+
+@app.post("/api/admin/lessons-v2/{lesson_id}/upload-file")
+async def upload_lesson_file_v2(
+    lesson_id: str,
+    file: UploadFile = File(...),
+    section: str = Form(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Загрузить файл к уроку V2 (дублированный эндпоинт - удалить)"""
+    try:
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Проверяем существование урока
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Урок не найден")
+
+        # Создаем директорию для загрузок если её нет
+        upload_dir = Path("uploads/learning_v2")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        # Обрабатываем имя файла с правильной кодировкой
+        original_name = file.filename
+        if isinstance(original_name, bytes):
+            original_name = original_name.decode("utf-8", errors="ignore")
+        if not original_name:
+            original_name = "uploaded_file"
+
+        # Генерируем уникальное имя файла
+        file_extension = Path(original_name).suffix
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = upload_dir / unique_filename
+        
+        # Сохраняем файл
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Определяем тип файла
+        content_type = file.content_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+        is_media = content_type.startswith(('video/', 'audio/', 'image/'))
+        file_type = "media" if is_media else "document"
+
+        # Создаем запись о файле
+        file_record = {
+            "id": str(uuid.uuid4()),
+            "lesson_id": lesson_id,
+            "section": section,
+            "original_name": original_name,
+            "stored_name": unique_filename,
+            "file_path": str(file_path),
+            "file_type": file_type,
+            "mime_type": content_type,
+            "file_size": file_path.stat().st_size,
+            "extension": file_extension.lstrip('.'),
+            "uploaded_by": current_user.get('user_id', current_user.get('id', 'admin')),
+            "uploaded_at": datetime.utcnow()
+        }
+
+        # Сохраняем в базу данных
+        try:
+            result = await db.files.insert_one(file_record)
+            logger.info(f"File record saved successfully, inserted_id: {result.inserted_id}")
+        except Exception as db_error:
+            logger.error(f"Database error saving file: {db_error}")
+            raise HTTPException(status_code=500, detail=f"Database error: {str(db_error)}")
+
+        logger.info(f"File {file.filename} uploaded successfully, file_id: {file_record['id']}")
+        
+        return {
+            "message": "Файл успешно загружен",
+            "file_id": file_record["id"],
+            "file_info": {
+                "original_name": file.filename,
+                "file_type": file_type,
+                "section": section,
+                "file_size": file_path.stat().st_size
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error uploading file to lesson V2: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
+
+# ==================== ФУНКЦИИ ДЛЯ РАСЧЕТА ЭФФЕКТИВНОСТИ АКТИВНОСТИ ====================
+
+def get_user_ruling_planet(birth_date: str) -> str:
+    """
+    Определяет правящую планету пользователя по дате рождения
+    Правящая планета определяется по дню недели рождения
+    """
+    try:
+        day, month, year = parse_birth_date(birth_date)
+        birth_date_obj = datetime(year, month, day)
+        weekday = birth_date_obj.weekday()  # 0=Monday, 6=Sunday
+        
+        # Планеты в порядке по дням недели
+        planets_order = ['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya']
+        return planets_order[weekday]
+    except Exception as e:
+        logger.error(f"Error calculating ruling planet: {e}")
+        return 'Surya'  # По умолчанию Солнце
+
+
+def detect_lesson_planet(lesson_title: str, lesson_content: str = "") -> str:
+    """
+    Определяет планетарную связь урока по названию и содержимому
+    Ищет ключевые слова, связанные с планетами
+    """
+    text = (lesson_title + " " + lesson_content).lower()
+    
+    # Ключевые слова для каждой планеты
+    planet_keywords = {
+        'Surya': ['сурья', 'surya', 'солнце', 'sun', 'солнечн', 'лидер', 'творчеств', 'эго'],
+        'Chandra': ['чандра', 'chandra', 'луна', 'moon', 'лунн', 'эмоц', 'интуиц', 'чувств'],
+        'Mangal': ['мангал', 'mangal', 'марс', 'mars', 'марсиан', 'энерг', 'активн', 'действ'],
+        'Budh': ['будх', 'budh', 'меркурий', 'mercury', 'обучен', 'коммуникац', 'интеллект'],
+        'Guru': ['гуру', 'guru', 'юпитер', 'jupiter', 'мудрост', 'расширен', 'философ'],
+        'Shukra': ['шукра', 'shukra', 'венера', 'venus', 'красот', 'любов', 'гармони'],
+        'Shani': ['шани', 'shani', 'сатурн', 'saturn', 'дисциплин', 'ответственн', 'ограничен']
+    }
+    
+    # Подсчитываем совпадения для каждой планеты
+    planet_scores = {}
+    for planet, keywords in planet_keywords.items():
+        score = sum(1 for keyword in keywords if keyword in text)
+        if score > 0:
+            planet_scores[planet] = score
+    
+    # Возвращаем планету с наибольшим количеством совпадений
+    if planet_scores:
+        return max(planet_scores.items(), key=lambda x: x[1])[0]
+    
+    return None  # Не удалось определить планету
+
+
+def get_planetary_hour_for_datetime(activity_datetime: datetime, city: str = "Москва") -> Dict[str, Any]:
+    """
+    Определяет планетарный час для конкретного времени
+    Возвращает информацию о текущем планетарном часе
+    """
+    try:
+        # Получаем время восхода и заката для даты активности
+        activity_date = activity_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+        sunrise, sunset = get_sunrise_sunset(city, activity_date)
+        
+        # Определяем, день это или ночь
+        if sunrise <= activity_datetime < sunset:
+            # Дневной час
+            weekday = activity_datetime.weekday()
+            planetary_hours = calculate_planetary_hours(sunrise, sunset, weekday)
+            
+            # Находим текущий планетарный час
+            for hour_data in planetary_hours:
+                hour_start = datetime.fromisoformat(hour_data["start_time"].replace('Z', '+00:00'))
+                hour_end = datetime.fromisoformat(hour_data["end_time"].replace('Z', '+00:00'))
+                
+                # Убираем timezone для сравнения
+                if isinstance(hour_start, datetime) and hour_start.tzinfo:
+                    hour_start = hour_start.replace(tzinfo=None)
+                if isinstance(hour_end, datetime) and hour_end.tzinfo:
+                    hour_end = hour_end.replace(tzinfo=None)
+                if isinstance(activity_datetime, datetime) and activity_datetime.tzinfo:
+                    activity_datetime_naive = activity_datetime.replace(tzinfo=None)
+                else:
+                    activity_datetime_naive = activity_datetime
+                
+                if hour_start <= activity_datetime_naive < hour_end:
+                    return {
+                        "planet": hour_data["planet"],
+                        "hour_number": hour_data["hour"],
+                        "period": "day",
+                        "is_favorable": hour_data.get("is_favorable", False)
+                    }
+        else:
+            # Ночной час
+            weekday = activity_datetime.weekday()
+            # Получаем следующий восход для расчета ночных часов
+            next_sunrise = sunrise + timedelta(days=1)
+            planetary_hours = calculate_night_planetary_hours(sunset, next_sunrise, weekday)
+            
+            # Находим текущий планетарный час
+            for hour_data in planetary_hours:
+                hour_start = datetime.fromisoformat(hour_data["start_time"].replace('Z', '+00:00'))
+                hour_end = datetime.fromisoformat(hour_data["end_time"].replace('Z', '+00:00'))
+                
+                # Убираем timezone для сравнения
+                if isinstance(hour_start, datetime) and hour_start.tzinfo:
+                    hour_start = hour_start.replace(tzinfo=None)
+                if isinstance(hour_end, datetime) and hour_end.tzinfo:
+                    hour_end = hour_end.replace(tzinfo=None)
+                if isinstance(activity_datetime, datetime) and activity_datetime.tzinfo:
+                    activity_datetime_naive = activity_datetime.replace(tzinfo=None)
+                else:
+                    activity_datetime_naive = activity_datetime
+                
+                if hour_start <= activity_datetime_naive < hour_end:
+                    return {
+                        "planet": hour_data["planet"],
+                        "hour_number": hour_data["hour"],
+                        "period": "night",
+                        "is_favorable": hour_data.get("is_favorable", False)
+                    }
+    except Exception as e:
+        logger.error(f"Error calculating planetary hour: {e}")
+    
+    # Fallback: определяем планету по дню недели
+    weekday = activity_datetime.weekday()
+    planets_order = ['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya']
+    return {
+        "planet": planets_order[weekday],
+        "hour_number": 1,
+        "period": "day",
+        "is_favorable": False
+    }
+
+
+def calculate_activity_efficiency(
+    user_ruling_planet: str,
+    lesson_planet: str,
+    activity_datetime: datetime,
+    is_challenge_completed: bool = False,
+    challenge_completion_percentage: float = 0.0,
+    user_city: str = "Москва"
+) -> float:
+    """
+    Рассчитывает эффективность активности на основе планетарных соответствий
+    Улучшенная версия с учетом точных планетарных часов
+    
+    Параметры:
+    - user_ruling_planet: правящая планета пользователя
+    - lesson_planet: планета урока
+    - activity_datetime: дата и время активности
+    - is_challenge_completed: завершен ли челлендж полностью
+    - challenge_completion_percentage: процент выполнения челленджа
+    - user_city: город пользователя для расчета восхода/заката
+    
+    Возвращает эффективность от 0 до 100%
+    """
+    efficiency = 50.0  # Базовая эффективность
+    
+    # Получаем информацию о планетарном часе
+    planetary_hour_info = get_planetary_hour_for_datetime(activity_datetime, user_city)
+    current_hour_planet = planetary_hour_info.get("planet")
+    
+    # 1. Соответствие планет урока и пользователя
+    if lesson_planet and user_ruling_planet:
+        if lesson_planet == user_ruling_planet:
+            efficiency += 25.0  # Изучение урока своей планеты
+        else:
+            # Проверяем дружественность планет
+            planet_relationships = {
+                'Surya': {'friends': ['Chandra', 'Mangal', 'Guru'], 'enemies': ['Shukra', 'Shani']},
+                'Chandra': {'friends': ['Surya', 'Budh'], 'enemies': []},
+                'Mangal': {'friends': ['Surya', 'Chandra', 'Guru'], 'enemies': ['Budh']},
+                'Budh': {'friends': ['Surya', 'Shukra'], 'enemies': ['Chandra']},
+                'Guru': {'friends': ['Surya', 'Chandra', 'Mangal'], 'enemies': ['Budh', 'Shukra']},
+                'Shukra': {'friends': ['Budh', 'Shani'], 'enemies': ['Surya', 'Chandra']},
+                'Shani': {'friends': ['Budh', 'Shukra'], 'enemies': ['Surya', 'Chandra', 'Mangal']}
+            }
+            
+            user_relations = planet_relationships.get(user_ruling_planet, {})
+            if lesson_planet in user_relations.get('friends', []):
+                efficiency += 12.0  # Дружественная планета
+            elif lesson_planet in user_relations.get('enemies', []):
+                efficiency -= 8.0  # Враждебная планета
+    
+    # 2. Благоприятный день недели
+    weekday = activity_datetime.weekday()  # 0=Monday, 6=Sunday
+    planets_order = ['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya']
+    day_planet = planets_order[weekday]
+    
+    # Идеальное совпадение: день планеты урока + час планеты урока = 100%
+    if lesson_planet and day_planet == lesson_planet and current_hour_planet == lesson_planet:
+        efficiency = 100.0  # Максимальная эффективность!
+        return round(efficiency, 1)
+    
+    # День планеты урока
+    if lesson_planet and day_planet == lesson_planet:
+        efficiency += 20.0  # Изучение урока в день его планеты (например, Сурья в воскресенье)
+    
+    # День правящей планеты пользователя
+    if day_planet == user_ruling_planet:
+        efficiency += 10.0  # День правящей планеты пользователя
+    
+    # 3. Планетарный час - КРИТИЧЕСКИ ВАЖНО!
+    if lesson_planet and current_hour_planet:
+        # Идеальное совпадение: час планеты урока
+        if current_hour_planet == lesson_planet:
+            efficiency += 30.0  # Очень большой бонус за совпадение часа!
+        
+        # Час правящей планеты пользователя
+        if current_hour_planet == user_ruling_planet:
+            efficiency += 15.0
+        
+        # Дружественность планетарного часа
+        if lesson_planet and user_ruling_planet:
+            planet_relationships = {
+                'Surya': {'friends': ['Chandra', 'Mangal', 'Guru'], 'enemies': ['Shukra', 'Shani']},
+                'Chandra': {'friends': ['Surya', 'Budh'], 'enemies': []},
+                'Mangal': {'friends': ['Surya', 'Chandra', 'Guru'], 'enemies': ['Budh']},
+                'Budh': {'friends': ['Surya', 'Shukra'], 'enemies': ['Chandra']},
+                'Guru': {'friends': ['Surya', 'Chandra', 'Mangal'], 'enemies': ['Budh', 'Shukra']},
+                'Shukra': {'friends': ['Budh', 'Shani'], 'enemies': ['Surya', 'Chandra']},
+                'Shani': {'friends': ['Budh', 'Shukra'], 'enemies': ['Surya', 'Chandra', 'Mangal']}
+            }
+            
+            # Проверяем дружественность часа к планете урока
+            hour_relations = planet_relationships.get(current_hour_planet, {})
+            if lesson_planet in hour_relations.get('friends', []):
+                efficiency += 10.0  # Час дружественен планете урока
+            elif lesson_planet in hour_relations.get('enemies', []):
+                efficiency -= 5.0  # Час враждебен планете урока
+            
+            # Проверяем дружественность часа к правящей планете пользователя
+            if current_hour_planet in hour_relations.get('friends', []):
+                efficiency += 5.0
+            elif current_hour_planet in hour_relations.get('enemies', []):
+                efficiency -= 3.0
+    
+    # 4. Выполнение челленджа
+    if is_challenge_completed:
+        efficiency = 100.0  # 100% эффективность при полном выполнении челленджа
+    elif challenge_completion_percentage > 0:
+        # Частичное выполнение челленджа добавляет бонус
+        challenge_bonus = challenge_completion_percentage * 0.3  # До 30% бонуса
+        efficiency = min(100.0, efficiency + challenge_bonus)
+    
+    # Ограничиваем эффективность от 0 до 100%
+    efficiency = max(0.0, min(100.0, efficiency))
+    
+    return round(efficiency, 1)
+
+
+@app.get("/api/student/dashboard-stats")
+async def get_student_dashboard_stats(current_user: dict = Depends(get_current_user)):
+    """Получить расширенную статистику дашборда студента (V2)"""
+    try:
+        logger.info(f"get_student_dashboard_stats called, current_user: {current_user}")
+        user_id = current_user.get('user_id', current_user.get('id'))
+        if not user_id:
+            logger.error(f"Invalid current_user object: {current_user}")
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        # Получаем данные пользователя для расчета эффективности
+        user = await db.users.find_one({"id": user_id})
+        user_birth_date = user.get('birth_date') if user else None
+        user_city = user.get('city', 'Москва') if user else 'Москва'
+        user_ruling_planet = None
+        if user_birth_date:
+            try:
+                user_ruling_planet = get_user_ruling_planet(user_birth_date)
+                logger.info(f"User ruling planet: {user_ruling_planet}")
+            except Exception as e:
+                logger.error(f"Error calculating user ruling planet: {e}")
+
+        collection_names = await db.list_collection_names()
+
+        # ----- Уроки и прогресс -----
+        lessons_cursor = db.lessons_v2.find({"is_active": True})
+        lessons = await lessons_cursor.to_list(length=None)
+        total_lessons = len(lessons)
+
+        lesson_progress_list = []
+        if "lesson_progress" in collection_names:
+            progress_cursor = db.lesson_progress.find({"user_id": user_id})
+            lesson_progress_list = await progress_cursor.to_list(length=None)
+
+        completed_lessons = len([p for p in lesson_progress_list if p.get("is_completed")])
+        in_progress_lessons = len([
+            p for p in lesson_progress_list
+            if not p.get("is_completed") and p.get("completion_percentage", 0) > 0
+        ])
+
+        # ----- Упражнения -----
+        total_exercises_completed = 0
+        recent_exercises = 0
+        exercise_points = 0
+        exercise_review_points = 0  # Баллы за проверенные упражнения
+        exercise_review_time = 0  # Время проверки упражнений администратором
+        
+        if "exercise_responses" in collection_names:
+            exercise_cursor = db.exercise_responses.find({"user_id": user_id})
+            exercise_responses = await exercise_cursor.to_list(length=None)
+            total_exercises_completed = len(exercise_responses)
+            
+            # Баллы за проверенные упражнения (назначенные администратором)
+            exercise_review_points = sum(resp.get("points_earned", 0) for resp in exercise_responses if resp.get("reviewed", False))
+            exercise_review_time = sum(resp.get("review_time_minutes", 0) for resp in exercise_responses if resp.get("review_time_minutes"))
+            
+            # Если нет баллов за проверку, используем базовые баллы
+            if exercise_review_points == 0:
+                exercise_points = total_exercises_completed * 10  # 10 баллов за упражнение
+            else:
+                exercise_points = exercise_review_points
+
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            recent_exercises = sum(
+                1 for resp in exercise_responses
+                if resp.get("submitted_at") and resp["submitted_at"] >= seven_days_ago
+            )
+        
+        # Также проверяем time_activity для баллов за упражнения
+        if "time_activity" in collection_names:
+            exercise_review_activity = await db.time_activity.find({
+                "user_id": user_id,
+                "activity_type": "exercise_review"
+            }).to_list(length=None)
+            
+            if exercise_review_activity:
+                exercise_review_points = max(exercise_review_points, sum(a.get("total_points", 0) for a in exercise_review_activity))
+                exercise_review_time = max(exercise_review_time, sum(a.get("review_time_minutes", 0) for a in exercise_review_activity))
+                exercise_points = exercise_review_points if exercise_review_points > 0 else exercise_points
+
+        # ----- Тесты (детальная аналитика) -----
+        total_quiz_attempts = 0
+        total_quiz_points = 0
+        recent_quizzes = 0
+        quiz_details = []
+        quiz_attempts_by_lesson = {}
+        max_quiz_score = 0
+        avg_quiz_score = 0
+        
+        if "quiz_attempts" in collection_names:
+            quiz_cursor = db.quiz_attempts.find({"user_id": user_id})
+            quiz_attempts = await quiz_cursor.to_list(length=None)
+            total_quiz_attempts = len(quiz_attempts)
+            
+            # Получаем информацию об уроках для тестов
+            lessons_dict = {l["id"]: l for l in lessons}
+
+            for attempt in quiz_attempts:
+                points = attempt.get("points_earned") or 0
+                score = attempt.get("score", 0)
+                lesson_id = attempt.get("lesson_id")
+                passed = attempt.get("passed", False)
+                
+                # Если баллы не указаны, но тест пройден - начисляем 10 баллов
+                if points == 0 and passed:
+                    points = 10
+                
+                total_quiz_points += points
+                max_quiz_score = max(max_quiz_score, score)
+                
+                # Группируем попытки по урокам
+                if lesson_id not in quiz_attempts_by_lesson:
+                    quiz_attempts_by_lesson[lesson_id] = []
+                
+                quiz_attempts_by_lesson[lesson_id].append({
+                    "attempt_id": attempt.get("id"),
+                    "score": score,
+                    "points_earned": points,
+                    "passed": attempt.get("passed", False),
+                    "attempted_at": attempt.get("attempted_at").isoformat() if attempt.get("attempted_at") else None,
+                    "time_spent_minutes": attempt.get("time_spent_minutes", 0)
+                })
+
+                attempted_at = attempt.get("attempted_at")
+                if attempted_at and attempted_at >= datetime.utcnow() - timedelta(days=7):
+                    recent_quizzes += 1
+            
+            # Вычисляем средний балл
+            if total_quiz_attempts > 0:
+                avg_quiz_score = sum(attempt.get("score", 0) for attempt in quiz_attempts) / total_quiz_attempts
+            
+            # Формируем детали по каждому уроку с тестами
+            for lesson_id, attempts in quiz_attempts_by_lesson.items():
+                lesson = lessons_dict.get(lesson_id)
+                if not lesson:
+                    continue
+                
+                quiz = lesson.get("quiz")
+                max_possible_score = 100  # По умолчанию
+                if quiz and quiz.get("questions"):
+                    # Максимальный балл = сумма всех баллов за вопросы
+                    max_possible_score = sum(q.get("points", 10) for q in quiz.get("questions", []))
+                
+                best_attempt = max(attempts, key=lambda x: x.get("score", 0))
+                passed_count = sum(1 for a in attempts if a.get("passed", False))
+                
+                quiz_details.append({
+                    "lesson_id": lesson_id,
+                    "lesson_title": lesson.get("title", "Урок"),
+                    "total_attempts": len(attempts),
+                    "passed_attempts": passed_count,
+                    "pass_percentage": round((passed_count / len(attempts)) * 100, 1) if attempts else 0,
+                    "best_score": best_attempt.get("score", 0),
+                    "best_score_percentage": round((best_attempt.get("score", 0) / max_possible_score) * 100, 1) if max_possible_score > 0 else 0,
+                    "avg_score": round(sum(a.get("score", 0) for a in attempts) / len(attempts), 1) if attempts else 0,
+                    "avg_score_percentage": round((sum(a.get("score", 0) for a in attempts) / len(attempts) / max_possible_score) * 100, 1) if attempts and max_possible_score > 0 else 0,
+                    "max_possible_score": max_possible_score,
+                    "total_points_earned": sum(a.get("points_earned", 0) for a in attempts),
+                    "total_time_minutes": sum(a.get("time_spent_minutes", 0) for a in attempts),
+                    "attempts": attempts
+                })
+
+        # ----- Челленджи (детальная аналитика) -----
+        total_challenge_attempts = 0
+        total_challenge_points = 0
+        recent_challenges = 0
+        total_challenge_days_completed = 0
+        total_challenge_time_minutes = 0
+        challenge_details = []
+        challenge_problem_days = []
+        
+        if "challenge_progress" in collection_names:
+            challenge_cursor = db.challenge_progress.find({"user_id": user_id})
+            challenge_attempts = await challenge_cursor.to_list(length=None)
+            total_challenge_attempts = len(challenge_attempts)
+
+            # Получаем информацию об уроках для челленджей
+            lessons_dict = {l["id"]: l for l in lessons}
+
+            for attempt in challenge_attempts:
+                points = attempt.get("points_earned") or 0
+                completed_days = attempt.get("completed_days") or []
+                current_day = attempt.get("current_day", 0)
+                daily_notes = attempt.get("daily_notes", [])
+                
+                if points == 0:
+                    points = len(completed_days) * 15  # 15 баллов за каждый завершенный день
+                
+                total_challenge_points += points
+                total_challenge_days_completed += len(completed_days)
+                
+                # Время на челлендж (из time_activity для этого урока)
+                challenge_time = 0
+                if "time_activity" in collection_names:
+                    challenge_time_records = await db.time_activity.find({
+                        "user_id": user_id,
+                        "lesson_id": attempt.get("lesson_id")
+                    }).to_list(length=None)
+                    challenge_time = sum(r.get("total_minutes", 0) for r in challenge_time_records)
+                
+                total_challenge_time_minutes += challenge_time
+                
+                # Определяем дни с проблемами (дни без заметок или пропущенные дни)
+                lesson = lessons_dict.get(attempt.get("lesson_id"))
+                challenge = None
+                if lesson and lesson.get("challenge"):
+                    challenge = lesson["challenge"]
+                    total_days = challenge.get("total_days", 0)
+                    
+                    # Дни с проблемами: пропущенные дни между завершенными
+                    if completed_days and total_days > 0:
+                        for day in range(1, min(current_day + 1, total_days + 1)):
+                            if day not in completed_days:
+                                # Проверяем есть ли заметка для этого дня
+                                has_note = any(note.get("day") == day for note in daily_notes)
+                                if not has_note:
+                                    challenge_problem_days.append({
+                                        "lesson_id": attempt.get("lesson_id"),
+                                        "lesson_title": lesson.get("title", "Урок"),
+                                        "challenge_id": attempt.get("challenge_id"),
+                                        "day": day,
+                                        "reason": "Пропущенный день"
+                                    })
+                
+                # Детали по каждому челленджу
+                challenge_details.append({
+                    "lesson_id": attempt.get("lesson_id"),
+                    "lesson_title": lessons_dict.get(attempt.get("lesson_id"), {}).get("title", "Урок"),
+                    "challenge_id": attempt.get("challenge_id"),
+                    "current_day": current_day,
+                    "completed_days": len(completed_days),
+                    "total_days": challenge.get("total_days", 0) if challenge else 0,
+                    "completion_percentage": round((len(completed_days) / challenge.get("total_days", 1)) * 100, 1) if challenge and challenge.get("total_days") else 0,
+                    "is_completed": attempt.get("is_completed", False),
+                    "points_earned": points,
+                    "time_minutes": challenge_time,
+                    "started_at": attempt.get("started_at").isoformat() if attempt.get("started_at") else None,
+                    "completed_at": attempt.get("completed_at").isoformat() if attempt.get("completed_at") else None
+                })
+
+                last_updated = attempt.get("last_updated")
+                if last_updated and last_updated >= datetime.utcnow() - timedelta(days=7):
+                    recent_challenges += 1
+
+        # ----- Время обучения -----
+        time_minutes = 0
+        time_points = 0
+        if "time_activity" in collection_names:
+            time_records = await db.time_activity.find({"user_id": user_id}).to_list(length=None)
+            for record in time_records:
+                if record.get("activity_type") == "file_view":
+                    continue  # учитываем отдельно ниже
+                time_minutes += record.get("total_minutes", 0)
+                time_points += record.get("total_points", 0)
+
+        # ----- Видео -----
+        video_minutes = 0
+        video_points = 0
+        if "video_watch_time" in collection_names:
+            video_records = await db.video_watch_time.find({"user_id": user_id}).to_list(length=None)
+            video_minutes = sum(record.get("total_minutes", 0) for record in video_records)
+            video_points = sum(record.get("total_points", 0) for record in video_records)
+
+        # ----- Файлы -----
+        file_view_points = 0
+        file_views = 0
+        file_downloads = 0
+        if "time_activity" in collection_names:
+            file_view_records = await db.time_activity.find({
+                "user_id": user_id,
+                "activity_type": "file_view"
+            }).to_list(length=None)
+            file_view_points = sum(record.get("total_points", 0) for record in file_view_records)
+            file_views = sum(record.get("view_count", 0) for record in file_view_records)
+
+        if "file_analytics" in collection_names:
+            file_views = max(
+                file_views,
+                await db.file_analytics.count_documents({"user_id": user_id, "action": "view"})
+            )
+            file_downloads = await db.file_analytics.count_documents({"user_id": user_id, "action": "download"})
+
+        # ----- Общие баллы и уровни -----
+        total_points = (
+            total_challenge_points +
+            total_quiz_points +
+            time_points +
+            video_points +
+            file_view_points +
+            exercise_points
+        )
+
+        level = 1
+        level_name = "Новичок"
+        next_level_points = 100
+
+        if total_points >= 1000:
+            level = 5
+            level_name = "Мастер"
+            next_level_points = 2000
+        elif total_points >= 500:
+            level = 4
+            level_name = "Эксперт"
+            next_level_points = 1000
+        elif total_points >= 250:
+            level = 3
+            level_name = "Продвинутый"
+            next_level_points = 500
+        elif total_points >= 100:
+            level = 2
+            level_name = "Ученик"
+            next_level_points = 250
+
+        # Прогресс к следующему уровню
+        previous_level_thresholds = {1: 0, 2: 100, 3: 250, 4: 500, 5: 1000}
+        current_level_threshold = previous_level_thresholds[level]
+        progress_to_next_level = 0
+        if level < 5:
+            progress_to_next_level = ((total_points - current_level_threshold) / (next_level_points - current_level_threshold)) * 100
+        else:
+            progress_to_next_level = 100
+
+        # ----- Активность по дням (7 дней) с детализацией и эффективностью -----
+        # Создаем словарь уроков для быстрого доступа
+        lessons_dict = {l["id"]: l for l in lessons}
+        
+        activity_chart = []
+        for i in range(7):
+            day = datetime.utcnow() - timedelta(days=6 - i)
+            day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+
+            day_activity = 0
+            theory_activity = 0  # Активность теории (просмотр теории)
+            lesson_presence = 0  # Активность присутствия в уроке (time_activity без file_view)
+            video_activity = 0  # Активность просмотра видео
+            pdf_activity = 0  # Активность просмотра PDF файлов
+            study_time_minutes = 0  # Время обучения в минутах
+            file_views_count = 0  # Количество просмотров файлов
+            
+            # Эффективность активности за день (средняя по всем активностям)
+            day_efficiencies = []
+
+            if "exercise_responses" in collection_names:
+                exercise_count = await db.exercise_responses.count_documents({
+                    "user_id": user_id,
+                    "submitted_at": {"$gte": day_start, "$lt": day_end}
+                })
+                day_activity += exercise_count
+                
+                # Получаем упражнения для расчета эффективности
+                exercise_records = await db.exercise_responses.find({
+                    "user_id": user_id,
+                    "submitted_at": {"$gte": day_start, "$lt": day_end}
+                }).to_list(length=None)
+                
+                for ex in exercise_records:
+                    lesson_id = ex.get("lesson_id")
+                    lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                    lesson_planet = None
+                    if lesson:
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "")
+                    
+                    if user_ruling_planet and lesson_planet:
+                        efficiency = calculate_activity_efficiency(
+                            user_ruling_planet,
+                            lesson_planet,
+                            ex.get("submitted_at", day_start),
+                            False,
+                            0.0,
+                            user_city
+                        )
+                        day_efficiencies.append(efficiency)
+
+            if "quiz_attempts" in collection_names:
+                quiz_count = await db.quiz_attempts.count_documents({
+                    "user_id": user_id,
+                    "attempted_at": {"$gte": day_start, "$lt": day_end}
+                })
+                day_activity += quiz_count
+                
+                # Получаем тесты для расчета эффективности
+                quiz_records = await db.quiz_attempts.find({
+                    "user_id": user_id,
+                    "attempted_at": {"$gte": day_start, "$lt": day_end}
+                }).to_list(length=None)
+                
+                for quiz in quiz_records:
+                    lesson_id = quiz.get("lesson_id")
+                    lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                    lesson_planet = None
+                    if lesson:
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "")
+                    
+                    if user_ruling_planet and lesson_planet:
+                        efficiency = calculate_activity_efficiency(
+                            user_ruling_planet,
+                            lesson_planet,
+                            quiz.get("attempted_at", day_start),
+                            False,
+                            0.0,
+                            user_city
+                        )
+                        day_efficiencies.append(efficiency)
+
+            if "challenge_progress" in collection_names:
+                challenge_count = await db.challenge_progress.count_documents({
+                    "user_id": user_id,
+                    "last_updated": {"$gte": day_start, "$lt": day_end}
+                })
+                day_activity += challenge_count
+                
+                # Получаем челленджи для расчета эффективности
+                challenge_records = await db.challenge_progress.find({
+                    "user_id": user_id,
+                    "last_updated": {"$gte": day_start, "$lt": day_end}
+                }).to_list(length=None)
+                
+                for challenge in challenge_records:
+                    lesson_id = challenge.get("lesson_id")
+                    lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                    lesson_planet = None
+                    if lesson:
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "")
+                    
+                    is_completed = challenge.get("is_completed", False)
+                    completed_days = challenge.get("completed_days", [])
+                    total_days = 0
+                    if lesson and lesson.get("challenge"):
+                        total_days = lesson["challenge"].get("total_days", 0)
+                    completion_percentage = (len(completed_days) / total_days * 100) if total_days > 0 else 0
+                    
+                    if user_ruling_planet and lesson_planet:
+                        efficiency = calculate_activity_efficiency(
+                            user_ruling_planet,
+                            lesson_planet,
+                            challenge.get("last_updated", day_start),
+                            is_completed,
+                            completion_percentage,
+                            user_city
+                        )
+                        day_efficiencies.append(efficiency)
+
+            # УНИФИЦИРОВАННЫЙ ИСТОЧНИК ДАННЫХ: time_activity - основная коллекция для всех типов активности
+            # Все данные активности должны браться из time_activity с правильными типами:
+            # - "lesson_view" - присутствие в уроке
+            # - "theory" или "theory_view" - просмотр теории
+            # - "video_watch" - просмотр видео (время в минутах)
+            # - "file_view" - просмотр файлов (PDF и другие)
+            # - "exercise" - выполнение упражнений
+            # - "challenge" - выполнение челленджей
+            # - "quiz" - прохождение тестов
+            
+            if "time_activity" in collection_names:
+                # Получаем все записи активности за день из time_activity
+                all_activity_records_cursor = db.time_activity.find({
+                    "user_id": user_id,
+                    "$or": [
+                        {"last_activity_at": {"$gte": day_start, "$lt": day_end}},
+                        {"created_at": {"$gte": day_start, "$lt": day_end}}
+                    ]
+                })
+                all_activity_records = []
+                async for r in all_activity_records_cursor:
+                    r_dict = dict(r)
+                    r_dict.pop("_id", None)  # Удаляем ObjectId
+                    all_activity_records.append(r_dict)
+                
+                # Группируем по типам активности
+                for record in all_activity_records:
+                    activity_type = record.get("activity_type", "")
+                    lesson_id = record.get("lesson_id")
+                    lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                    lesson_planet = None
+                    if lesson:
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "")
+                    
+                    # Присутствие в уроке (lesson_view, но не file_view)
+                    if activity_type == "lesson_view":
+                        lesson_presence += 1
+                        # Суммируем время обучения из lesson_view
+                        study_time_minutes += record.get("total_minutes", 0)
+                    
+                    # Активность теории
+                    if activity_type in ["theory", "theory_view"]:
+                        theory_activity += 1
+                        # Суммируем время обучения из теории
+                        study_time_minutes += record.get("total_minutes", 0)
+                    
+                    # Активность просмотра видео (суммируем минуты)
+                    if activity_type == "video_watch":
+                        video_activity += record.get("total_minutes", 0)
+                        # Суммируем время обучения из видео
+                        study_time_minutes += record.get("total_minutes", 0)
+                    
+                    # Активность просмотра PDF (file_view с типом pdf)
+                    if activity_type == "file_view":
+                        file_views_count += 1  # Считаем все просмотры файлов
+                        file_type = record.get("file_type", "")
+                        if file_type in ["pdf", "application/pdf"]:
+                            pdf_activity += 1
+                    
+                    # Рассчитываем эффективность для всех типов активности
+                    if user_ruling_planet and lesson_planet:
+                        efficiency = calculate_activity_efficiency(
+                            user_ruling_planet,
+                            lesson_planet,
+                            record.get("created_at") or record.get("last_activity_at") or day_start,
+                            False,
+                            0.0,
+                            user_city
+                        )
+                        day_efficiencies.append(efficiency)
+            
+            # ДОПОЛНИТЕЛЬНЫЕ ИСТОЧНИКИ (для обратной совместимости и детализации):
+            # video_watch_time - для детального времени просмотра видео (если нет в time_activity)
+            if "video_watch_time" in collection_names and video_activity == 0:
+                video_records_cursor = db.video_watch_time.find({
+                    "user_id": user_id,
+                    "$or": [
+                        {"last_updated": {"$gte": day_start, "$lt": day_end}},
+                        {"created_at": {"$gte": day_start, "$lt": day_end}}
+                    ]
+                })
+                video_records = []
+                async for r in video_records_cursor:
+                    r_dict = dict(r)
+                    r_dict.pop("_id", None)
+                    video_records.append(r_dict)
+                video_activity = sum(r.get("total_minutes", 0) for r in video_records)
+                
+                # Рассчитываем эффективность для просмотра видео
+                for record in video_records:
+                    lesson_id = record.get("lesson_id")
+                    lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                    lesson_planet = None
+                    if lesson:
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "")
+                    
+                    if user_ruling_planet and lesson_planet:
+                        efficiency = calculate_activity_efficiency(
+                            user_ruling_planet,
+                            lesson_planet,
+                            record.get("created_at", day_start),
+                            False,
+                            0.0,
+                            user_city
+                        )
+                        day_efficiencies.append(efficiency)
+            
+            # file_analytics - для просмотров файлов (если нет в time_activity или для дополнения)
+            if "file_analytics" in collection_names:
+                file_views_cursor = db.file_analytics.find({
+                    "user_id": user_id,
+                    "created_at": {"$gte": day_start, "$lt": day_end},
+                    "action": "view"
+                })
+                file_views = []
+                async for fv in file_views_cursor:
+                    fv_dict = dict(fv)
+                    fv_dict.pop("_id", None)
+                    file_views.append(fv_dict)
+                
+                # Добавляем к общему количеству просмотров файлов
+                file_views_count += len(file_views)
+                
+                # Получаем информацию о файлах, чтобы определить PDF
+                file_ids = [fv.get("file_id") for fv in file_views if fv.get("file_id")]
+                if file_ids:
+                    pdf_files_cursor = db.files.find({
+                        "id": {"$in": file_ids},
+                        "mime_type": {"$in": ["application/pdf", "pdf"]}
+                    })
+                    pdf_files = []
+                    async for f in pdf_files_cursor:
+                        pdf_file = dict(f)
+                        pdf_file.pop("_id", None)
+                        pdf_files.append(pdf_file)
+                    pdf_file_ids = {f.get("id") for f in pdf_files}
+                    # Добавляем к активности PDF (если еще не было в time_activity)
+                    if pdf_activity == 0:
+                        pdf_activity = len([fv for fv in file_views if fv.get("file_id") in pdf_file_ids])
+            
+            # lesson_progress - для активности теории (если нет в time_activity)
+            if "lesson_progress" in collection_names and theory_activity == 0:
+                theory_records_cursor = db.lesson_progress.find({
+                    "user_id": user_id,
+                    "last_accessed": {"$gte": day_start, "$lt": day_end}
+                })
+                theory_records = []
+                async for r in theory_records_cursor:
+                    r_dict = dict(r)
+                    r_dict.pop("_id", None)
+                    theory_records.append(r_dict)
+                theory_activity = len(theory_records)
+                
+                # Рассчитываем эффективность для теории
+                for record in theory_records:
+                    lesson_id = record.get("lesson_id")
+                    lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                    lesson_planet = None
+                    if lesson:
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "")
+                    
+                    if user_ruling_planet and lesson_planet:
+                        efficiency = calculate_activity_efficiency(
+                            user_ruling_planet,
+                            lesson_planet,
+                            record.get("last_accessed", day_start),
+                            False,
+                            0.0,
+                            user_city
+                        )
+                        day_efficiencies.append(efficiency)
+
+            # Рассчитываем среднюю эффективность за день
+            avg_efficiency = 0.0
+            if day_efficiencies:
+                avg_efficiency = sum(day_efficiencies) / len(day_efficiencies)
+            elif day_activity > 0:
+                # Если есть активность, но не удалось рассчитать эффективность, используем базовую
+                avg_efficiency = 50.0
+
+            activity_chart.append({
+                "day_name": day.strftime('%a')[:2],
+                "date": day.strftime('%d.%m'),
+                "activity": day_activity,
+                "theory_activity": theory_activity,
+                "lesson_presence": lesson_presence,
+                "video_activity": video_activity,
+                "pdf_activity": pdf_activity,
+                "study_time_minutes": study_time_minutes,
+                "file_views": file_views_count,
+                "efficiency": round(avg_efficiency, 1)  # Эффективность активности в процентах
+            })
+
+        recent_activity_7days = sum(item["activity"] for item in activity_chart)
+
+        # ----- Достижения -----
+        achievements = []
+
+        if completed_lessons >= 1:
+            achievements.append({
+                'id': 'first_lesson',
+                'title': 'Первый шаг',
+                'description': 'Завершен первый урок',
+                'icon': '🎯',
+                'earned': True
+            })
+
+        if total_exercises_completed >= 1:
+            achievements.append({
+                'id': 'first_exercise',
+                'title': 'Практик',
+                'description': 'Выполнено первое упражнение',
+                'icon': '📝',
+                'earned': True
+            })
+
+        if total_quiz_attempts >= 1:
+            achievements.append({
+                'id': 'first_quiz',
+                'title': 'Тестировщик',
+                'description': 'Пройден первый тест',
+                'icon': '🎯',
+                'earned': True
+            })
+
+        if total_challenge_attempts >= 1:
+            achievements.append({
+                'id': 'first_challenge',
+                'title': 'Принял вызов',
+                'description': 'Начат первый челлендж',
+                'icon': '⚡',
+                'earned': True
+            })
+
+        if total_points >= 100:
+            achievements.append({
+                'id': 'hundred_points',
+                'title': 'Сотня',
+                'description': 'Заработано 100 баллов',
+                'icon': '💯',
+                'earned': True
+            })
+
+        # ----- Топ уроков (по прогрессу) -----
+        top_lessons = []
+        if lesson_progress_list:
+            for progress in lesson_progress_list:
+                lesson = next((l for l in lessons if l["id"] == progress["lesson_id"]), None)
+                if lesson:
+                    top_lessons.append({
+                        "lesson_id": lesson["id"],
+                        "lesson_title": lesson.get("title", "Урок"),
+                        "completion": progress.get("completion_percentage", 0)
+                    })
+            top_lessons = sorted(top_lessons, key=lambda x: x["completion"], reverse=True)[:5]
+
+        return {
+            "stats": {
+                "level": level,
+                "level_name": level_name,
+                "total_points": total_points,
+                "progress_to_next_level": max(0, min(100, round(progress_to_next_level))),
+                "next_level_points": next_level_points,
+                # Совместимость со старым фронтендом
+                "completed_lessons": completed_lessons,
+                "total_lessons": total_lessons,
+                "total_challenge_attempts": total_challenge_attempts,
+                "total_challenge_points": total_challenge_points,
+                "total_quiz_attempts": total_quiz_attempts,
+                "total_quiz_points": total_quiz_points,
+                "total_exercises_completed": total_exercises_completed,
+                "lessons": {
+                    "total": total_lessons,
+                    "completed": completed_lessons,
+                    "completion_percentage": round((completed_lessons / total_lessons) * 100) if total_lessons > 0 else 0,
+                    "in_progress": in_progress_lessons
+                },
+                "activity": {
+                    "total_exercises": total_exercises_completed,
+                    "total_quizzes": total_quiz_attempts,
+                    "total_challenges": total_challenge_attempts,
+                    "recent_exercises": recent_exercises,
+                    "recent_quizzes": recent_quizzes,
+                    "recent_challenges": recent_challenges
+                },
+                "points_breakdown": {
+                    "challenges": total_challenge_points,
+                    "quizzes": total_quiz_points,
+                    "time": time_points,
+                    "videos": video_points,
+                    "files": file_view_points,
+                    "exercises": exercise_points,
+                    "exercise_review": exercise_review_points,
+                    "time_minutes": time_minutes,
+                    "video_minutes": video_minutes,
+                    "exercise_review_time_minutes": exercise_review_time
+                },
+                "challenge_analytics": {
+                    "total_days_completed": total_challenge_days_completed,
+                    "total_time_minutes": total_challenge_time_minutes,
+                    "total_time_hours": round(total_challenge_time_minutes / 60, 1),
+                    "problem_days": challenge_problem_days,
+                    "details": challenge_details
+                },
+                "quiz_analytics": {
+                    "total_attempts": total_quiz_attempts,
+                    "max_score": max_quiz_score,
+                    "avg_score": round(avg_quiz_score, 1),
+                    "avg_score_percentage": round(avg_quiz_score, 1),
+                    "details": quiz_details
+                },
+                "time_stats": {
+                    "study_minutes": time_minutes,
+                    "video_minutes": video_minutes
+                },
+                "files": {
+                    "views": file_views,
+                    "downloads": file_downloads
+                },
+                "activity_chart": activity_chart,
+                "recent_activity_7days": recent_activity_7days,
+                "active_students": 1,
+                "top_lessons": top_lessons,
+                "achievements": achievements,
+                "recent_achievements": achievements[:3]
+            }
+        }
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting dashboard stats: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting dashboard stats: {str(e)}")
+
+@app.get("/api/student/analytics/{section}")
+async def get_detailed_analytics(
+    section: str, 
+    period: str = 'week',
+    start_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format (for calendar)"),
+    end_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format (for calendar)"),
+    current_user: dict = Depends(get_current_user)
+):
+    """Получить детальную аналитику по конкретному разделу (lessons, challenges, quizzes, exercises)"""
+    try:
+        logger.info(f"get_detailed_analytics called for section: {section}, period: {period}, start_date: {start_date}, end_date: {end_date}")
+        user_id = current_user.get('user_id', current_user.get('id'))
+        logger.info(f"User ID: {user_id}")
+        if not user_id:
+            logger.error("No user_id found in current_user")
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        # Получаем данные пользователя для расчета эффективности
+        user = await db.users.find_one({"id": user_id})
+        user_birth_date = user.get('birth_date') if user else None
+        user_city = user.get('city', 'Москва') if user else 'Москва'
+        user_ruling_planet = None
+        if user_birth_date:
+            try:
+                user_ruling_planet = get_user_ruling_planet(user_birth_date)
+                logger.info(f"User ruling planet: {user_ruling_planet}")
+            except Exception as e:
+                logger.error(f"Error calculating user ruling planet: {e}")
+
+        collection_names = await db.list_collection_names()
+        logger.info(f"Available collections: {collection_names}")
+        
+        if section == 'lessons':
+            # Детальная аналитика по урокам
+            lessons_cursor = db.lessons_v2.find({"is_active": True})
+            lessons = await lessons_cursor.to_list(length=None)
+            
+            lesson_progress_list = []
+            if "lesson_progress" in collection_names:
+                progress_cursor = db.lesson_progress.find({"user_id": user_id})
+                lesson_progress_list = await progress_cursor.to_list(length=None)
+            
+            # Детали по каждому уроку
+            lesson_details = []
+            for lesson in lessons:
+                progress = next((p for p in lesson_progress_list if p.get("lesson_id") == lesson["id"]), None)
+                
+                # Время изучения урока
+                lesson_time = 0
+                if "time_activity" in collection_names:
+                    time_records = await db.time_activity.find({
+                        "user_id": user_id,
+                        "lesson_id": lesson["id"]
+                    }).to_list(length=None)
+                    lesson_time = sum(r.get("total_minutes", 0) for r in time_records)
+                
+                # Видео время
+                video_time = 0
+                if "video_watch_time" in collection_names:
+                    video_records = await db.video_watch_time.find({
+                        "user_id": user_id,
+                        "lesson_id": lesson["id"]
+                    }).to_list(length=None)
+                    video_time = sum(r.get("total_minutes", 0) for r in video_records)
+                
+                # Файлы
+                file_views = 0
+                file_downloads = 0
+                if "time_activity" in collection_names:
+                    file_records = await db.time_activity.find({
+                        "user_id": user_id,
+                        "lesson_id": lesson["id"],
+                        "activity_type": "file_view"
+                    }).to_list(length=None)
+                    file_views = sum(r.get("view_count", 0) for r in file_records)
+                
+                if "file_analytics" in collection_names:
+                    file_views = max(file_views, await db.file_analytics.count_documents({
+                        "user_id": user_id,
+                        "lesson_id": lesson["id"],
+                        "action": "view"
+                    }))
+                    file_downloads = await db.file_analytics.count_documents({
+                        "user_id": user_id,
+                        "lesson_id": lesson["id"],
+                        "action": "download"
+                    })
+                
+                lesson_details.append({
+                    "lesson_id": lesson["id"],
+                    "lesson_title": lesson.get("title", "Урок"),
+                    "completion_percentage": progress.get("completion_percentage", 0) if progress else 0,
+                    "is_completed": progress.get("is_completed", False) if progress else False,
+                    "time_minutes": lesson_time,
+                    "video_minutes": video_time,
+                    "file_views": file_views,
+                    "file_downloads": file_downloads,
+                    "started_at": progress.get("started_at").isoformat() if progress and progress.get("started_at") else None,
+                    "completed_at": progress.get("completed_at").isoformat() if progress and progress.get("completed_at") else None
+                })
+            
+            # Получаем activity_chart для графика активности с эффективностью
+            lessons_dict = {l["id"]: l for l in lessons}
+            activity_chart = []
+            
+            # Определяем диапазон дат в зависимости от периода и переданных дат
+            if start_date and end_date:
+                # Используем переданные даты из календаря
+                try:
+                    # Парсим даты как naive datetime (без timezone) - это локальная дата от пользователя
+                    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                    # Устанавливаем время для правильной фильтрации (используем UTC для совместимости с БД)
+                    start_dt = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    logger.info(f"Parsed dates for activity_chart: start_dt={start_dt}, end_dt={end_dt}, start_date={start_date}, end_date={end_date}, period={period}")
+                except Exception as e:
+                    logger.error(f"Error parsing dates: {e}, start_date={start_date}, end_date={end_date}")
+                    # Если не удалось распарсить, используем период
+                    start_dt = None
+                    end_dt = None
+            else:
+                start_dt = None
+                end_dt = None
+            
+            # Функция-помощник для сбора данных активности за период (час или день)
+            async def collect_activity_data(period_start, period_end, is_hour=False):
+                """Собирает данные активности за указанный период (час или день)"""
+                period_activity = 0
+                period_theory_activity = 0
+                period_lesson_presence = 0
+                period_video_activity = 0
+                period_pdf_activity = 0
+                period_study_time_minutes = 0
+                period_file_views_count = 0
+                period_efficiencies = []
+                
+                # Упражнения
+                if "exercise_responses" in collection_names:
+                    exercise_count = await db.exercise_responses.count_documents({
+                        "user_id": user_id,
+                        "submitted_at": {"$gte": period_start, "$lt": period_end}
+                    })
+                    period_activity += exercise_count
+                    
+                    exercise_records = await db.exercise_responses.find({
+                        "user_id": user_id,
+                        "submitted_at": {"$gte": period_start, "$lt": period_end}
+                    }).to_list(length=None)
+                    
+                    for ex in exercise_records:
+                        lesson_id = ex.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet, lesson_planet, ex.get("submitted_at", period_start),
+                                False, 0.0, user_city
+                            )
+                            period_efficiencies.append(efficiency)
+                
+                # Тесты
+                if "quiz_attempts" in collection_names:
+                    quiz_count = await db.quiz_attempts.count_documents({
+                        "user_id": user_id,
+                        "attempted_at": {"$gte": period_start, "$lt": period_end}
+                    })
+                    period_activity += quiz_count
+                    
+                    quiz_records = await db.quiz_attempts.find({
+                        "user_id": user_id,
+                        "attempted_at": {"$gte": period_start, "$lt": period_end}
+                    }).to_list(length=None)
+                    
+                    for quiz in quiz_records:
+                        lesson_id = quiz.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet, lesson_planet, quiz.get("attempted_at", period_start),
+                                False, 0.0, user_city
+                            )
+                            period_efficiencies.append(efficiency)
+                
+                # Челленджи
+                if "challenge_progress" in collection_names:
+                    challenge_count = await db.challenge_progress.count_documents({
+                        "user_id": user_id,
+                        "last_updated": {"$gte": period_start, "$lt": period_end}
+                    })
+                    period_activity += challenge_count
+                    
+                    challenge_records = await db.challenge_progress.find({
+                        "user_id": user_id,
+                        "last_updated": {"$gte": period_start, "$lt": period_end}
+                    }).to_list(length=None)
+                    
+                    for challenge in challenge_records:
+                        lesson_id = challenge.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        is_completed = challenge.get("is_completed", False)
+                        completed_days = challenge.get("completed_days", [])
+                        total_days = lesson["challenge"].get("total_days", 0) if lesson and lesson.get("challenge") else 0
+                        completion_percentage = (len(completed_days) / total_days * 100) if total_days > 0 else 0
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet, lesson_planet, challenge.get("last_updated", period_start),
+                                is_completed, completion_percentage, user_city
+                            )
+                            period_efficiencies.append(efficiency)
+                
+                # Присутствие в уроке
+                if "time_activity" in collection_names:
+                    presence_records = await db.time_activity.find({
+                        "user_id": user_id,
+                        "$or": [
+                            {"created_at": {"$gte": period_start, "$lt": period_end}},
+                            {"last_activity_at": {"$gte": period_start, "$lt": period_end}}
+                        ],
+                        "activity_type": {"$ne": "file_view"}
+                    }).to_list(length=None)
+                    period_lesson_presence = len(presence_records)
+                    period_study_time_minutes = sum(r.get("total_minutes", 0) for r in presence_records)
+                    
+                    for record in presence_records:
+                        lesson_id = record.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet, lesson_planet, record.get("created_at") or record.get("last_activity_at") or period_start,
+                                False, 0.0, user_city
+                            )
+                            period_efficiencies.append(efficiency)
+                
+                # Видео
+                if "time_activity" in collection_names:
+                    video_records = await db.time_activity.find({
+                        "user_id": user_id,
+                        "$or": [
+                            {"created_at": {"$gte": period_start, "$lt": period_end}},
+                            {"last_activity_at": {"$gte": period_start, "$lt": period_end}}
+                        ],
+                        "activity_type": "video_watch"
+                    }).to_list(length=None)
+                    period_video_activity = sum(r.get("total_minutes", 0) for r in video_records)
+                    
+                    for record in video_records:
+                        lesson_id = record.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet, lesson_planet, record.get("created_at") or record.get("last_activity_at") or period_start,
+                                False, 0.0, user_city
+                            )
+                            period_efficiencies.append(efficiency)
+                
+                # PDF файлы
+                if "time_activity" in collection_names:
+                    pdf_records = await db.time_activity.find({
+                        "user_id": user_id,
+                        "$or": [
+                            {"created_at": {"$gte": period_start, "$lt": period_end}},
+                            {"last_activity_at": {"$gte": period_start, "$lt": period_end}}
+                        ],
+                        "activity_type": "file_view",
+                        "file_type": {"$in": ["pdf", "application/pdf"]}
+                    }).to_list(length=None)
+                    period_pdf_activity = len(pdf_records)
+                    
+                    for record in pdf_records:
+                        lesson_id = record.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet, lesson_planet, record.get("created_at") or record.get("last_activity_at") or period_start,
+                                False, 0.0, user_city
+                            )
+                            period_efficiencies.append(efficiency)
+                
+                # Просмотр файлов
+                if "file_analytics" in collection_names:
+                    period_file_views_count = await db.file_analytics.count_documents({
+                        "user_id": user_id,
+                        "action": "view",
+                        "created_at": {"$gte": period_start, "$lt": period_end}
+                    })
+                
+                # Теория
+                if "time_activity" in collection_names:
+                    theory_records = await db.time_activity.find({
+                        "user_id": user_id,
+                        "$or": [
+                            {"created_at": {"$gte": period_start, "$lt": period_end}},
+                            {"last_activity_at": {"$gte": period_start, "$lt": period_end}}
+                        ],
+                        "activity_type": {"$in": ["theory", "theory_view"]}
+                    }).to_list(length=None)
+                    period_theory_activity = len(theory_records)
+                    
+                    for record in theory_records:
+                        lesson_id = record.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet, lesson_planet, record.get("created_at") or record.get("last_activity_at") or period_start,
+                                False, 0.0, user_city
+                            )
+                            period_efficiencies.append(efficiency)
+                
+                avg_efficiency = sum(period_efficiencies) / len(period_efficiencies) if period_efficiencies else (50.0 if period_activity > 0 else 0.0)
+
+                return {
+                    "activity": period_activity,
+                    "theory_activity": period_theory_activity,
+                    "lesson_presence": period_lesson_presence,
+                    "video_activity": period_video_activity,
+                    "pdf_activity": period_pdf_activity,
+                    "study_time_minutes": period_study_time_minutes,
+                    "file_views": period_file_views_count,
+                    "efficiency": round(avg_efficiency, 1)
+                }
+            
+            # Если период "day", возвращаем данные за один день с детализацией по часам
+            if period == 'day':
+                logger.info(f"Processing period 'day' for activity_chart")
+                # Используем переданную дату или сегодня (как в других timeline эндпоинтах)
+                if start_dt and end_dt:
+                    # Если переданы обе даты, используем end_dt как базовую дату (выбранную пользователем)
+                    # и устанавливаем start_dt на начало того же дня
+                    target_day = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                elif start_dt:
+                    # Если передана только start_dt, используем её
+                    target_day = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                elif end_dt:
+                    # Если передана только end_dt, используем её
+                    target_day = end_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                else:
+                    # Если дата не передана, используем сегодня в UTC
+                    target_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                
+                logger.info(f"Target day for 'day' period: {target_day}, start_dt: {start_dt}, end_dt: {end_dt}")
+                
+                # Генерируем данные по часам (24 часа) - от 00:00 до 23:59 выбранного дня
+                for hour in range(24):
+                    hour_start = target_day + timedelta(hours=hour)
+                    hour_end = hour_start + timedelta(hours=1)
+                    
+                    # Собираем данные за этот час
+                    hour_data = await collect_activity_data(hour_start, hour_end, is_hour=True)
+                    
+                    activity_chart.append({
+                        "day_name": hour_start.strftime('%H:%M'),
+                        "date": hour_start.strftime('%d.%m %H:%M'),
+                        "hour": hour,
+                        "activity": hour_data["activity"],
+                        "theory_activity": hour_data["theory_activity"],
+                        "lesson_presence": hour_data["lesson_presence"],
+                        "video_activity": hour_data["video_activity"],
+                        "pdf_activity": hour_data["pdf_activity"],
+                        "study_time_minutes": hour_data["study_time_minutes"],
+                        "file_views": hour_data["file_views"],
+                        "efficiency": hour_data["efficiency"]
+                    })
+                
+                logger.info(f"Generated {len(activity_chart)} hour entries for 'day' period, first date: {activity_chart[0]['date'] if activity_chart else 'none'}, last date: {activity_chart[-1]['date'] if activity_chart else 'none'}")
+            else:
+                # Для других периодов (week, month, quarter) используем дни
+                # Определяем количество дней и начальную дату
+                if period == 'week':
+                    days_count = 7
+                    if start_dt:
+                        first_day = start_dt
+                    else:
+                        first_day = datetime.utcnow() - timedelta(days=6)
+                elif period == 'month':
+                    days_count = 30
+                    if start_dt:
+                        first_day = start_dt
+                    else:
+                        first_day = datetime.utcnow() - timedelta(days=29)
+                elif period == 'quarter':
+                    days_count = 90
+                    if start_dt:
+                        first_day = start_dt
+                    else:
+                        first_day = datetime.utcnow() - timedelta(days=89)
+                else:
+                    days_count = 7
+                    if start_dt:
+                        first_day = start_dt
+                    else:
+                        first_day = datetime.utcnow() - timedelta(days=6)
+                
+                # Если указаны даты, используем их диапазон
+                if start_dt and end_dt:
+                    current_day = start_dt
+                    while current_day <= end_dt:
+                        day_start = current_day.replace(hour=0, minute=0, second=0, microsecond=0)
+                        day_end = day_start + timedelta(days=1)
+                        if day_end > end_dt:
+                            day_end = end_dt
+                        
+                        # Собираем данные за этот день
+                        day_data = await collect_activity_data(day_start, day_end, is_hour=False)
+                        
+                        activity_chart.append({
+                            "day_name": day_start.strftime('%a')[:2],
+                            "date": day_start.strftime('%d.%m'),
+                            "activity": day_data["activity"],
+                            "theory_activity": day_data["theory_activity"],
+                            "lesson_presence": day_data["lesson_presence"],
+                            "video_activity": day_data["video_activity"],
+                            "pdf_activity": day_data["pdf_activity"],
+                            "study_time_minutes": day_data["study_time_minutes"],
+                            "file_views": day_data["file_views"],
+                            "efficiency": day_data["efficiency"]
+                        })
+                        
+                        current_day += timedelta(days=1)
+                else:
+                    # Используем стандартную логику для периода
+                    for i in range(days_count):
+                        day = first_day + timedelta(days=i)
+                        day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+                        day_end = day_start + timedelta(days=1)
+                        
+                        # Собираем данные за этот день
+                        day_data = await collect_activity_data(day_start, day_end, is_hour=False)
+                        
+                        activity_chart.append({
+                            "day_name": day.strftime('%a')[:2],
+                            "date": day.strftime('%d.%m'),
+                            "activity": day_data["activity"],
+                            "theory_activity": day_data["theory_activity"],
+                            "lesson_presence": day_data["lesson_presence"],
+                            "video_activity": day_data["video_activity"],
+                            "pdf_activity": day_data["pdf_activity"],
+                            "study_time_minutes": day_data["study_time_minutes"],
+                            "file_views": day_data["file_views"],
+                            "efficiency": day_data["efficiency"]
+                        })
+            
+            logger.info(f"Returning {len(lesson_details)} lesson details")
+            return {
+                "analytics": lesson_details,
+                "activity_chart": activity_chart
+            }
+        
+        elif section == 'video-timeline':
+            # Детальная аналитика просмотра видео с временными метками и эффективностью
+            # period: week, month, quarter
+            # Также поддерживаем start_date и end_date для календаря
+            timeline_start_date = None
+            timeline_end_date = datetime.utcnow()
+            
+            # Если указаны даты в параметрах запроса, используем их
+            if start_date and end_date:
+                try:
+                    timeline_start_date = datetime.strptime(start_date, '%Y-%m-%d')
+                    timeline_end_date = datetime.strptime(end_date, '%Y-%m-%d')
+                    # Добавляем время конца дня
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59)
+                except Exception as e:
+                    logger.error(f"Error parsing dates: {e}")
+                    timeline_start_date = None
+            
+            # Если даты не указаны, используем period
+            if timeline_start_date is None:
+                if period == 'day':
+                    # Один день (24 часа) - сегодня
+                    timeline_start_date = timeline_end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                elif period == 'week':
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+                elif period == 'month':
+                    timeline_start_date = timeline_end_date - timedelta(days=30)
+                elif period == 'quarter':
+                    timeline_start_date = timeline_end_date - timedelta(days=90)
+                else:
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+            
+            start_date = timeline_start_date
+            end_date = timeline_end_date
+            
+            # УНИФИЦИРОВАННЫЙ ИСТОЧНИК: time_activity - основная коллекция для всех типов активности
+            # Получаем данные о просмотре видео с временными метками
+            video_timeline = []
+            lessons_cursor = db.lessons_v2.find({"is_active": True})
+            lessons = await lessons_cursor.to_list(length=None)
+            lessons_dict = {l["id"]: l for l in lessons}
+            
+            # Используем time_activity как основной источник (activity_type = "video_watch")
+            video_records = []
+            if "time_activity" in collection_names:
+                video_records_cursor = db.time_activity.find({
+            "user_id": user_id,
+                    "$or": [
+                        {"last_activity_at": {"$gte": start_date, "$lte": end_date}},
+                        {"created_at": {"$gte": start_date, "$lte": end_date}}
+                    ],
+                    "activity_type": "video_watch"
+                })
+                async for r in video_records_cursor:
+                    r_dict = dict(r)
+                    r_dict.pop("_id", None)
+                    video_records.append(r_dict)
+            
+            # Дополнительный источник: video_watch_time (для обратной совместимости)
+            if "video_watch_time" in collection_names and len(video_records) == 0:
+                video_watch_records = await db.video_watch_time.find({
+                    "user_id": user_id,
+                    "$or": [
+                        {"last_updated": {"$gte": start_date, "$lte": end_date}},
+                        {"created_at": {"$gte": start_date, "$lte": end_date}}
+                    ]
+                }).sort("created_at", 1).to_list(length=None)
+                video_records.extend(video_watch_records)
+            
+            if video_records:
+                # Группируем по часам для детализации
+                timeline_data = {}
+                for record in video_records:
+                    # Используем created_at или last_activity_at из time_activity, или created_at/last_updated из video_watch_time
+                    created_at = record.get("created_at") or record.get("last_activity_at") or record.get("last_updated")
+                    if created_at:
+                        if isinstance(created_at, str):
+                            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        hour_key = created_at.replace(minute=0, second=0, microsecond=0)
+                        
+                        if hour_key not in timeline_data:
+                            timeline_data[hour_key] = {
+                                "timestamp": hour_key.isoformat(),
+                                "date": hour_key.strftime('%d.%m'),
+                                "time": hour_key.strftime('%H:00'),
+                                "video_minutes": 0,
+                                "is_watching": False,
+                                "efficiency": 0.0,
+                                "efficiency_count": 0,
+                                "planetary_hour": None,
+                                "day_planet": None,
+                                "lesson_planet": None
+                            }
+                        
+                        lesson_id = record.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        
+                        # Получаем информацию о планетарном часе
+                        planetary_hour_info = get_planetary_hour_for_datetime(created_at, user_city)
+                        current_hour_planet = planetary_hour_info.get("planet")
+                        weekday = created_at.weekday()
+                        planets_order = ['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya']
+                        day_planet = planets_order[weekday]
+                        
+                        efficiency = 50.0
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet,
+                                lesson_planet,
+                                created_at,
+                                False,
+                                0.0,
+                                user_city
+                            )
+                        
+                        # Для time_activity используем total_minutes, для video_watch_time тоже total_minutes
+                        video_minutes = record.get("total_minutes", 0)
+                        timeline_data[hour_key]["video_minutes"] += video_minutes
+                        timeline_data[hour_key]["is_watching"] = True
+                        timeline_data[hour_key]["efficiency"] += efficiency
+                        timeline_data[hour_key]["efficiency_count"] += 1
+                        timeline_data[hour_key]["planetary_hour"] = current_hour_planet
+                        timeline_data[hour_key]["day_planet"] = day_planet
+                        if lesson_planet:
+                            timeline_data[hour_key]["lesson_planet"] = lesson_planet
+                
+                # Заполняем все часы в периоде (даже без просмотра)
+                current = start_date.replace(minute=0, second=0, microsecond=0)
+                while current <= end_date:
+                    hour_key = current
+                    if hour_key not in timeline_data:
+                        timeline_data[hour_key] = {
+                            "timestamp": hour_key.isoformat(),
+                            "date": hour_key.strftime('%d.%m'),
+                            "time": hour_key.strftime('%H:00'),
+                            "video_minutes": 0,
+                            "is_watching": False,
+                            "efficiency": 0.0,
+                            "efficiency_count": 0
+                        }
+                    current += timedelta(hours=1)
+                
+                # Рассчитываем среднюю эффективность для каждого часа
+                for hour_key in timeline_data:
+                    if timeline_data[hour_key].get("efficiency_count", 0) > 0:
+                        timeline_data[hour_key]["efficiency"] = round(
+                            timeline_data[hour_key]["efficiency"] / timeline_data[hour_key]["efficiency_count"], 
+                            1
+                        )
+                    if "efficiency_count" in timeline_data[hour_key]:
+                        del timeline_data[hour_key]["efficiency_count"]
+                
+                # Сортируем по времени
+                video_timeline = sorted(timeline_data.values(), key=lambda x: x["timestamp"])
+            
+            return {"timeline": video_timeline, "period": period}
+        
+        elif section == 'theory-timeline':
+            # Детальная аналитика изучения теории с временными метками и эффективностью
+            # period: week, month, quarter, day
+            # Также поддерживаем start_date и end_date для календаря
+            timeline_start_date = None
+            timeline_end_date = datetime.utcnow()
+            
+            # Если указаны даты в параметрах запроса, используем их
+            if start_date and end_date:
+                try:
+                    timeline_start_date = datetime.strptime(start_date, '%Y-%m-%d')
+                    timeline_end_date = datetime.strptime(end_date, '%Y-%m-%d')
+                    # Добавляем время конца дня
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59)
+                except Exception as e:
+                    logger.error(f"Error parsing dates: {e}")
+                    timeline_start_date = None
+            
+            # Если даты не указаны, используем period
+            if timeline_start_date is None:
+                if period == 'day':
+                    # Один день (24 часа) - сегодня
+                    timeline_start_date = timeline_end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                elif period == 'week':
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+                elif period == 'month':
+                    timeline_start_date = timeline_end_date - timedelta(days=30)
+                elif period == 'quarter':
+                    timeline_start_date = timeline_end_date - timedelta(days=90)
+                else:
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+            
+            start_date = timeline_start_date
+            end_date = timeline_end_date
+            
+            # УНИФИЦИРОВАННЫЙ ИСТОЧНИК: time_activity - основная коллекция для всех типов активности
+            # Получаем данные о просмотре теории с временными метками
+            theory_timeline = []
+            lessons_cursor = db.lessons_v2.find({"is_active": True})
+            lessons = await lessons_cursor.to_list(length=None)
+            lessons_dict = {l["id"]: l for l in lessons}
+            
+            # Используем time_activity как основной источник (activity_type = "theory" или "theory_view")
+            theory_records = []
+            if "time_activity" in collection_names:
+                theory_records_cursor = db.time_activity.find({
+                    "user_id": user_id,
+                    "$or": [
+                        {"last_activity_at": {"$gte": start_date, "$lte": end_date}},
+                        {"created_at": {"$gte": start_date, "$lte": end_date}}
+                    ],
+                    "activity_type": {"$in": ["theory", "theory_view"]}
+                })
+                async for r in theory_records_cursor:
+                    r_dict = dict(r)
+                    r_dict.pop("_id", None)
+                    theory_records.append(r_dict)
+            
+            # Дополнительный источник: lesson_progress (для обратной совместимости)
+            if "lesson_progress" in collection_names and len(theory_records) == 0:
+                lesson_progress_records = await db.lesson_progress.find({
+                    "user_id": user_id,
+                    "last_accessed": {"$gte": start_date, "$lte": end_date}
+                }).sort("last_accessed", 1).to_list(length=None)
+                # Преобразуем lesson_progress в формат, совместимый с time_activity
+                for lp_record in lesson_progress_records:
+                    theory_records.append({
+                        "last_accessed": lp_record.get("last_accessed"),
+                        "lesson_id": lp_record.get("lesson_id"),
+                        "user_id": lp_record.get("user_id"),
+                        "activity_type": "theory_view"
+                    })
+            
+            if theory_records:
+                # Группируем по часам для детализации
+                timeline_data = {}
+                for record in theory_records:
+                    # Используем last_accessed из lesson_progress или created_at/last_activity_at из time_activity
+                    last_accessed = record.get("last_accessed") or record.get("created_at") or record.get("last_activity_at")
+                    if last_accessed:
+                        if isinstance(last_accessed, str):
+                            last_accessed = datetime.fromisoformat(last_accessed.replace('Z', '+00:00'))
+                        hour_key = last_accessed.replace(minute=0, second=0, microsecond=0)
+                        
+                        lesson_id = record.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        
+                        efficiency = 50.0
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet,
+                                lesson_planet,
+                                last_accessed,
+                                False,
+                                0.0,
+                                user_city
+                            )
+                        
+                        if hour_key not in timeline_data:
+                            timeline_data[hour_key] = {
+                                "timestamp": hour_key.isoformat(),
+                                "date": hour_key.strftime('%d.%m'),
+                                "time": hour_key.strftime('%H:00'),
+                                "theory_sessions": 0,
+                                "is_watching": False,  # Добавляем поле is_watching
+                                "efficiency": 0.0,
+                                "efficiency_count": 0
+                            }
+                        
+                        timeline_data[hour_key]["theory_sessions"] += 1
+                        timeline_data[hour_key]["is_watching"] = True  # Устанавливаем is_watching в True при наличии активности
+                        timeline_data[hour_key]["efficiency"] += efficiency
+                        timeline_data[hour_key]["efficiency_count"] += 1
+                
+                # Заполняем все часы в периоде (даже без активности)
+                current = start_date.replace(minute=0, second=0, microsecond=0)
+                while current <= end_date:
+                    hour_key = current
+                    if hour_key not in timeline_data:
+                        timeline_data[hour_key] = {
+                            "timestamp": hour_key.isoformat(),
+                            "date": hour_key.strftime('%d.%m'),
+                            "time": hour_key.strftime('%H:00'),
+                            "theory_sessions": 0,
+                            "is_watching": False,  # Добавляем поле is_watching
+                            "efficiency": 0.0,
+                            "efficiency_count": 0
+                        }
+                    current += timedelta(hours=1)
+                
+                # Рассчитываем среднюю эффективность для каждого часа
+                for hour_key in timeline_data:
+                    if timeline_data[hour_key]["efficiency_count"] > 0:
+                        timeline_data[hour_key]["efficiency"] = round(
+                            timeline_data[hour_key]["efficiency"] / timeline_data[hour_key]["efficiency_count"], 
+                            1
+                        )
+                    del timeline_data[hour_key]["efficiency_count"]
+                
+                # Сортируем по времени
+                theory_timeline = sorted(timeline_data.values(), key=lambda x: x["timestamp"])
+            
+            return {"timeline": theory_timeline, "period": period}
+        
+        elif section == 'challenge-timeline':
+            # Детальная аналитика выполнения челленджей с временными метками и эффективностью
+            # period: week, month, quarter, day
+            # Также поддерживаем start_date и end_date для календаря
+            timeline_start_date = None
+            timeline_end_date = datetime.utcnow()
+            
+            # Если указаны даты в параметрах запроса, используем их
+            if start_date and end_date:
+                try:
+                    timeline_start_date = datetime.strptime(start_date, '%Y-%m-%d')
+                    timeline_end_date = datetime.strptime(end_date, '%Y-%m-%d')
+                    # Добавляем время конца дня
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59)
+                except Exception as e:
+                    logger.error(f"Error parsing dates: {e}")
+                    timeline_start_date = None
+            
+            # Если даты не указаны, используем period
+            if timeline_start_date is None:
+                if period == 'day':
+                    # Один день (24 часа) - сегодня
+                    timeline_start_date = timeline_end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                elif period == 'week':
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+                elif period == 'month':
+                    timeline_start_date = timeline_end_date - timedelta(days=30)
+                elif period == 'quarter':
+                    timeline_start_date = timeline_end_date - timedelta(days=90)
+                else:
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+            
+            start_date = timeline_start_date
+            end_date = timeline_end_date
+            
+            # УНИФИЦИРОВАННЫЙ ИСТОЧНИК: time_activity - основная коллекция для всех типов активности
+            # Получаем данные о челленджах с временными метками
+            challenge_timeline = []
+            lessons_cursor = db.lessons_v2.find({"is_active": True})
+            lessons = await lessons_cursor.to_list(length=None)
+            lessons_dict = {l["id"]: l for l in lessons}
+            
+            challenge_records = []
+            # Используем time_activity как основной источник (activity_type = "challenge")
+            if "time_activity" in collection_names:
+                challenge_records_cursor = db.time_activity.find({
+            "user_id": user_id,
+                    "$or": [
+                        {"last_activity_at": {"$gte": start_date, "$lte": end_date}},
+                        {"created_at": {"$gte": start_date, "$lte": end_date}}
+                    ],
+                    "activity_type": "challenge"
+                })
+                async for r in challenge_records_cursor:
+                    r_dict = dict(r)
+                    r_dict.pop("_id", None)
+                    challenge_records.append(r_dict)
+            
+            # Дополнительный источник: challenge_progress (для обратной совместимости)
+            if "challenge_progress" in collection_names:
+                challenge_progress_records = await db.challenge_progress.find({
+                    "user_id": user_id,
+                    "last_updated": {"$gte": start_date, "$lte": end_date}
+                }).sort("last_updated", 1).to_list(length=None)
+                # Преобразуем challenge_progress в формат, совместимый с time_activity
+                for cp_record in challenge_progress_records:
+                    challenge_records.append({
+                        "last_updated": cp_record.get("last_updated"),
+                        "lesson_id": cp_record.get("lesson_id"),
+                        "user_id": cp_record.get("user_id"),
+                        "is_completed": cp_record.get("is_completed", False),
+                        "completed_days": cp_record.get("completed_days", []),
+                        "activity_type": "challenge"
+                    })
+            
+            logger.info(f"Challenge timeline: found {len(challenge_records)} records for period {period}, start_date={start_date}, end_date={end_date}")
+            
+            # Инициализируем timeline_data для заполнения всех часов
+            timeline_data = {}
+            
+            if challenge_records:
+                # Группируем по часам для детализации
+                for record in challenge_records:
+                    # Используем last_updated из challenge_progress или created_at/last_activity_at из time_activity
+                    last_updated = record.get("last_updated") or record.get("created_at") or record.get("last_activity_at")
+                    if last_updated:
+                        if isinstance(last_updated, str):
+                            # Преобразуем строку в datetime, убирая timezone info для совместимости
+                            last_updated = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                            # Преобразуем в naive datetime (без timezone) для совместимости с БД
+                            if last_updated.tzinfo:
+                                last_updated = last_updated.replace(tzinfo=None)
+                        hour_key = last_updated.replace(minute=0, second=0, microsecond=0)
+                        
+                        lesson_id = record.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        
+                        is_completed = record.get("is_completed", False)
+                        completed_days = record.get("completed_days", [])
+                        total_days = lesson["challenge"].get("total_days", 0) if lesson and lesson.get("challenge") else 0
+                        completion_percentage = (len(completed_days) / total_days * 100) if total_days > 0 else 0
+                        
+                        efficiency = 50.0
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet,
+                                lesson_planet,
+                                last_updated,
+                                is_completed,
+                                completion_percentage,
+                                user_city
+                            )
+                        
+                        if hour_key not in timeline_data:
+                            timeline_data[hour_key] = {
+                                "timestamp": hour_key.isoformat(),
+                                "date": hour_key.strftime('%d.%m'),
+                                "time": hour_key.strftime('%H:00'),
+                                "challenge_updates": 0,
+                                "completed_challenges": 0,
+                                "efficiency": 0.0,
+                                "efficiency_count": 0
+                            }
+                        
+                        timeline_data[hour_key]["challenge_updates"] += 1
+                        if is_completed:
+                            timeline_data[hour_key]["completed_challenges"] += 1
+                        timeline_data[hour_key]["efficiency"] += efficiency
+                        timeline_data[hour_key]["efficiency_count"] += 1
+            
+            # Заполняем все часы в периоде (даже без активности)
+            current = start_date.replace(minute=0, second=0, microsecond=0)
+            while current <= end_date:
+                hour_key = current
+                if hour_key not in timeline_data:
+                    timeline_data[hour_key] = {
+                        "timestamp": hour_key.isoformat(),
+                        "date": hour_key.strftime('%d.%m'),
+                        "time": hour_key.strftime('%H:00'),
+                        "challenge_updates": 0,
+                        "completed_challenges": 0,
+                        "efficiency": 0.0,
+                        "efficiency_count": 0
+                    }
+                current += timedelta(hours=1)
+                
+                # Рассчитываем среднюю эффективность для каждого часа
+                for hour_key in timeline_data:
+                    if "efficiency_count" in timeline_data[hour_key] and timeline_data[hour_key]["efficiency_count"] > 0:
+                        timeline_data[hour_key]["efficiency"] = round(
+                            timeline_data[hour_key]["efficiency"] / timeline_data[hour_key]["efficiency_count"], 
+                            1
+                        )
+                    if "efficiency_count" in timeline_data[hour_key]:
+                        del timeline_data[hour_key]["efficiency_count"]
+                
+                # Сортируем по времени
+                challenge_timeline = sorted(timeline_data.values(), key=lambda x: x["timestamp"])
+            
+            return {"timeline": challenge_timeline, "period": period}
+        
+        elif section == 'quiz-timeline':
+            # Детальная аналитика прохождения тестов с временными метками и эффективностью
+            # period: week, month, quarter, day
+            # Также поддерживаем start_date и end_date для календаря
+            timeline_start_date = None
+            timeline_end_date = datetime.utcnow()
+            
+            # Если указаны даты в параметрах запроса, используем их
+            if start_date and end_date:
+                try:
+                    timeline_start_date = datetime.strptime(start_date, '%Y-%m-%d')
+                    timeline_end_date = datetime.strptime(end_date, '%Y-%m-%d')
+                    # Добавляем время конца дня
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59)
+                except Exception as e:
+                    logger.error(f"Error parsing dates: {e}")
+                    timeline_start_date = None
+            
+            # Если даты не указаны, используем period
+            if timeline_start_date is None:
+                if period == 'day':
+                    # Один день (24 часа) - сегодня
+                    timeline_start_date = timeline_end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                elif period == 'week':
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+                elif period == 'month':
+                    timeline_start_date = timeline_end_date - timedelta(days=30)
+                elif period == 'quarter':
+                    timeline_start_date = timeline_end_date - timedelta(days=90)
+                else:
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+            
+            start_date = timeline_start_date
+            end_date = timeline_end_date
+            
+            # УНИФИЦИРОВАННЫЙ ИСТОЧНИК: time_activity - основная коллекция для всех типов активности
+            # Получаем данные о тестах с временными метками
+            quiz_timeline = []
+            lessons_cursor = db.lessons_v2.find({"is_active": True})
+            lessons = await lessons_cursor.to_list(length=None)
+            lessons_dict = {l["id"]: l for l in lessons}
+            
+            quiz_records = []
+            # Используем time_activity как основной источник (activity_type = "quiz")
+            if "time_activity" in collection_names:
+                quiz_records_cursor = db.time_activity.find({
+            "user_id": user_id,
+                    "$or": [
+                        {"last_activity_at": {"$gte": start_date, "$lte": end_date}},
+                        {"created_at": {"$gte": start_date, "$lte": end_date}}
+                    ],
+                    "activity_type": "quiz"
+                })
+                async for r in quiz_records_cursor:
+                    r_dict = dict(r)
+                    r_dict.pop("_id", None)
+                    quiz_records.append(r_dict)
+            
+            # Дополнительный источник: quiz_attempts (для обратной совместимости)
+            if "quiz_attempts" in collection_names:
+                quiz_attempts_records = await db.quiz_attempts.find({
+                    "user_id": user_id,
+                    "attempted_at": {"$gte": start_date, "$lte": end_date}
+                }).sort("attempted_at", 1).to_list(length=None)
+                # Преобразуем quiz_attempts в формат, совместимый с time_activity
+                for qa_record in quiz_attempts_records:
+                    quiz_records.append({
+                        "attempted_at": qa_record.get("attempted_at"),
+                        "lesson_id": qa_record.get("lesson_id"),
+                        "user_id": qa_record.get("user_id"),
+                        "passed": qa_record.get("passed", False),
+                        "score": qa_record.get("score", 0),
+                        "activity_type": "quiz"
+                    })
+            
+            logger.info(f"Quiz timeline: found {len(quiz_records)} records for period {period}, start_date={start_date}, end_date={end_date}")
+            
+            # Инициализируем timeline_data для заполнения всех часов
+            timeline_data = {}
+            
+            if quiz_records:
+                # Группируем по часам для детализации
+                for record in quiz_records:
+                    # Используем attempted_at из quiz_attempts или created_at/last_activity_at из time_activity
+                    attempted_at = record.get("attempted_at") or record.get("created_at") or record.get("last_activity_at")
+                    if attempted_at:
+                        if isinstance(attempted_at, str):
+                            # Преобразуем строку в datetime, убирая timezone info для совместимости
+                            attempted_at = datetime.fromisoformat(attempted_at.replace('Z', '+00:00'))
+                            # Преобразуем в naive datetime (без timezone) для совместимости с БД
+                            if attempted_at.tzinfo:
+                                attempted_at = attempted_at.replace(tzinfo=None)
+                        hour_key = attempted_at.replace(minute=0, second=0, microsecond=0)
+                        
+                        lesson_id = record.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        
+                        efficiency = 50.0
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet,
+                                lesson_planet,
+                                attempted_at,
+                                False,
+                                0.0,
+                                user_city
+                            )
+                        
+                        # Учитываем результат теста в эффективности
+                        is_passed = record.get("passed", False) or record.get("is_passed", False)
+                        score = record.get("score", 0)
+                        max_score = record.get("max_possible_score", 100)
+                        score_percentage = (score / max_score * 100) if max_score > 0 else 0
+                        
+                        # Если тест пройден успешно, увеличиваем эффективность
+                        if is_passed:
+                            efficiency = min(100.0, efficiency + (score_percentage * 0.2))
+                        
+                        if hour_key not in timeline_data:
+                            timeline_data[hour_key] = {
+                                "timestamp": hour_key.isoformat(),
+                                "date": hour_key.strftime('%d.%m'),
+                                "time": hour_key.strftime('%H:00'),
+                                "quiz_attempts": 0,
+                                "passed_quizzes": 0,
+                                "avg_score": 0.0,
+                                "total_score": 0.0,
+                                "score_count": 0,
+                                "efficiency": 0.0,
+                                "efficiency_count": 0
+                            }
+                        
+                        timeline_data[hour_key]["quiz_attempts"] += 1
+                        if is_passed:
+                            timeline_data[hour_key]["passed_quizzes"] += 1
+                        timeline_data[hour_key]["total_score"] += score_percentage
+                        timeline_data[hour_key]["score_count"] += 1
+                        timeline_data[hour_key]["efficiency"] += efficiency
+                        timeline_data[hour_key]["efficiency_count"] += 1
+            
+            # Заполняем все часы в периоде (даже без активности)
+            current = start_date.replace(minute=0, second=0, microsecond=0)
+            while current <= end_date:
+                hour_key = current
+                if hour_key not in timeline_data:
+                    timeline_data[hour_key] = {
+                        "timestamp": hour_key.isoformat(),
+                        "date": hour_key.strftime('%d.%m'),
+                        "time": hour_key.strftime('%H:00'),
+                        "quiz_attempts": 0,
+                        "passed_quizzes": 0,
+                        "avg_score": 0.0,
+                        "total_score": 0.0,
+                        "score_count": 0,
+                        "efficiency": 0.0,
+                        "efficiency_count": 0
+                    }
+                current += timedelta(hours=1)
+                
+                # Рассчитываем средние значения для каждого часа
+                for hour_key in timeline_data:
+                    if "score_count" in timeline_data[hour_key] and timeline_data[hour_key]["score_count"] > 0:
+                        timeline_data[hour_key]["avg_score"] = round(
+                            timeline_data[hour_key]["total_score"] / timeline_data[hour_key]["score_count"], 
+                            1
+                        )
+                    if "efficiency_count" in timeline_data[hour_key] and timeline_data[hour_key]["efficiency_count"] > 0:
+                        timeline_data[hour_key]["efficiency"] = round(
+                            timeline_data[hour_key]["efficiency"] / timeline_data[hour_key]["efficiency_count"], 
+                            1
+                        )
+                    if "total_score" in timeline_data[hour_key]:
+                        del timeline_data[hour_key]["total_score"]
+                    if "score_count" in timeline_data[hour_key]:
+                        del timeline_data[hour_key]["score_count"]
+                    if "efficiency_count" in timeline_data[hour_key]:
+                        del timeline_data[hour_key]["efficiency_count"]
+                
+                # Сортируем по времени
+                quiz_timeline = sorted(timeline_data.values(), key=lambda x: x["timestamp"])
+            
+            return {"timeline": quiz_timeline, "period": period}
+        
+        elif section == 'challenges':
+            # Детальная аналитика по челленджам
+            challenge_details = []
+            if "challenge_progress" in collection_names:
+                challenge_cursor = db.challenge_progress.find({"user_id": user_id})
+                challenge_attempts = await challenge_cursor.to_list(length=None)
+                
+                lessons_cursor = db.lessons_v2.find({"is_active": True})
+                lessons = await lessons_cursor.to_list(length=None)
+                lessons_dict = {l["id"]: l for l in lessons}
+                
+                for attempt in challenge_attempts:
+                    lesson = lessons_dict.get(attempt.get("lesson_id"))
+                    challenge = lesson.get("challenge") if lesson else None
+                    
+                    # Время на челлендж
+                    challenge_time = 0
+                    if "time_activity" in collection_names:
+                        time_records = await db.time_activity.find({
+            "user_id": user_id,
+                            "lesson_id": attempt.get("lesson_id")
+                        }).to_list(length=None)
+                        challenge_time = sum(r.get("total_minutes", 0) for r in time_records)
+                    
+                    challenge_details.append({
+                        "lesson_id": attempt.get("lesson_id"),
+                        "lesson_title": lesson.get("title", "Урок") if lesson else "Урок",
+                        "challenge_id": attempt.get("challenge_id"),
+                        "current_day": attempt.get("current_day", 0),
+                        "completed_days": attempt.get("completed_days", []),
+                        "total_days": challenge.get("total_days", 0) if challenge else 0,
+                        "completion_percentage": round((len(attempt.get("completed_days", [])) / challenge.get("total_days", 1)) * 100, 1) if challenge and challenge.get("total_days") else 0,
+                        "is_completed": attempt.get("is_completed", False),
+                        "points_earned": attempt.get("points_earned", 0),
+                        "time_minutes": challenge_time,
+                        "daily_notes": attempt.get("daily_notes", []),
+                        "started_at": attempt.get("started_at").isoformat() if attempt.get("started_at") else None,
+                        "completed_at": attempt.get("completed_at").isoformat() if attempt.get("completed_at") else None,
+                        "last_updated": attempt.get("last_updated").isoformat() if attempt.get("last_updated") else None
+                    })
+            
+            logger.info(f"Returning {len(challenge_details)} challenge details")
+            return {"analytics": challenge_details}
+        
+        elif section == 'quizzes':
+            # Детальная аналитика по тестам
+            quiz_details = []
+            if "quiz_attempts" in collection_names:
+                quiz_cursor = db.quiz_attempts.find({"user_id": user_id})
+                quiz_attempts = await quiz_cursor.to_list(length=None)
+                
+                lessons_cursor = db.lessons_v2.find({"is_active": True})
+                lessons = await lessons_cursor.to_list(length=None)
+                lessons_dict = {l["id"]: l for l in lessons}
+                
+                # Группируем по урокам
+                attempts_by_lesson = {}
+                for attempt in quiz_attempts:
+                    lesson_id = attempt.get("lesson_id")
+                    if lesson_id not in attempts_by_lesson:
+                        attempts_by_lesson[lesson_id] = []
+                    attempts_by_lesson[lesson_id].append(attempt)
+                
+                for lesson_id, attempts in attempts_by_lesson.items():
+                    lesson = lessons_dict.get(lesson_id)
+                    quiz = lesson.get("quiz") if lesson else None
+                    max_possible_score = sum(q.get("points", 10) for q in quiz.get("questions", [])) if quiz and quiz.get("questions") else 100
+                    
+                    quiz_details.append({
+                        "lesson_id": lesson_id,
+                        "lesson_title": lesson.get("title", "Урок") if lesson else "Урок",
+                        "total_attempts": len(attempts),
+                        "passed_attempts": sum(1 for a in attempts if a.get("passed", False)),
+                        "best_score": max(a.get("score", 0) for a in attempts),
+                        "avg_score": round(sum(a.get("score", 0) for a in attempts) / len(attempts), 1) if attempts else 0,
+                        "max_possible_score": max_possible_score,
+                        "total_points_earned": sum(a.get("points_earned", 0) for a in attempts),
+                        "total_time_minutes": sum(a.get("time_spent_minutes", 0) for a in attempts),
+                        "attempts": [
+                            {
+                                "attempt_id": a.get("id"),
+                                "score": a.get("score", 0),
+                                "score_percentage": round((a.get("score", 0) / max_possible_score) * 100, 1) if max_possible_score > 0 else 0,
+                                "passed": a.get("passed", False),
+                                "points_earned": a.get("points_earned", 0),
+                                "attempted_at": a.get("attempted_at").isoformat() if a.get("attempted_at") else None,
+                                "time_spent_minutes": a.get("time_spent_minutes", 0)
+                            }
+                            for a in attempts
+                        ]
+                    })
+            
+            logger.info(f"Returning {len(quiz_details)} quiz details")
+            return {"analytics": quiz_details}
+        
+        elif section == 'exercises':
+            # Детальная аналитика по упражнениям
+            exercise_details = []
+            if "exercise_responses" in collection_names:
+                exercise_cursor = db.exercise_responses.find({"user_id": user_id})
+                exercise_responses = await exercise_cursor.to_list(length=None)
+                
+                lessons_cursor = db.lessons_v2.find({"is_active": True})
+                lessons = await lessons_cursor.to_list(length=None)
+                lessons_dict = {l["id"]: l for l in lessons}
+                
+                # Группируем по урокам
+                responses_by_lesson = {}
+                for response in exercise_responses:
+                    lesson_id = response.get("lesson_id")
+                    if lesson_id not in responses_by_lesson:
+                        responses_by_lesson[lesson_id] = []
+                    responses_by_lesson[lesson_id].append(response)
+                
+                for lesson_id, responses in responses_by_lesson.items():
+                    lesson = lessons_dict.get(lesson_id)
+                    
+                    exercise_details.append({
+            "lesson_id": lesson_id,
+                        "lesson_title": lesson.get("title", "Урок") if lesson else "Урок",
+                        "total_exercises": len(responses),
+                        "reviewed_exercises": sum(1 for r in responses if r.get("reviewed", False)),
+                        "total_points_earned": sum(r.get("points_earned", 0) for r in responses),
+                        "total_review_time_minutes": sum(r.get("review_time_minutes", 0) for r in responses),
+                        "exercises": [
+                            {
+                                "exercise_id": r.get("exercise_id"),
+                                "response_text": r.get("response_text", ""),
+                                "points_earned": r.get("points_earned", 0),
+                                "reviewed": r.get("reviewed", False),
+                                "admin_comment": r.get("admin_comment", ""),
+                                "submitted_at": r.get("submitted_at").isoformat() if r.get("submitted_at") else None,
+                                "reviewed_at": r.get("reviewed_at").isoformat() if r.get("reviewed_at") else None,
+                                "review_time_minutes": r.get("review_time_minutes", 0)
+                            }
+                            for r in responses
+                        ]
+                    })
+            
+            logger.info(f"Returning {len(exercise_details)} exercise details")
+            return {"analytics": exercise_details}
+        
+        elif section == 'exercise-timeline':
+            # Детальная аналитика выполнения упражнений с временными метками и эффективностью
+            # period: week, month, quarter, day
+            # Также поддерживаем start_date и end_date для календаря
+            timeline_start_date = None
+            timeline_end_date = datetime.utcnow()
+            
+            # Если указаны даты в параметрах запроса, используем их
+            if start_date and end_date:
+                try:
+                    timeline_start_date = datetime.strptime(start_date, '%Y-%m-%d')
+                    timeline_end_date = datetime.strptime(end_date, '%Y-%m-%d')
+                    # Добавляем время конца дня
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59)
+                except Exception as e:
+                    logger.error(f"Error parsing dates: {e}")
+                    timeline_start_date = None
+            
+            # Если даты не указаны, используем period
+            if timeline_start_date is None:
+                if period == 'day':
+                    # Один день (24 часа) - сегодня
+                    timeline_start_date = timeline_end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    timeline_end_date = timeline_end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                elif period == 'week':
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+                elif period == 'month':
+                    timeline_start_date = timeline_end_date - timedelta(days=30)
+                elif period == 'quarter':
+                    timeline_start_date = timeline_end_date - timedelta(days=90)
+                else:
+                    timeline_start_date = timeline_end_date - timedelta(days=7)
+            
+            start_date = timeline_start_date
+            end_date = timeline_end_date
+            
+            # УНИФИЦИРОВАННЫЙ ИСТОЧНИК: time_activity - основная коллекция для всех типов активности
+            # Получаем данные об упражнениях с временными метками
+            exercise_timeline = []
+            lessons_cursor = db.lessons_v2.find({"is_active": True})
+            lessons = await lessons_cursor.to_list(length=None)
+            lessons_dict = {l["id"]: l for l in lessons}
+            
+            exercise_records = []
+            # Используем time_activity как основной источник (activity_type = "exercise")
+            if "time_activity" in collection_names:
+                exercise_records_cursor = db.time_activity.find({
+            "user_id": user_id,
+                    "$or": [
+                        {"last_activity_at": {"$gte": start_date, "$lte": end_date}},
+                        {"created_at": {"$gte": start_date, "$lte": end_date}}
+                    ],
+                    "activity_type": "exercise"
+                })
+                async for r in exercise_records_cursor:
+                    r_dict = dict(r)
+                    r_dict.pop("_id", None)
+                    exercise_records.append(r_dict)
+            
+            # Дополнительный источник: exercise_responses (для обратной совместимости)
+            if "exercise_responses" in collection_names:
+                exercise_responses_records = await db.exercise_responses.find({
+                    "user_id": user_id,
+                    "submitted_at": {"$gte": start_date, "$lte": end_date}
+                }).sort("submitted_at", 1).to_list(length=None)
+                # Преобразуем exercise_responses в формат, совместимый с time_activity
+                for er_record in exercise_responses_records:
+                    exercise_records.append({
+                        "submitted_at": er_record.get("submitted_at"),
+                        "lesson_id": er_record.get("lesson_id"),
+                        "user_id": er_record.get("user_id"),
+                        "exercise_id": er_record.get("exercise_id"),
+                        "reviewed": er_record.get("reviewed", False),
+                        "points_earned": er_record.get("points_earned", 0),
+                        "activity_type": "exercise"
+                    })
+            
+            logger.info(f"Exercise timeline: found {len(exercise_records)} records for period {period}, start_date={start_date}, end_date={end_date}")
+            
+            # Инициализируем timeline_data для заполнения всех часов
+            timeline_data = {}
+            
+            if exercise_records:
+                # Группируем по часам для детализации
+                for record in exercise_records:
+                    # Используем submitted_at из exercise_responses или created_at/last_activity_at из time_activity
+                    submitted_at = record.get("submitted_at") or record.get("created_at") or record.get("last_activity_at")
+                    if submitted_at:
+                        if isinstance(submitted_at, str):
+                            # Преобразуем строку в datetime, убирая timezone info для совместимости
+                            submitted_at = datetime.fromisoformat(submitted_at.replace('Z', '+00:00'))
+                            # Преобразуем в naive datetime (без timezone) для совместимости с БД
+                            if submitted_at.tzinfo:
+                                submitted_at = submitted_at.replace(tzinfo=None)
+                        hour_key = submitted_at.replace(minute=0, second=0, microsecond=0)
+                        
+                        lesson_id = record.get("lesson_id")
+                        lesson = lessons_dict.get(lesson_id) if lesson_id else None
+                        lesson_planet = detect_lesson_planet(lesson.get("title", ""), "") if lesson else None
+                        
+                        efficiency = 50.0
+                        if user_ruling_planet and lesson_planet:
+                            efficiency = calculate_activity_efficiency(
+                                user_ruling_planet,
+                                lesson_planet,
+                                submitted_at,
+                                False,
+                                0.0,
+                                user_city
+                            )
+                        
+                        # Учитываем, что упражнение проверено
+                        is_reviewed = record.get("reviewed", False)
+                        points_earned = record.get("points_earned", 0) or record.get("total_points", 0)
+                        if is_reviewed and points_earned > 0:
+                            efficiency = min(100.0, efficiency + (points_earned * 0.5))
+                        
+                        if hour_key not in timeline_data:
+                            timeline_data[hour_key] = {
+                                "timestamp": hour_key.isoformat(),
+                                "date": hour_key.strftime('%d.%m'),
+                                "time": hour_key.strftime('%H:00'),
+                                "exercise_submissions": 0,
+                                "reviewed_exercises": 0,
+                                "total_points": 0,
+                                "efficiency": 0.0,
+                                "efficiency_count": 0
+                            }
+                        
+                        timeline_data[hour_key]["exercise_submissions"] += 1
+                        if is_reviewed:
+                            timeline_data[hour_key]["reviewed_exercises"] += 1
+                        timeline_data[hour_key]["total_points"] += points_earned
+                        timeline_data[hour_key]["efficiency"] += efficiency
+                        timeline_data[hour_key]["efficiency_count"] += 1
+            
+            # Заполняем все часы в периоде (даже без активности)
+            current = start_date.replace(minute=0, second=0, microsecond=0)
+            while current <= end_date:
+                hour_key = current
+                if hour_key not in timeline_data:
+                    timeline_data[hour_key] = {
+                        "timestamp": hour_key.isoformat(),
+                        "date": hour_key.strftime('%d.%m'),
+                        "time": hour_key.strftime('%H:00'),
+                        "exercise_submissions": 0,
+                        "reviewed_exercises": 0,
+                        "total_points": 0,
+                        "efficiency": 0.0,
+                        "efficiency_count": 0
+                    }
+                current += timedelta(hours=1)
+            
+            # Рассчитываем среднюю эффективность для каждого часа
+            for hour_key in timeline_data:
+                if "efficiency_count" in timeline_data[hour_key] and timeline_data[hour_key]["efficiency_count"] > 0:
+                    timeline_data[hour_key]["efficiency"] = round(
+                        timeline_data[hour_key]["efficiency"] / timeline_data[hour_key]["efficiency_count"], 
+                        1
+                    )
+                if "efficiency_count" in timeline_data[hour_key]:
+                    del timeline_data[hour_key]["efficiency_count"]
+            
+            # Сортируем по времени
+            exercise_timeline = sorted(timeline_data.values(), key=lambda x: x["timestamp"])
+            
+            return {"timeline": exercise_timeline, "period": period}
+        
+        else:
+            raise HTTPException(status_code=400, detail="Invalid section. Must be: lessons, challenges, quizzes, exercises, or exercise-timeline")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting detailed analytics for {section}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting analytics: {str(e)}")
+
+@app.get("/api/user/consultations")
+async def get_user_consultations(current_user: dict = Depends(get_current_user)):
+    """Получить список консультаций для текущего пользователя"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        collection_names = await db.list_collection_names()
+        
+        consultations = []
+        if "personal_consultations" in collection_names:
+            # Получаем консультации, назначенные пользователю
+            consultations_cursor = db.personal_consultations.find({
+                "assigned_user_id": user_id
+            })
+            consultations_list = await consultations_cursor.to_list(length=None)
+            
+            # Получаем информацию о покупках
+            purchases = {}
+            if "consultation_purchases" in collection_names:
+                purchases_cursor = db.consultation_purchases.find({
+                    "user_id": user_id
+                })
+                purchases_list = await purchases_cursor.to_list(length=None)
+                purchases = {p.get("consultation_id"): p for p in purchases_list}
+            
+            for consultation in consultations_list:
+                consultation_dict = dict(consultation)
+                consultation_dict.pop('_id', None)
+                
+                # Проверяем, куплена ли консультация
+                purchase = purchases.get(consultation.get("id"))
+                consultation_dict["is_purchased"] = purchase is not None
+                consultation_dict["purchased_at"] = purchase.get("purchased_at").isoformat() if purchase and purchase.get("purchased_at") else None
+                
+                consultations.append(consultation_dict)
+        
+        return consultations
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting user consultations: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Возвращаем пустой список вместо ошибки, чтобы не ломать фронтенд
+        return []
+
+@app.post("/api/user/consultations/{consultation_id}/purchase")
+async def purchase_consultation(consultation_id: str, current_user: dict = Depends(get_current_user)):
+    """Купить консультацию за баллы"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        # Получаем информацию о пользователе
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Получаем информацию о консультации
+        consultation = await db.personal_consultations.find_one({"id": consultation_id})
+        if not consultation:
+            raise HTTPException(status_code=404, detail="Consultation not found")
+
+        cost_credits = consultation.get("cost_credits", 0)
+        user_credits = user.get("credits_remaining", 0)
+
+        if user_credits < cost_credits:
+            raise HTTPException(status_code=402, detail="Insufficient credits")
+
+        # Проверяем, не куплена ли уже консультация
+        existing_purchase = await db.consultation_purchases.find_one({
+            "user_id": user_id,
+            "consultation_id": consultation_id
+        })
+        if existing_purchase:
+            raise HTTPException(status_code=400, detail="Consultation already purchased")
+
+        # Списываем баллы
+        await db.users.update_one(
+            {"id": user_id},
+            {"$inc": {"credits_remaining": -cost_credits}}
+        )
+
+        # Создаем запись о покупке
+        purchase_data = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "consultation_id": consultation_id,
+            "purchased_at": datetime.utcnow(),
+            "cost_credits": cost_credits
+        }
+        await db.consultation_purchases.insert_one(purchase_data)
+
+        # Записываем транзакцию
+        await db.credit_transactions.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "amount": -cost_credits,
+            "transaction_type": "consultation_purchase",
+            "description": f"Покупка консультации: {consultation.get('title', 'Консультация')}",
+            "created_at": datetime.utcnow()
+        })
+
+        return {"message": "Consultation purchased successfully", "purchase": purchase_data}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error purchasing consultation: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error purchasing consultation: {str(e)}")
+
+# ==================== ADMIN CONSULTATIONS API ====================
+
+@app.get("/api/admin/consultations")
+async def get_all_consultations(current_user: dict = Depends(get_current_user)):
+    """Получить все консультации для админа"""
+    try:
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        collection_names = await db.list_collection_names()
+        consultations = []
+        
+        if "personal_consultations" in collection_names:
+            consultations_cursor = db.personal_consultations.find({})
+            consultations_list = await consultations_cursor.to_list(length=None)
+            
+            for consultation in consultations_list:
+                consultation_dict = dict(consultation)
+                consultation_dict.pop('_id', None)
+                consultations.append(consultation_dict)
+        
+        return consultations
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting consultations: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting consultations: {str(e)}")
+
+@app.post("/api/admin/consultations")
+async def create_consultation(consultation_data: dict, current_user: dict = Depends(get_current_user)):
+    """Создать новую консультацию"""
+    try:
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        consultation = {
+            "id": str(uuid.uuid4()),
+            "title": consultation_data.get("title", ""),
+            "description": consultation_data.get("description", ""),
+            "video_url": consultation_data.get("video_url"),
+            "video_file_id": consultation_data.get("video_file_id"),
+            "pdf_file_id": consultation_data.get("pdf_file_id"),
+            "subtitles_file_id": consultation_data.get("subtitles_file_id"),
+            "assigned_user_id": consultation_data.get("assigned_user_id", ""),
+            "cost_credits": consultation_data.get("cost_credits", 6667),
+            "is_active": consultation_data.get("is_active", True),
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+
+        await db.personal_consultations.insert_one(consultation)
+        consultation.pop('_id', None)
+        
+        return consultation
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error creating consultation: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error creating consultation: {str(e)}")
+
+@app.put("/api/admin/consultations/{consultation_id}")
+async def update_consultation(consultation_id: str, consultation_data: dict, current_user: dict = Depends(get_current_user)):
+    """Обновить консультацию"""
+    try:
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Проверяем существование консультации
+        existing = await db.personal_consultations.find_one({"id": consultation_id})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Consultation not found")
+
+        # Обновляем данные
+        update_data = {
+            "$set": {
+                "title": consultation_data.get("title", existing.get("title")),
+                "description": consultation_data.get("description", existing.get("description")),
+                "video_url": consultation_data.get("video_url", existing.get("video_url")),
+                "video_file_id": consultation_data.get("video_file_id", existing.get("video_file_id")),
+                "pdf_file_id": consultation_data.get("pdf_file_id", existing.get("pdf_file_id")),
+                "subtitles_file_id": consultation_data.get("subtitles_file_id", existing.get("subtitles_file_id")),
+                "assigned_user_id": consultation_data.get("assigned_user_id", existing.get("assigned_user_id")),
+                "cost_credits": consultation_data.get("cost_credits", existing.get("cost_credits", 6667)),
+                "is_active": consultation_data.get("is_active", existing.get("is_active", True)),
+                "updated_at": datetime.utcnow()
+            }
+        }
+
+        await db.personal_consultations.update_one({"id": consultation_id}, update_data)
+        
+        updated = await db.personal_consultations.find_one({"id": consultation_id})
+        updated.pop('_id', None)
+        
+        return updated
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error updating consultation: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error updating consultation: {str(e)}")
+
+@app.delete("/api/admin/consultations/{consultation_id}")
+async def delete_consultation(consultation_id: str, current_user: dict = Depends(get_current_user)):
+    """Удалить консультацию"""
+    try:
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        result = await db.personal_consultations.delete_one({"id": consultation_id})
+        
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Consultation not found")
+
+        return {"message": "Consultation deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error deleting consultation: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error deleting consultation: {str(e)}")
+
+@app.post("/api/admin/consultations/upload-video")
+async def upload_consultation_video(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Загрузить видео для консультации"""
+    try:
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Сохраняем файл
+        upload_dir = Path("uploads/consultations")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        file_extension = Path(file.filename).suffix
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = upload_dir / unique_filename
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Сохраняем информацию о файле в базу
+        file_record = {
+            "id": str(uuid.uuid4()),
+            "original_name": file.filename,
+            "stored_name": unique_filename,
+            "file_path": str(file_path),
+            "file_type": "video",
+            "mime_type": file.content_type,
+            "file_size": file_path.stat().st_size,
+            "uploaded_by": user_id,
+            "uploaded_at": datetime.utcnow()
+        }
+
+        await db.files.insert_one(file_record)
+        
+        return {
+            "file_id": file_record["id"],
+            "filename": file.filename,
+            "file_path": str(file_path),
+            "file_size": file_record["file_size"]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error uploading video: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error uploading video: {str(e)}")
+
+@app.post("/api/admin/consultations/upload-pdf")
+async def upload_consultation_pdf(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Загрузить PDF для консультации"""
+    try:
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Сохраняем файл
+        upload_dir = Path("uploads/consultations")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        file_extension = Path(file.filename).suffix
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = upload_dir / unique_filename
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Сохраняем информацию о файле в базу
+        file_record = {
+            "id": str(uuid.uuid4()),
+            "original_name": file.filename,
+            "stored_name": unique_filename,
+            "file_path": str(file_path),
+            "file_type": "pdf",
+            "mime_type": file.content_type,
+            "file_size": file_path.stat().st_size,
+            "uploaded_by": user_id,
+            "uploaded_at": datetime.utcnow()
+        }
+
+        await db.files.insert_one(file_record)
+        
+        return {
+            "file_id": file_record["id"],
+            "filename": file.filename,
+            "file_path": str(file_path),
+            "file_size": file_record["file_size"]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error uploading PDF: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error uploading PDF: {str(e)}")
+
+@app.post("/api/admin/consultations/upload-subtitles")
+async def upload_consultation_subtitles(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Загрузить субтитры для консультации"""
+    try:
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Сохраняем файл
+        upload_dir = Path("uploads/consultations/subtitles")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        file_extension = Path(file.filename).suffix
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = upload_dir / unique_filename
+
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Сохраняем информацию о файле в базу
+        file_record = {
+            "id": str(uuid.uuid4()),
+            "original_name": file.filename,
+            "stored_name": unique_filename,
+            "file_path": str(file_path),
+            "file_type": "subtitles",
+            "mime_type": file.content_type,
+            "file_size": file_path.stat().st_size,
+            "uploaded_by": user_id,
+            "uploaded_at": datetime.utcnow()
+        }
+
+        await db.files.insert_one(file_record)
+        
+        return {
+            "file_id": file_record["id"],
+            "filename": file.filename,
+            "file_path": str(file_path),
+            "file_size": file_record["file_size"]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error uploading subtitles: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error uploading subtitles: {str(e)}")
+
+@app.get("/api/student/lesson-progress/{lesson_id}")
+async def get_lesson_progress(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить прогресс урока для студента"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+
+        # Получаем урок
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Урок не найден")
+
+        now = datetime.utcnow()
+        
+        # ЗАПИСЫВАЕМ В time_activity с типом "lesson_view" при открытии урока
+        # Проверяем, есть ли уже запись за сегодня
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        existing_activity = await db.time_activity.find_one({
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "activity_type": "lesson_view",
+            "created_at": {"$gte": today_start}
+        })
+        
+        if not existing_activity:
+            # Создаем новую запись в time_activity для отслеживания присутствия в уроке
+            activity_data = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "activity_type": "lesson_view",
+                "total_minutes": 0,  # Время будет обновляться через save_time_activity
+                "total_points": 0,
+                "created_at": now,
+                "last_activity_at": now
+            }
+            await db.time_activity.insert_one(activity_data)
+
+        # Получаем прогресс урока
+        progress = await db.lesson_progress.find_one({"user_id": user_id, "lesson_id": lesson_id})
+        if not progress:
+            # Создаем начальный прогресс
+            progress = {
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "is_completed": False,
+                "completion_percentage": 0,
+                "theory_read": False,
+                "exercises_completed": 0,
+                "challenge_started": False,
+                "challenge_completed": False,
+                "quiz_passed": False,
+                "started_at": now,
+                "last_activity_at": now,
+                "last_accessed": now  # Добавляем last_accessed для отслеживания просмотра теории
+            }
+            # Сохраняем прогресс в базу
+            await db.lesson_progress.insert_one(progress)
+            
+            # ЗАПИСЫВАЕМ В time_activity с типом "theory_view" при первом открытии урока
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            existing_theory_activity = await db.time_activity.find_one({
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "activity_type": {"$in": ["theory", "theory_view"]},
+                "created_at": {"$gte": today_start}
+            })
+            
+            if not existing_theory_activity:
+                # Создаем новую запись в time_activity для отслеживания просмотра теории
+                theory_activity_data = {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "lesson_id": lesson_id,
+                    "activity_type": "theory_view",
+                    "total_minutes": 0,
+                    "total_points": 0,
+                    "created_at": now,
+                    "last_activity_at": now
+                }
+                await db.time_activity.insert_one(theory_activity_data)
+        else:
+            progress = dict(progress)
+            progress.pop('_id', None)
+            # Обновляем last_accessed при каждом открытии урока
+            await db.lesson_progress.update_one(
+                {"user_id": user_id, "lesson_id": lesson_id},
+                {"$set": {"last_accessed": now, "last_activity_at": now}}
+            )
+            progress["last_accessed"] = now
+            
+            # ЗАПИСЫВАЕМ В time_activity с типом "theory_view" при открытии урока (для отслеживания просмотра теории)
+            # Проверяем, есть ли уже запись за сегодня
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            existing_theory_activity = await db.time_activity.find_one({
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "activity_type": {"$in": ["theory", "theory_view"]},
+                "created_at": {"$gte": today_start}
+            })
+            
+            if not existing_theory_activity:
+                # Создаем новую запись в time_activity для отслеживания просмотра теории
+                theory_activity_data = {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "lesson_id": lesson_id,
+                    "activity_type": "theory_view",
+                    "total_minutes": 0,
+                    "total_points": 0,
+                    "created_at": now,
+                    "last_activity_at": now
+                }
+                await db.time_activity.insert_one(theory_activity_data)
+
+        return progress
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting lesson progress: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting lesson progress: {str(e)}")
+
+@app.post("/api/student/exercise-response")
+async def save_exercise_response(request_data: dict, current_user: dict = Depends(get_current_user)):
+    """Сохранить ответ на упражнение"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+
+        exercise_response_data = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "lesson_id": request_data["lesson_id"],
+            "exercise_id": request_data["exercise_id"],
+            "response_text": request_data["response_text"],
+            "submitted_at": datetime.utcnow(),
+            "reviewed": False
+        }
+
+        # Сохраняем или обновляем ответ
+        existing_response = await db.exercise_responses.find_one({
+            "user_id": user_id,
+            "lesson_id": request_data["lesson_id"],
+            "exercise_id": request_data["exercise_id"]
+        })
+
+        if existing_response:
+            # Обновляем существующий
+            await db.exercise_responses.update_one(
+                {"_id": existing_response["_id"]},
+                {"$set": {
+                    "response_text": request_data["response_text"],
+                    "submitted_at": datetime.utcnow(),
+                    "reviewed": False,
+                    "admin_comment": None,
+                    "reviewed_at": None,
+                    "reviewed_by": None
+                }}
+            )
+            exercise_response_data["id"] = existing_response["id"]
+        else:
+            # Создаем новый
+            result = await db.exercise_responses.insert_one(exercise_response_data)
+            
+            # Начисляем кредиты за выполнение упражнения (только для новых ответов)
+            points_config = await get_learning_points_config()
+            exercise_points = points_config.get('exercise_points_per_submission', 10)
+            
+            await award_credits_for_learning(
+                user_id=user_id,
+                amount=exercise_points,
+                description=f"Выполнение упражнения урока {request_data['lesson_id']}",
+                category='exercise',
+                details={
+                    'lesson_id': request_data['lesson_id'],
+                    'exercise_id': request_data['exercise_id'],
+                    'points': exercise_points
+                }
+            )
+            
+            # ЗАПИСЫВАЕМ В time_activity с типом "exercise" для унифицированной аналитики
+            now = datetime.utcnow()
+            existing_activity = await db.time_activity.find_one({
+                "user_id": user_id,
+                "lesson_id": request_data["lesson_id"],
+                "activity_type": "exercise"
+            })
+            
+            if existing_activity:
+                # Обновляем существующую запись
+                await db.time_activity.update_one(
+                    {"_id": existing_activity["_id"]},
+                    {"$set": {"last_activity_at": now}}
+                )
+            else:
+                # Создаем новую запись в time_activity
+                activity_data = {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "lesson_id": request_data["lesson_id"],
+                    "activity_type": "exercise",
+                    "total_minutes": 0,
+                    "total_points": exercise_points,
+                    "created_at": now,
+                    "last_activity_at": now
+                }
+                await db.time_activity.insert_one(activity_data)
+
+        # Обновляем прогресс урока
+        await update_lesson_progress(user_id, request_data["lesson_id"])
+        
+        return {
+            "message": "Ответ сохранен успешно",
+            "response_id": exercise_response_data["id"]
+        }
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error saving exercise response: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error saving exercise response: {str(e)}")
+
+@app.get("/api/student/exercise-responses/{lesson_id}")
+async def get_exercise_responses(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить все ответы на упражнения урока"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+
+        responses = await db.exercise_responses.find({
+            "user_id": user_id,
+            "lesson_id": lesson_id
+        }).to_list(length=None)
+
+        # Группируем по exercise_id
+        exercise_responses = {}
+        for response in responses:
+            response_dict = dict(response)
+            response_dict.pop('_id', None)
+            exercise_responses[response["exercise_id"]] = response_dict
+        
+        return {
+            "exercise_responses": exercise_responses
+        }
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting exercise responses: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting exercise responses: {str(e)}")
+
+@app.post("/api/student/challenge-progress")
+async def save_challenge_progress(request_data: dict, current_user: dict = Depends(get_current_user)):
+    """Сохранить прогресс челленджа (заметки, завершение дня, начисление баллов)"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        lesson_id = request_data.get("lesson_id")
+        challenge_id = request_data.get("challenge_id")
+        day = int(request_data.get("day", 0))
+        note_text = request_data.get("note", "")
+        mark_completed = bool(request_data.get("completed", False))
+
+        if not lesson_id or not challenge_id or day <= 0:
+            raise HTTPException(status_code=400, detail="Invalid challenge progress payload")
+
+        # Получаем урок, чтобы взять параметры челленджа
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
+        challenge = lesson.get("challenge", {}) if lesson else {}
+        total_days = challenge.get("duration_days", 7)
+        
+        # Получаем настройки начисления баллов из конфигурации
+        points_config = await get_learning_points_config()
+        points_per_day = challenge.get("points_per_day") or points_config.get('challenge_points_per_day', 10)
+        bonus_points = challenge.get("bonus_points") or points_config.get('challenge_bonus_points', 50)
+
+        # Получаем существующий прогресс (активную попытку)
+        existing_progress = await db.challenge_progress.find_one({
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "challenge_id": challenge_id,
+            "is_completed": False
+        })
+
+        now = datetime.utcnow()
+
+        if existing_progress:
+            daily_notes = existing_progress.get("daily_notes", [])
+            completed_days = existing_progress.get("completed_days", [])
+
+            # Обновляем или добавляем заметку
+            note_found = False
+            for note_item in daily_notes:
+                if int(note_item.get("day", 0)) == day:
+                    note_item["day"] = day
+                    note_item["note"] = note_text
+                    note_item["updated_at"] = now
+                    note_item["completed_at"] = now
+                    note_found = True
+                    break
+
+            if not note_found:
+                daily_notes.append({
+                    "day": day,
+                    "note": note_text,
+                    "updated_at": now,
+                    "completed_at": now
+                })
+
+            # Обновляем список завершенных дней
+            day_was_newly_completed = False
+            if mark_completed and day not in completed_days:
+                completed_days.append(day)
+                day_was_newly_completed = True
+
+            # Пересчитываем показатели
+            completed_days = sorted(set(completed_days))
+            completed_count = len(completed_days)
+            is_completed = completed_count >= total_days
+            was_already_completed = existing_progress.get("is_completed", False)
+            current_day = min(total_days, max(completed_days) + 1) if completed_days else max(existing_progress.get("current_day", 1), 1)
+
+            points_earned = completed_count * points_per_day
+            if is_completed:
+                points_earned += bonus_points
+
+            update_data = {
+                "current_day": current_day,
+                "completed_days": completed_days,
+                "daily_notes": daily_notes,
+                "is_completed": is_completed,
+                "points_earned": points_earned,
+                "total_points": points_earned,
+                "last_updated": now
+            }
+
+            if is_completed and not existing_progress.get("completed_at"):
+                update_data["completed_at"] = now
+            
+            # Начисляем кредиты за завершение дня (только если день был только что завершен)
+            if day_was_newly_completed:
+                await award_credits_for_learning(
+                    user_id=user_id,
+                    amount=points_per_day,
+                    description=f"Завершение дня {day} челленджа урока {lesson_id}",
+                    category='challenge',
+                    details={
+                        'lesson_id': lesson_id,
+                        'challenge_id': challenge_id,
+                        'day': day,
+                        'points_per_day': points_per_day
+                    }
+                )
+            
+            # Начисляем бонусные кредиты при завершении всего челленджа (только один раз)
+            if is_completed and not was_already_completed:
+                await award_credits_for_learning(
+                    user_id=user_id,
+                    amount=bonus_points,
+                    description=f"Завершение челленджа урока {lesson_id}",
+                    category='challenge',
+                    details={
+                        'lesson_id': lesson_id,
+                        'challenge_id': challenge_id,
+                        'total_days': total_days,
+                        'completed_days': completed_count
+                    }
+                )
+
+            await db.challenge_progress.update_one(
+                {"_id": existing_progress["_id"]},
+                {"$set": update_data}
+            )
+            
+            # ЗАПИСЫВАЕМ В time_activity с типом "challenge" для унифицированной аналитики
+            existing_activity = await db.time_activity.find_one({
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "activity_type": "challenge"
+            })
+            
+            if existing_activity:
+                # Обновляем существующую запись
+                await db.time_activity.update_one(
+                    {"_id": existing_activity["_id"]},
+                    {"$set": {"last_activity_at": now}}
+                )
+            else:
+                # Создаем новую запись в time_activity
+                activity_data = {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "lesson_id": lesson_id,
+                    "activity_type": "challenge",
+                    "total_minutes": 0,
+                    "total_points": 0,
+                    "created_at": now,
+                    "last_activity_at": now
+                }
+                await db.time_activity.insert_one(activity_data)
+        else:
+            # Подсчитываем, сколько попыток уже было
+            total_attempts = await db.challenge_progress.count_documents({
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "challenge_id": challenge_id
+            })
+
+            completed_days = [day] if mark_completed else []
+            completed_count = len(completed_days)
+            is_completed = completed_count >= total_days
+
+            points_earned = completed_count * points_per_day
+            if is_completed:
+                points_earned += bonus_points
+
+            progress_data = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "challenge_id": challenge_id,
+                "current_day": max(1, day if not mark_completed else min(total_days, day + 1)),
+                "completed_days": completed_days,
+                "daily_notes": [{
+                    "day": day,
+                    "note": note_text,
+                    "updated_at": now,
+                    "completed_at": now
+                }] if note_text else [],
+                "is_completed": is_completed,
+                "points_earned": points_earned,
+                "total_points": points_earned,
+                "attempt_number": total_attempts + 1,
+                "started_at": now,
+                "last_updated": now
+            }
+
+            if is_completed:
+                progress_data["completed_at"] = now
+
+            await db.challenge_progress.insert_one(progress_data)
+            
+            # ЗАПИСЫВАЕМ В time_activity с типом "challenge" для унифицированной аналитики
+            existing_activity = await db.time_activity.find_one({
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "activity_type": "challenge"
+            })
+            
+            if not existing_activity:
+                # Создаем новую запись в time_activity
+                activity_data = {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "lesson_id": lesson_id,
+                    "activity_type": "challenge",
+                    "total_minutes": 0,
+                    "total_points": 0,
+                    "created_at": now,
+                    "last_activity_at": now
+                }
+                await db.time_activity.insert_one(activity_data)
+            
+            # Начисляем кредиты за завершение дня (если день был завершен)
+            if mark_completed:
+                await award_credits_for_learning(
+                    user_id=user_id,
+                    amount=points_per_day,
+                    description=f"Завершение дня {day} челленджа урока {lesson_id}",
+                    category='challenge',
+                    details={
+                        'lesson_id': lesson_id,
+                        'challenge_id': challenge_id,
+                        'day': day,
+                        'points_per_day': points_per_day
+                    }
+                )
+            
+            # Начисляем бонусные кредиты при завершении всего челленджа
+            if is_completed:
+                await award_credits_for_learning(
+                    user_id=user_id,
+                    amount=bonus_points,
+                    description=f"Завершение челленджа урока {lesson_id}",
+                    category='challenge',
+                    details={
+                        'lesson_id': lesson_id,
+                        'challenge_id': challenge_id,
+                        'total_days': total_days,
+                        'completed_days': completed_count
+                    }
+                )
+
+        # Обновляем прогресс урока
+        await update_lesson_progress(user_id, lesson_id)
+
+        return {"message": "Прогресс челленджа сохранен"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error saving challenge progress: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error saving challenge progress: {str(e)}")
+
+@app.get("/api/student/challenge-progress/{lesson_id}/{challenge_id}")
+async def get_challenge_progress(lesson_id: str, challenge_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить прогресс челленджа"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+
+        progress = await db.challenge_progress.find_one({
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "challenge_id": challenge_id
+        })
+
+        if progress:
+            progress_dict = dict(progress)
+            progress_dict.pop('_id', None)
+            return progress_dict
+        else:
+            # Возвращаем пустой прогресс
+            return {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "challenge_id": challenge_id,
+                "current_day": 1,
+                "completed_days": [],
+                "daily_notes": [],
+                "is_completed": False,
+                "points_earned": 0,
+                "total_points": 0
+        }
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting challenge progress: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting challenge progress: {str(e)}")
+
+@app.get("/api/student/challenge-history/{lesson_id}/{challenge_id}")
+async def get_challenge_history(lesson_id: str, challenge_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить историю всех попыток челленджа"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+
+        attempts = await db.challenge_progress.find({
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "challenge_id": challenge_id
+        }).sort("started_at", -1).to_list(length=None)
+
+        attempts_list = []
+        for attempt in attempts:
+            attempt_dict = dict(attempt)
+            attempt_dict.pop('_id', None)
+            attempts_list.append(attempt_dict)
+
+        return {"attempts": attempts_list}
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting challenge history: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting challenge history: {str(e)}")
+
+@app.get("/api/student/quiz-attempts/{lesson_id}")
+async def get_quiz_attempts(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить все попытки прохождения теста урока"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+
+        attempts = await db.quiz_attempts.find({
+            "user_id": user_id,
+            "lesson_id": lesson_id
+        }).sort("attempted_at", -1).to_list(length=None)
+
+        attempts_list = []
+        for attempt in attempts:
+            attempt_dict = dict(attempt)
+            attempt_dict.pop('_id', None)
+            attempts_list.append(attempt_dict)
+
+        return {"attempts": attempts_list}
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting quiz attempts: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting quiz attempts: {str(e)}")
+
+@app.post("/api/student/quiz-attempt")
+async def save_quiz_attempt(request_data: dict, current_user: dict = Depends(get_current_user)):
+    """Сохранить попытку прохождения теста"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+        lesson_id = request_data["lesson_id"]
+        passed = request_data.get("passed", False)
+        
+        # Получаем настройки начисления баллов из конфигурации
+        points_config = await get_learning_points_config()
+        quiz_points = points_config.get('quiz_points_per_attempt', 10)
+        
+        # Начисляем баллы за прохождение теста
+        points_earned = quiz_points if passed else 0
+        if request_data.get("points_earned") is not None:
+            # Если баллы переданы явно, используем их
+            points_earned = request_data.get("points_earned", 0)
+
+        attempt_data = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "quiz_id": request_data.get("quiz_id", lesson_id),
+            "score": request_data["score"],
+            "passed": passed,
+            "answers": request_data["answers"],
+            "attempted_at": datetime.utcnow(),
+            "points_earned": points_earned
+        }
+
+        result = await db.quiz_attempts.insert_one(attempt_data)
+
+        # Начисляем кредиты за прохождение теста (только если тест пройден)
+        if passed and points_earned > 0:
+            await award_credits_for_learning(
+                user_id=user_id,
+                amount=points_earned,
+                description=f"Прохождение теста урока {lesson_id}",
+                category='quiz',
+                details={
+                    'lesson_id': lesson_id,
+                    'quiz_id': request_data.get("quiz_id", lesson_id),
+                    'score': request_data["score"],
+                    'passed': passed,
+                    'points_earned': points_earned
+                }
+            )
+
+        # ЗАПИСЫВАЕМ В time_activity с типом "quiz" для унифицированной аналитики
+        now = datetime.utcnow()
+        existing_activity = await db.time_activity.find_one({
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "activity_type": "quiz"
+        })
+        
+        if existing_activity:
+            # Обновляем существующую запись
+            await db.time_activity.update_one(
+                {"_id": existing_activity["_id"]},
+                {
+                    "$inc": {"total_points": points_earned},
+                    "$set": {"last_activity_at": now}
+                }
+            )
+        else:
+            # Создаем новую запись в time_activity
+            activity_data = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "activity_type": "quiz",
+                "total_minutes": 0,
+                "total_points": points_earned,
+                "created_at": now,
+                "last_activity_at": now
+            }
+            await db.time_activity.insert_one(activity_data)
+
+        # Обновляем прогресс урока
+        await update_lesson_progress(user_id, lesson_id)
+        
+        return {
+            "message": "Результат теста сохранен",
+            "attempt_id": attempt_data["id"],
+            "points_earned": points_earned
+        }
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error saving quiz attempt: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error saving quiz attempt: {str(e)}")
+
+@app.get("/api/student/time-activity/{lesson_id}")
+async def get_time_activity(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить статистику времени активности для урока"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+
+        time_doc = await db.time_activity.find_one({
+            "user_id": user_id,
+            "lesson_id": lesson_id
+        })
+
+        if time_doc:
+            time_dict = dict(time_doc)
+            time_dict.pop('_id', None)
+            return time_dict
+        else:
+            return {
+                "user_id": user_id,
+            "lesson_id": lesson_id,
+                "total_minutes": 0,
+                "total_points": 0
+            }
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting time activity: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting time activity: {str(e)}")
+
+@app.post("/api/student/time-activity")
+async def save_time_activity(request_data: dict, current_user: dict = Depends(get_current_user)):
+    """Сохранить время активности"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+        lesson_id = request_data.get("lesson_id")
+        activity_type = request_data.get("activity_type", "lesson_view")  # Тип активности: lesson_view, theory_view, theory
+        new_minutes = request_data.get("minutes_spent", 0)
+        
+        # Получаем настройки начисления баллов из конфигурации
+        points_config = await get_learning_points_config()
+        time_points_per_minute = points_config.get('time_points_per_minute', 1)
+        new_points = new_minutes * time_points_per_minute
+        
+        now = datetime.utcnow()
+
+        # Ищем существующий документ с таким же типом активности
+        existing_doc = await db.time_activity.find_one({
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "activity_type": activity_type
+        })
+
+        if existing_doc:
+            # Обновляем существующий
+            old_total_points = existing_doc.get("total_points", 0)
+            total_minutes = existing_doc.get("total_minutes", 0) + new_minutes
+            total_points = existing_doc.get("total_points", 0) + new_points
+            
+            # Вычисляем разницу в баллах для начисления
+            points_difference = total_points - old_total_points
+
+            await db.time_activity.update_one(
+                {"_id": existing_doc["_id"]},
+                {"$set": {
+                    "total_minutes": total_minutes,
+                    "total_points": total_points,
+                    "last_activity_at": now
+                }}
+            )
+            
+            # Начисляем баллы через award_credits_for_learning (только разницу)
+            if points_difference > 0:
+                activity_description = {
+                    "lesson_view": "Время на уроке",
+                    "theory_view": "Просмотр теории",
+                    "theory": "Изучение теории"
+                }.get(activity_type, "Время активности")
+                
+                await award_credits_for_learning(
+                    user_id=user_id,
+                    amount=points_difference,
+                    description=f"{activity_description} (урок {lesson_id})",
+                    category='learning',
+                    details={
+                        'lesson_id': lesson_id,
+                        'activity_type': activity_type,
+                        'minutes_spent': new_minutes,
+                        'points_per_minute': time_points_per_minute,
+                        'total_points': points_difference
+                    }
+                )
+        else:
+            # Создаем новый
+            time_data = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+            "lesson_id": lesson_id,
+                "total_minutes": new_minutes,
+                "total_points": new_points,
+                "activity_type": activity_type,  # Тип активности
+                "created_at": now,
+                "last_activity_at": now
+            }
+            result = await db.time_activity.insert_one(time_data)
+            
+            # Начисляем баллы через award_credits_for_learning
+            if new_points > 0:
+                activity_description = {
+                    "lesson_view": "Время на уроке",
+                    "theory_view": "Просмотр теории",
+                    "theory": "Изучение теории"
+                }.get(activity_type, "Время активности")
+                
+                await award_credits_for_learning(
+                    user_id=user_id,
+                    amount=new_points,
+                    description=f"{activity_description} (урок {lesson_id})",
+                    category='learning',
+                    details={
+                        'lesson_id': lesson_id,
+                        'activity_type': activity_type,
+                        'minutes_spent': new_minutes,
+                        'points_per_minute': time_points_per_minute,
+                        'total_points': new_points
+                    }
+                )
+
+        return {"message": "Время активности сохранено"}
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error saving time activity: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error saving time activity: {str(e)}")
+
+@app.get("/api/student/lesson-files/{lesson_id}")
+async def get_lesson_files(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить файлы урока"""
+    try:
+        files = await db.files.find({"lesson_id": lesson_id}).to_list(length=None)
+
+        files_list = []
+        for file in files:
+            file_dict = dict(file)
+            file_dict.pop('_id', None)
+            files_list.append(file_dict)
+
+        return {
+            "files": files_list,
+            "total": len(files_list)
+        }
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting lesson files: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting lesson files: {str(e)}")
+
+async def award_points_for_file_view(user_id: str, file_id: str, lesson_id: str):
+    """Начислить баллы за просмотр файла и записать в time_activity"""
+    try:
+        # Получаем информацию о файле
+        file_info = await db.files.find_one({"id": file_id})
+        if not file_info:
+            logger.warning(f"File not found for file_id: {file_id}")
+            return
+
+        # Получаем настройки начисления баллов из конфигурации
+        points_config = await get_learning_points_config()
+        
+        # Определяем количество баллов в зависимости от типа файла
+        points = 0
+        file_type = file_info.get("file_type", "")
+        mime_type = file_info.get("mime_type", "")
+        
+        # Проверяем тип файла - если это PDF по mime_type, тоже начисляем баллы
+        is_pdf = False
+        if mime_type in ["application/pdf", "pdf"] or file_type == "pdf" or file_type == "document":
+            is_pdf = True
+            points = points_config.get('pdf_points_per_view', 5)  # Баллы за просмотр PDF
+            logger.info(f"PDF file detected: file_id={file_id}, mime_type={mime_type}, file_type={file_type}, points={points}")
+        elif file_type == "media":
+            points = points_config.get('media_points_per_view', 10)  # Баллы за просмотр медиафайла
+            logger.info(f"Media file detected: file_id={file_id}, mime_type={mime_type}, file_type={file_type}, points={points}")
+        else:
+            # Если тип не определен, но это PDF по расширению или mime_type, начисляем баллы
+            if mime_type and "pdf" in mime_type.lower():
+                is_pdf = True
+                points = points_config.get('pdf_points_per_view', 5)
+                logger.info(f"PDF detected by mime_type: file_id={file_id}, mime_type={mime_type}, points={points}")
+            else:
+                logger.warning(f"Unknown file type: file_id={file_id}, file_type={file_type}, mime_type={mime_type}, points=0")
+
+        now = datetime.utcnow()
+        
+        # ЗАПИСЫВАЕМ В time_activity с типом "file_view" для унифицированной аналитики
+        existing_doc = await db.time_activity.find_one({
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "activity_type": "file_view",
+            "file_id": file_id
+        })
+
+        if not existing_doc:
+            # Создаем новую запись в time_activity
+            activity_data = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "activity_type": "file_view",
+                "file_id": file_id,
+                "file_type": "pdf" if is_pdf else mime_type or file_type,  # Сохраняем тип файла для фильтрации PDF
+                "total_minutes": 0,
+                "total_points": points,
+                "created_at": now,
+                "last_activity_at": now
+            }
+            await db.time_activity.insert_one(activity_data)
+            
+            # Начисляем баллы через award_credits_for_learning (только один раз за файл)
+            if points > 0:
+                file_name = file_info.get("original_name", file_id)
+                logger.info(f"Awarding {points} points for file view: user_id={user_id}, file_id={file_id}, file_name={file_name}")
+                await award_credits_for_learning(
+                    user_id=user_id,
+                    amount=points,
+                    description=f"Просмотр файла: {file_name} (урок {lesson_id})",
+                    category='learning',
+                    details={
+                        'lesson_id': lesson_id,
+                        'file_id': file_id,
+                        'file_name': file_name,
+                        'file_type': file_type,
+                        'mime_type': mime_type,
+                        'points': points
+                    }
+                )
+            else:
+                logger.warning(f"No points to award for file view: file_id={file_id}, file_type={file_type}, mime_type={mime_type}")
+        else:
+            # Обновляем время последней активности (баллы начисляются только один раз за файл)
+            logger.info(f"File already viewed, updating last_activity_at: file_id={file_id}, user_id={user_id}")
+            await db.time_activity.update_one(
+                {"_id": existing_doc["_id"]},
+                {"$set": {"last_activity_at": now}}
+            )
+        
+    except Exception as e:
+        logger.error(f"Error awarding points for file view: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+
+@app.post("/api/student/file-analytics")
+async def save_file_analytics(request_data: dict, current_user: dict = Depends(get_current_user)):
+    """Сохранить аналитику просмотров/скачиваний файлов"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+
+        analytics_data = {
+            "id": str(uuid.uuid4()),
+            "file_id": request_data["file_id"],
+            "user_id": user_id,
+            "lesson_id": request_data["lesson_id"],
+            "action": request_data["action"],  # 'view' или 'download'
+            "created_at": datetime.utcnow()
+        }
+
+        result = await db.file_analytics.insert_one(analytics_data)
+
+        # Начисляем баллы за просмотр файла (если это просмотр, а не скачивание)
+        if request_data["action"] == "view":
+            await award_points_for_file_view(user_id, request_data["file_id"], request_data["lesson_id"])
+
+        return {"message": "Аналитика сохранена"}
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error saving file analytics: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error saving file analytics: {str(e)}")
+
+@app.post("/api/student/video-watch-time")
+async def save_video_watch_time(request_data: dict, current_user: dict = Depends(get_current_user)):
+    """Сохранить время просмотра видео"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+        lesson_id = request_data.get("lesson_id")
+        file_id = request_data.get("file_id")
+
+        # Получаем существующий документ
+        existing_doc = await db.video_watch_time.find_one({
+            "file_id": file_id,
+            "user_id": user_id
+        })
+
+        new_minutes = request_data.get("minutes_watched", 0)
+        
+        # Получаем настройки начисления баллов из конфигурации
+        points_config = await get_learning_points_config()
+        video_points_per_minute = points_config.get('video_points_per_minute', 1)
+        new_points = new_minutes * video_points_per_minute
+        
+        logger.info(f"Video watch time: user_id={user_id}, file_id={file_id}, lesson_id={lesson_id}, new_minutes={new_minutes}, new_points={new_points}, points_per_minute={video_points_per_minute}")
+        
+        now = datetime.utcnow()
+
+        if existing_doc:
+            # Обновляем существующий
+            old_total_points = existing_doc.get("total_points", 0)
+            total_minutes = existing_doc.get("total_minutes", 0) + new_minutes
+            total_points = existing_doc.get("total_points", 0) + new_points
+            
+            # Вычисляем разницу в баллах для начисления
+            points_difference = total_points - old_total_points
+            
+            await db.video_watch_time.update_one(
+                {"_id": existing_doc["_id"]},
+                {"$set": {
+                    "total_minutes": total_minutes,
+                    "total_points": total_points,
+                    "last_updated": now
+                }}
+            )
+            
+            # Начисляем баллы через award_credits_for_learning (только разницу)
+            if points_difference > 0:
+                logger.info(f"Awarding {points_difference} points for video watch (existing doc): user_id={user_id}, file_id={file_id}, old_points={old_total_points}, new_points={total_points}")
+                await award_credits_for_learning(
+                    user_id=user_id,
+                    amount=points_difference,
+                    description=f"Просмотр видео (файл {file_id}, урок {lesson_id})",
+                    category='learning',
+                    details={
+                        'lesson_id': lesson_id,
+                        'file_id': file_id,
+                        'minutes_watched': new_minutes,
+                        'points_per_minute': video_points_per_minute,
+                        'total_points': points_difference
+                    }
+                )
+            else:
+                logger.warning(f"No points difference for video watch: user_id={user_id}, file_id={file_id}, old_points={old_total_points}, new_points={total_points}, points_difference={points_difference}")
+        else:
+            # Создаем новый
+            video_data = {
+                "id": str(uuid.uuid4()),
+                "file_id": file_id,
+                "user_id": user_id,
+            "lesson_id": lesson_id,
+                "total_minutes": new_minutes,
+                "total_points": new_points,
+                "created_at": now,
+                "last_updated": now
+            }
+            result = await db.video_watch_time.insert_one(video_data)
+            
+            # Начисляем баллы через award_credits_for_learning
+            if new_points > 0:
+                logger.info(f"Awarding {new_points} points for video watch (new doc): user_id={user_id}, file_id={file_id}, minutes={new_minutes}")
+                await award_credits_for_learning(
+                    user_id=user_id,
+                    amount=new_points,
+                    description=f"Просмотр видео (файл {file_id}, урок {lesson_id})",
+                    category='learning',
+                    details={
+                        'lesson_id': lesson_id,
+                        'file_id': file_id,
+                        'minutes_watched': new_minutes,
+                        'points_per_minute': video_points_per_minute,
+                        'total_points': new_points
+                    }
+                )
+            else:
+                logger.warning(f"No points to award for video watch: user_id={user_id}, file_id={file_id}, new_minutes={new_minutes}, new_points={new_points}")
+
+        # ЗАПИСЫВАЕМ В time_activity с типом "video_watch" для унифицированной аналитики
+        if lesson_id and new_minutes > 0:
+            # Ищем существующую запись в time_activity для этого урока и файла
+            existing_activity = await db.time_activity.find_one({
+                "user_id": user_id,
+                "lesson_id": lesson_id,
+                "activity_type": "video_watch",
+                "file_id": file_id
+            })
+            
+            if existing_activity:
+                # Обновляем существующую запись
+                await db.time_activity.update_one(
+                    {"_id": existing_activity["_id"]},
+                    {
+                        "$inc": {
+                            "total_minutes": new_minutes,
+                            "total_points": new_points
+                        },
+                        "$set": {
+                            "last_activity_at": now
+                        }
+                    }
+                )
+            else:
+                # Создаем новую запись в time_activity
+                activity_data = {
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "lesson_id": lesson_id,
+                    "file_id": file_id,
+                    "activity_type": "video_watch",
+                    "total_minutes": new_minutes,
+                    "total_points": new_points,
+                    "created_at": now,
+                    "last_activity_at": now
+                }
+                await db.time_activity.insert_one(activity_data)
+
+        return {"message": "Время просмотра видео сохранено"}
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error saving video watch time: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error saving video watch time: {str(e)}")
+
+@app.get("/api/student/my-files-stats/{lesson_id}")
+async def get_student_files_stats(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить статистику файлов студента для урока"""
+    try:
+        user_id = current_user.get('user_id', current_user.get('id'))
+
+        # Получаем все файлы урока
+        files = await db.files.find({"lesson_id": lesson_id}).to_list(length=None)
+
+        # Получаем аналитику для каждого файла
+        files_stats = []
+        total_views = 0
+        total_downloads = 0
+        total_video_points = 0
+        total_video_minutes = 0
+
+        for file in files:
+            # Получаем аналитику для этого файла
+            views_count = await db.file_analytics.count_documents({
+                "file_id": file["id"],
+                "user_id": user_id,
+                "action": "view"
+            })
+
+            downloads_count = await db.file_analytics.count_documents({
+                "file_id": file["id"],
+                "user_id": user_id,
+                "action": "download"
+            })
+
+            # Получаем время просмотра видео
+            video_watch = await db.video_watch_time.find_one({
+                "file_id": file["id"],
+                "user_id": user_id
+            })
+
+            file_stat = {
+                "file_id": file["id"],
+                "file_name": file["original_name"],
+                "views": views_count,
+                "downloads": downloads_count,
+                "video_stats": {
+                    "minutes_watched": video_watch.get("total_minutes", 0),
+                    "points_earned": video_watch.get("total_points", 0)
+                } if video_watch else None
+            }
+
+            files_stats.append(file_stat)
+            total_views += views_count
+            total_downloads += downloads_count
+
+            if video_watch:
+                total_video_minutes += video_watch.get("total_minutes", 0)
+                total_video_points += video_watch.get("total_points", 0)
+
+        return {
+            "files": files_stats,
+            "summary": {
+                "total_files": len(files),
+                "total_views": total_views,
+                "total_downloads": total_downloads,
+                "total_video_minutes": total_video_minutes,
+                "total_video_points": total_video_points
+            }
+        }
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting student files stats: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting student files stats: {str(e)}")
+
+@app.get("/api/admin/files")
+async def get_admin_files_stats(lesson_id: str = Query(None), section: str = Query(None), current_user: dict = Depends(get_current_user)):
+    """Получить статистику файлов для админа"""
+    try:
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        query = {}
+        if lesson_id:
+            query["lesson_id"] = lesson_id
+        if section:
+            query["section"] = section
+
+        files = await db.files.find(query).sort("uploaded_at", -1).to_list(length=None)
+
+        files_list = []
+        for file in files:
+            file_dict = dict(file)
+            file_dict.pop('_id', None)
+
+            # Получаем статистику просмотров и скачиваний
+            views_count = await db.file_analytics.count_documents({
+                "file_id": file["id"],
+                "action": "view"
+            })
+
+            downloads_count = await db.file_analytics.count_documents({
+                "file_id": file["id"],
+                "action": "download"
+            })
+
+            file_dict["views"] = views_count
+            file_dict["downloads"] = downloads_count
+            files_list.append(file_dict)
+
+        return {
+            "files": files_list,
+            "total": len(files_list)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting admin files stats: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting admin files stats: {str(e)}")
+
+@app.post("/api/admin/review-response/{response_id}")
+async def review_exercise_response(response_id: str, request_data: dict, current_user: dict = Depends(get_current_user)):
+    """Проверить и прокомментировать ответ на упражнение, назначить баллы"""
+    try:
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Находим ответ на упражнение
+        response_doc = await db.exercise_responses.find_one({"id": response_id})
+        if not response_doc:
+            raise HTTPException(status_code=404, detail="Ответ не найден")
+
+        student_user_id = response_doc.get("user_id")
+        lesson_id = response_doc.get("lesson_id")
+        exercise_id = response_doc.get("exercise_id")
+        points_earned = request_data.get("points_earned", 0)
+        admin_comment = request_data.get("admin_comment", "")
+        review_start_time = request_data.get("review_start_time")  # Время начала проверки (ISO string)
+        
+        # Вычисляем время проверки
+        review_time_minutes = 0
+        if review_start_time:
+            try:
+                start_time = datetime.fromisoformat(review_start_time.replace('Z', '+00:00'))
+                if start_time.tzinfo:
+                    start_time = start_time.replace(tzinfo=None) - (start_time.utcoffset() or timedelta(0))
+                review_time_minutes = max(0, (datetime.utcnow() - start_time).total_seconds() / 60)
+            except:
+                pass
+
+        # Обновляем ответ
+        update_data = {
+            "reviewed": True,
+            "admin_comment": admin_comment,
+            "reviewed_at": datetime.utcnow(),
+            "reviewed_by": user_id,
+            "points_earned": points_earned,
+            "review_time_minutes": round(review_time_minutes, 2)
+        }
+        
+        await db.exercise_responses.update_one(
+            {"id": response_id},
+            {"$set": update_data}
+        )
+
+        # Сохраняем баллы в единую базу данных time_activity
+        # Проверяем, были ли уже начислены баллы за это упражнение
+        old_points_earned = response_doc.get("points_earned", 0)
+        points_difference = points_earned - old_points_earned
+        
+        if points_earned > 0:
+            # Ищем существующую запись или создаем новую
+            time_activity = await db.time_activity.find_one({
+                "user_id": student_user_id,
+                "lesson_id": lesson_id,
+                "activity_type": "exercise_review"
+            })
+            
+            if time_activity:
+                # Обновляем существующую запись
+                await db.time_activity.update_one(
+                    {"_id": time_activity["_id"]},
+                    {
+                        "$inc": {
+                            "total_points": points_difference,  # Начисляем только разницу
+                            "review_count": 1 if old_points_earned == 0 else 0,  # Увеличиваем счетчик только при первой проверке
+                            "review_time_minutes": review_time_minutes
+                        },
+                        "$set": {
+                            "last_updated": datetime.utcnow()
+                        }
+                    }
+                )
+            else:
+                # Создаем новую запись
+                await db.time_activity.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": student_user_id,
+                    "lesson_id": lesson_id,
+                    "activity_type": "exercise_review",
+                    "total_points": points_earned,
+                    "total_minutes": 0,
+                    "review_count": 1,
+                    "review_time_minutes": review_time_minutes,
+                    "created_at": datetime.utcnow(),
+                    "last_updated": datetime.utcnow()
+                })
+        
+        # Начисляем баллы через award_credits_for_learning (только разницу, если баллы изменились)
+        if points_difference > 0:
+            # Получаем информацию об упражнении для описания
+            lesson = await db.lessons_v2.find_one({"id": lesson_id})
+            lesson_title = lesson.get("title", "Урок") if lesson else "Урок"
+            
+            await award_credits_for_learning(
+                user_id=student_user_id,
+                amount=points_difference,
+                description=f"Проверка упражнения урока '{lesson_title}' (упражнение {exercise_id})",
+                category='exercise_review',
+                details={
+                    'lesson_id': lesson_id,
+                    'exercise_id': exercise_id,
+                    'response_id': response_id,
+                    'points_earned': points_earned,
+                    'old_points': old_points_earned,
+                    'points_difference': points_difference,
+                    'reviewed_by': user_id,
+                    'admin_email': user.get('email', ''),
+                    'admin_review': True,
+                    'review_time_minutes': review_time_minutes,
+                    'admin_comment': admin_comment
+                }
+            )
+
+        return {
+            "message": "Ответ проверен и прокомментирован",
+            "points_earned": points_earned,
+            "review_time_minutes": round(review_time_minutes, 2)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error reviewing response: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error reviewing response: {str(e)}")
+
+
+def _ensure_admin_user(current_user: dict):
+    """Получить объект пользователя и проверить права администратора"""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = current_user.get("user_id") or current_user.get("id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return user_id
+
+
+def _to_iso(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+@app.get("/api/admin/analytics/lesson/{lesson_id}")
+async def get_lesson_analytics(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить подробную аналитику по уроку"""
+    try:
+        user_id = _ensure_admin_user(current_user)
+        user = await db.users.find_one({"id": user_id})
+        if not user or (not user.get("is_super_admin", False) and not user.get("is_admin", False)):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Урок не найден")
+
+        exercise_responses = await db.exercise_responses.find({"lesson_id": lesson_id}).to_list(length=None)
+        lesson_progress_list = await db.lesson_progress.find({"lesson_id": lesson_id}).to_list(length=None)
+        quiz_attempts = await db.quiz_attempts.find({"lesson_id": lesson_id}).to_list(length=None)
+        challenge_progress_list = await db.challenge_progress.find({"lesson_id": lesson_id}).to_list(length=None)
+        
+        # Аналитика по времени
+        time_activity_list = await db.time_activity.find({"lesson_id": lesson_id}).to_list(length=None) if "time_activity" in await db.list_collection_names() else []
+        
+        # Время на чтение урока (теория)
+        theory_time_minutes = sum(
+            t.get("total_minutes", 0) for t in time_activity_list 
+            if t.get("activity_type") in ["lesson_view", "theory_read", None]  # None для старых записей
+        )
+        
+        # Время на выполнение заданий (упражнения)
+        exercise_time_minutes = sum(
+            t.get("total_minutes", 0) for t in time_activity_list 
+            if t.get("activity_type") == "exercise"
+        )
+        
+        # Время проверки упражнений администратором
+        review_time_minutes = sum(
+            t.get("review_time_minutes", 0) for t in time_activity_list 
+            if t.get("activity_type") == "exercise_review"
+        )
+        
+        # Среднее время на урок
+        avg_lesson_time = 0
+        if lesson_progress_list:
+            avg_lesson_time = sum(p.get("time_spent_minutes", 0) for p in lesson_progress_list) / len(lesson_progress_list)
+
+        total_students = len({progress.get("user_id") for progress in lesson_progress_list})
+        completed_students = len([p for p in lesson_progress_list if p.get("is_completed")])
+        avg_completion = (
+            sum(p.get("completion_percentage", 0) for p in lesson_progress_list) / len(lesson_progress_list)
+            if lesson_progress_list else 0
+        )
+
+        total_exercise_responses = len(exercise_responses)
+        reviewed_responses = len([resp for resp in exercise_responses if resp.get("reviewed")])
+
+        total_quiz_attempts = len(quiz_attempts)
+        passed_quizzes = len([attempt for attempt in quiz_attempts if attempt.get("passed")])
+        avg_quiz_score = (
+            sum(attempt.get("score", 0) for attempt in quiz_attempts) / total_quiz_attempts
+            if total_quiz_attempts else 0
+        )
+        total_quiz_points = sum(attempt.get("points_earned", 0) for attempt in quiz_attempts)
+        avg_quiz_points = total_quiz_points / total_quiz_attempts if total_quiz_attempts else 0
+
+        unique_challenge_users = len({cp.get("user_id") for cp in challenge_progress_list})
+        total_challenge_attempts = len(challenge_progress_list)
+        completed_challenges = len([cp for cp in challenge_progress_list if cp.get("is_completed")])
+        total_challenge_notes = sum(len(cp.get("daily_notes", [])) for cp in challenge_progress_list)
+        total_points_earned = sum(cp.get("points_earned", 0) for cp in challenge_progress_list)
+        avg_points_per_attempt = total_points_earned / total_challenge_attempts if total_challenge_attempts else 0
+
+        # Топ студентов по тестам
+        user_quiz_points = {}
+        for attempt in quiz_attempts:
+            uid = attempt.get("user_id")
+            if not uid:
+                continue
+            if uid not in user_quiz_points:
+                user_quiz_points[uid] = {"total_points": 0, "attempts": 0, "passed": 0, "best_score": 0}
+            
+            # Начисляем баллы: 10 за прохождение теста, если не указано явно
+            points = attempt.get("points_earned") or 0
+            if points == 0 and attempt.get("passed", False):
+                points = 10
+            
+            user_quiz_points[uid]["total_points"] += points
+            user_quiz_points[uid]["attempts"] += 1
+            if attempt.get("passed"):
+                user_quiz_points[uid]["passed"] += 1
+            user_quiz_points[uid]["best_score"] = max(
+                user_quiz_points[uid]["best_score"], attempt.get("score", 0)
+            )
+
+        # Топ студентов по челленджам
+        user_challenge_points = {}
+        for cp in challenge_progress_list:
+            uid = cp.get("user_id")
+            if not uid:
+                continue
+            if uid not in user_challenge_points:
+                user_challenge_points[uid] = {"total_points": 0, "attempts": 0, "completed": 0}
+            user_challenge_points[uid]["total_points"] += cp.get("points_earned", 0)
+            user_challenge_points[uid]["attempts"] += 1
+            if cp.get("is_completed"):
+                user_challenge_points[uid]["completed"] += 1
+
+        # Получаем имена пользователей для лидербордов
+        all_user_ids = set(user_quiz_points.keys()) | set(user_challenge_points.keys())
+        users = await db.users.find({"id": {"$in": list(all_user_ids)}}).to_list(length=None) if all_user_ids else []
+        users_map = {u.get("id"): u.get("full_name") or u.get("name") or u.get("email") or u.get("id") for u in users}
+
+        progress_timeline = {}
+        for progress in lesson_progress_list:
+            started_at = progress.get("started_at")
+            if isinstance(started_at, datetime):
+                key = started_at.strftime("%Y-%m-%d")
+                if key not in progress_timeline:
+                    progress_timeline[key] = {"started": 0, "completed": 0}
+                progress_timeline[key]["started"] += 1
+                if progress.get("is_completed"):
+                    progress_timeline[key]["completed"] += 1
+
+        return {
+            "lesson_id": lesson_id,
+            "lesson_title": lesson.get("title"),
+            "statistics": {
+                "total_students": total_students,
+                "completed_students": completed_students,
+                "avg_completion_percentage": round(avg_completion, 2),
+                "total_exercise_responses": total_exercise_responses,
+                "reviewed_responses": reviewed_responses,
+                "pending_review": total_exercise_responses - reviewed_responses,
+                "total_quiz_attempts": total_quiz_attempts,
+                "passed_quizzes": passed_quizzes,
+                "avg_quiz_score": round(avg_quiz_score, 2),
+                "total_quiz_points": total_quiz_points,
+                "avg_quiz_points": round(avg_quiz_points, 2),
+                "unique_challenge_users": unique_challenge_users,
+                "total_challenge_attempts": total_challenge_attempts,
+                "completed_challenges": completed_challenges,
+                "total_challenge_notes": total_challenge_notes,
+                "total_points_earned": total_points_earned,
+                "avg_points_per_attempt": round(avg_points_per_attempt, 2),
+                "time_analytics": {
+                    "theory_time_minutes": round(theory_time_minutes, 1),
+                    "theory_time_hours": round(theory_time_minutes / 60, 1),
+                    "exercise_time_minutes": round(exercise_time_minutes, 1),
+                    "exercise_time_hours": round(exercise_time_minutes / 60, 1),
+                    "review_time_minutes": round(review_time_minutes, 1),
+                    "review_time_hours": round(review_time_minutes / 60, 1),
+                    "avg_lesson_time_minutes": round(avg_lesson_time, 1),
+                    "avg_lesson_time_hours": round(avg_lesson_time / 60, 1)
+                }
+            },
+            "quiz_leaderboard": sorted(
+                ({"user_id": uid, "user_name": users_map.get(uid, uid), **data} for uid, data in user_quiz_points.items()),
+                key=lambda item: item["total_points"],
+                reverse=True
+            )[:10],
+            "challenge_leaderboard": sorted(
+                ({"user_id": uid, "user_name": users_map.get(uid, uid), **data} for uid, data in user_challenge_points.items()),
+                key=lambda item: item["total_points"],
+                reverse=True
+            )[:10],
+            "progress_timeline": sorted(progress_timeline.items()),
+            "students_data": [
+                {
+                    "user_id": progress.get("user_id"),
+                    "completion_percentage": progress.get("completion_percentage", 0),
+                    "exercises_completed": progress.get("exercises_completed", 0),
+                    "quiz_passed": progress.get("quiz_passed", False),
+                    "challenge_completed": progress.get("challenge_completed", False),
+                    "last_activity_at": _to_iso(progress.get("last_activity_at"))
+                }
+                for progress in lesson_progress_list
+            ]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting lesson analytics: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting lesson analytics: {str(e)}")
+
+
+@app.get("/api/admin/analytics/student-responses/{lesson_id}")
+async def get_student_responses_for_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить ответы студентов на упражнения урока"""
+    try:
+        user_id = _ensure_admin_user(current_user)
+        user = await db.users.find_one({"id": user_id})
+        if not user or (not user.get("is_super_admin", False) and not user.get("is_admin", False)):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Урок не найден")
+
+        responses = await db.exercise_responses.find({"lesson_id": lesson_id}).sort("submitted_at", -1).to_list(length=None)
+        user_ids = [resp.get("user_id") for resp in responses if resp.get("user_id")]
+        users = await db.users.find({"id": {"$in": user_ids}}).to_list(length=None) if user_ids else []
+        users_map = {u.get("id"): u.get("full_name") or u.get("email") or u.get("id") for u in users}
+
+        exercises_map = {ex.get("id"): ex for ex in lesson.get("exercises", [])}
+
+        formatted = []
+        for resp in responses:
+            exercise = exercises_map.get(resp.get("exercise_id"), {})
+            formatted.append({
+                "id": resp.get("id"),
+                "user_id": resp.get("user_id"),
+                "user_name": users_map.get(resp.get("user_id"), resp.get("user_id")),
+                "exercise_id": resp.get("exercise_id"),
+                "exercise_title": exercise.get("title") or exercise.get("name") or "Неизвестное упражнение",
+                "response_text": resp.get("response_text"),
+                "submitted_at": _to_iso(resp.get("submitted_at")),
+                "reviewed": resp.get("reviewed", False),
+                "admin_comment": resp.get("admin_comment"),
+                "reviewed_at": _to_iso(resp.get("reviewed_at")),
+                "reviewed_by": resp.get("reviewed_by"),
+                "points_earned": resp.get("points_earned", 0),
+                "review_time_minutes": resp.get("review_time_minutes", 0)
+            })
+
+        return {
+            "lesson_id": lesson_id,
+            "lesson_title": lesson.get("title"),
+            "total_responses": len(formatted),
+            "responses": formatted
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting student responses: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting student responses: {str(e)}")
+
+
+@app.get("/api/admin/analytics/challenge-notes/{lesson_id}")
+async def get_challenge_notes_for_lesson(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить заметки студентов по челленджу урока"""
+    try:
+        user_id = _ensure_admin_user(current_user)
+        admin_user = await db.users.find_one({"id": user_id})
+        if not admin_user or (not admin_user.get("is_super_admin", False) and not admin_user.get("is_admin", False)):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Урок не найден")
+
+        challenge_progresses = await db.challenge_progress.find({"lesson_id": lesson_id}).sort("started_at", -1).to_list(length=None)
+        user_ids = [progress.get("user_id") for progress in challenge_progresses if progress.get("user_id")]
+        users = await db.users.find({"id": {"$in": user_ids}}).to_list(length=None) if user_ids else []
+        users_map = {u.get("id"): u.get("full_name") or u.get("email") or u.get("id") for u in users}
+
+        notes = []
+        for progress in challenge_progresses:
+            for note_item in progress.get("daily_notes", []):
+                note_text = note_item.get("note")
+                if not note_text:
+                    continue
+                notes.append({
+                    "user_id": progress.get("user_id"),
+                    "user_name": users_map.get(progress.get("user_id"), progress.get("user_id")),
+                    "day": note_item.get("day"),
+                    "note": note_text,
+                    "updated_at": _to_iso(note_item.get("updated_at") or note_item.get("completed_at")),
+                    "completed_at": _to_iso(note_item.get("completed_at") or note_item.get("updated_at")),
+                    "is_challenge_completed": progress.get("is_completed", False)
+                })
+
+        return {
+            "lesson_id": lesson_id,
+            "lesson_title": lesson.get("title"),
+            "total_notes": len(notes),
+            "notes": notes
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting challenge notes: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting challenge notes: {str(e)}")
+
+
+@app.get("/api/admin/lesson-files-analytics/{lesson_id}")
+async def get_lesson_files_analytics(lesson_id: str, current_user: dict = Depends(get_current_user)):
+    """Получить аналитику по файлам урока"""
+    try:
+        user_id = _ensure_admin_user(current_user)
+        user = await db.users.find_one({"id": user_id})
+        if not user or (not user.get("is_super_admin", False) and not user.get("is_admin", False)):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        files = await db.files.find({"lesson_id": lesson_id}).to_list(length=None)
+        result = []
+
+        for file_doc in files:
+            file_id = file_doc.get("id")
+            analytics = await db.file_analytics.find({"file_id": file_id}).to_list(length=None)
+            total_views = sum(1 for entry in analytics if entry.get("action") == "view")
+            total_downloads = sum(1 for entry in analytics if entry.get("action") == "download")
+            unique_users = len({entry.get("user_id") for entry in analytics})
+
+            video_stats = None
+            if file_doc.get("mime_type", "").startswith("video/"):
+                video_records = await db.video_watch_time.find({"file_id": file_id}).to_list(length=None)
+                video_stats = {
+                    "total_watch_minutes": sum(rec.get("total_minutes", 0) for rec in video_records),
+                    "total_points_earned": sum(rec.get("total_points", 0) for rec in video_records),
+                    "unique_watchers": len(video_records)
+                }
+
+            result.append({
+                "file_id": file_id,
+                "file_name": file_doc.get("original_name"),
+                "file_type": file_doc.get("file_type"),
+                "section": file_doc.get("section"),
+                "mime_type": file_doc.get("mime_type"),
+                "total_views": total_views,
+                "total_downloads": total_downloads,
+                "unique_users": unique_users,
+                "video_stats": video_stats
+            })
+
+        return {
+            "lesson_id": lesson_id,
+            "total_files": len(result),
+            "files": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting lesson files analytics: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting lesson files analytics: {str(e)}")
+
+@app.get("/api/admin/analytics/overview")
+async def get_admin_analytics_overview(current_user: dict = Depends(get_current_user)):
+    """Получить общую аналитику для админа"""
+    try:
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Получаем общую статистику
+        total_students = await db.users.count_documents({})  # Пока все пользователи
+        total_lessons = await db.lessons_v2.count_documents({"is_active": True})
+
+        # Подсчитываем баллы
+        points_stats = {
+            "total": 0,
+            "challenges": 0,
+            "quizzes": 0,
+            "time": 0,
+            "videos": 0,
+            "files": 0
+        }
+
+        # Баллы за челленджи
+        if "challenge_progress" in await db.list_collection_names():
+            challenge_cursor = db.challenge_progress.find({})
+            challenge_docs = await challenge_cursor.to_list(length=None)
+            points_stats["challenges"] = sum(doc.get("points_earned", 0) for doc in challenge_docs)
+
+        # Баллы за тесты
+        if "quiz_attempts" in await db.list_collection_names():
+            quiz_cursor = db.quiz_attempts.find({})
+            quiz_docs = await quiz_cursor.to_list(length=None)
+            points_stats["quizzes"] = sum(doc.get("points_earned", 0) for doc in quiz_docs)
+
+        # Баллы за время
+        if "time_activity" in await db.list_collection_names():
+            time_cursor = db.time_activity.find({})
+            time_docs = await time_cursor.to_list(length=None)
+            points_stats["time"] = sum(doc.get("total_points", 0) for doc in time_docs)
+
+        # Баллы за видео
+        if "video_watch_time" in await db.list_collection_names():
+            video_cursor = db.video_watch_time.find({})
+            video_docs = await video_cursor.to_list(length=None)
+            points_stats["videos"] = sum(doc.get("total_points", 0) for doc in video_docs)
+
+        # Баллы за просмотр файлов
+        if "time_activity" in await db.list_collection_names():
+            file_view_cursor = db.time_activity.find({"activity_type": "file_view"})
+            file_view_docs = await file_view_cursor.to_list(length=None)
+            points_stats["files"] = sum(doc.get("total_points", 0) for doc in file_view_docs)
+
+        points_stats["total"] = points_stats["challenges"] + points_stats["quizzes"] + points_stats["time"] + points_stats["videos"] + points_stats["files"]
+
+        # Непроверенные ответы на упражнения
+        pending_reviews = 0
+        pending_reviews_details = []
+
+        if "exercise_responses" in await db.list_collection_names():
+            pending_cursor = db.exercise_responses.find({"reviewed": False})
+            pending_docs = await pending_cursor.to_list(length=None)
+            pending_reviews = len(pending_docs)
+
+            # Детали непроверенных ответов (первые 10)
+            for doc in pending_docs[:10]:
+                lesson = await db.lessons_v2.find_one({"id": doc["lesson_id"]})
+                user_info = await db.users.find_one({"id": doc["user_id"]}) or {"name": "Неизвестный пользователь"}
+
+                pending_reviews_details.append({
+                    "response_id": doc["id"],
+                    "user_name": user_info.get("name", "Неизвестный"),
+                    "lesson_title": lesson.get("title", "Неизвестный урок") if lesson else "Неизвестный урок",
+                    "exercise_title": "Упражнение",  # Пока без названия
+                    "response_text": doc.get("response_text", "")[:200] + "..." if len(doc.get("response_text", "")) > 200 else doc.get("response_text", ""),
+                    "submitted_at": doc.get("submitted_at")
+                })
+
+        # Активность за последние 7 дней
+        recent_activity_7days = 0
+        active_students = 0
+        top_lessons = []
+
+        if "lesson_progress" in await db.list_collection_names():
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+
+            recent_progress_cursor = db.lesson_progress.find({
+                "last_activity_at": {"$gte": seven_days_ago}
+            })
+            recent_progress = await recent_progress_cursor.to_list(length=None)
+            recent_activity_7days = len(recent_progress)
+            active_students = len({item.get("user_id") for item in recent_progress if item.get("user_id")})
+
+            pipeline = [
+                {
+                    "$group": {
+                        "_id": "$lesson_id",
+                        "students_count": {"$sum": 1},
+                        "avg_completion": {"$avg": "$completion_percentage"}
+                    }
+                },
+                {"$sort": {"students_count": -1}},
+                {"$limit": 5}
+            ]
+            top_lessons_raw = await db.lesson_progress.aggregate(pipeline).to_list(length=5)
+
+            lesson_ids = [doc["_id"] for doc in top_lessons_raw if doc.get("_id")]
+            lessons_info = []
+            if lesson_ids:
+                lessons_info = await db.lessons_v2.find({"id": {"$in": lesson_ids}}).to_list(length=None)
+            lessons_map = {lesson.get("id"): lesson.get("title", "Неизвестный урок") for lesson in lessons_info}
+
+            top_lessons = [
+                {
+                    "lesson_id": item.get("_id"),
+                    "lesson_title": lessons_map.get(item.get("_id"), "Неизвестный урок"),
+                    "students_count": item.get("students_count", 0),
+                    "avg_completion": round(item.get("avg_completion", 0), 2)
+                }
+                for item in top_lessons_raw
+            ]
+        
+        return {
+            "total_students": total_students,
+            "total_lessons": total_lessons,
+            "points": points_stats,
+            "pending_reviews": pending_reviews,
+            "pending_reviews_details": pending_reviews_details,
+            "recent_activity_7days": recent_activity_7days,
+            "active_students": active_students,
+            "top_lessons": top_lessons
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error getting admin analytics overview: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting admin analytics overview: {str(e)}")
+
+# Вспомогательные функции для обновления прогресса
+async def update_lesson_progress(user_id: str, lesson_id: str):
+    """Обновить прогресс урока на основе выполненных заданий"""
+    try:
+        # Получаем урок
+        lesson = await db.lessons_v2.find_one({"id": lesson_id})
+        if not lesson:
+            return
+
+        # Получаем существующий прогресс
+        existing_progress = await db.lesson_progress.find_one({"user_id": user_id, "lesson_id": lesson_id})
+
+        # Подсчитываем прогресс
+        theory_read = True  # Пока считаем, что теория прочитана
+
+        # Подсчитываем выполненные упражнения
+        exercises_count = len(lesson.get("exercises", []))
+        completed_exercises = 0
+
+        if "exercise_responses" in await db.list_collection_names():
+            completed_exercises = await db.exercise_responses.count_documents({
+                "user_id": user_id,
+                "lesson_id": lesson_id
+            })
+
+        # Проверяем челлендж
+        challenge_started = False
+        challenge_completed = False
+
+        if lesson.get("challenge") and "challenge_progress" in await db.list_collection_names():
+            challenge_progress_doc = await db.challenge_progress.find_one({
+                "user_id": user_id,
+            "lesson_id": lesson_id,
+                "challenge_id": lesson["challenge"]["id"]
+            })
+
+            if challenge_progress_doc:
+                challenge_started = True
+                challenge_completed = challenge_progress_doc.get("is_completed", False)
+
+        # Проверяем тест
+        quiz_passed = False
+
+        if lesson.get("quiz") and "quiz_attempts" in await db.list_collection_names():
+            quiz_attempt = await db.quiz_attempts.find_one({
+                "user_id": user_id,
+            "lesson_id": lesson_id,
+                "passed": True
+            }, sort=[("attempted_at", -1)])
+
+            quiz_passed = quiz_attempt is not None
+
+        # Рассчитываем процент завершения
+        total_tasks = 1 + exercises_count + (1 if lesson.get("challenge") else 0) + (1 if lesson.get("quiz") else 0)  # теория + упражнения + челлендж + тест
+        completed_tasks = (1 if theory_read else 0) + completed_exercises + (1 if challenge_completed else 0) + (1 if quiz_passed else 0)
+        completion_percentage = int((completed_tasks / total_tasks) * 100) if total_tasks > 0 else 0
+
+        is_completed = completion_percentage >= 100
+
+        progress_data = {
+            "user_id": user_id,
+            "lesson_id": lesson_id,
+            "is_completed": is_completed,
+            "completion_percentage": completion_percentage,
+            "theory_read": theory_read,
+            "exercises_completed": completed_exercises,
+            "challenge_started": challenge_started,
+            "challenge_completed": challenge_completed,
+            "quiz_passed": quiz_passed,
+            "last_activity_at": datetime.utcnow()
+        }
+
+        # Проверяем, был ли урок только что завершен (для начисления бонусных кредитов)
+        was_already_completed = existing_progress.get("is_completed", False) if existing_progress else False
+        lesson_just_completed = is_completed and not was_already_completed
+
+        if existing_progress:
+            # Обновляем существующий прогресс
+            await db.lesson_progress.update_one(
+                {"_id": existing_progress["_id"]},
+                {"$set": progress_data}
+            )
+
+            # Если урок завершен и не был завершен ранее
+            if is_completed and not existing_progress.get("is_completed"):
+                progress_data["completed_at"] = datetime.utcnow()
+                await db.lesson_progress.update_one(
+                    {"_id": existing_progress["_id"]},
+                    {"$set": {"completed_at": datetime.utcnow()}}
+                )
+        else:
+            # Создаем новый прогресс
+            progress_data["id"] = str(uuid.uuid4())
+            progress_data["started_at"] = datetime.utcnow()
+
+            if is_completed:
+                progress_data["completed_at"] = datetime.utcnow()
+
+            result = await db.lesson_progress.insert_one(progress_data)
+        
+        # Начисляем бонусные кредиты при завершении урока (только один раз)
+        if lesson_just_completed:
+            await award_credits_for_learning(
+                user_id=user_id,
+                amount=50,  # 50 бонусных баллов за завершение урока
+                description=f"Завершение урока {lesson_id}",
+                category='lesson',
+                details={
+                    'lesson_id': lesson_id,
+                    'completion_percentage': completion_percentage,
+                    'theory_read': theory_read,
+                    'exercises_completed': completed_exercises,
+                    'quiz_passed': quiz_passed,
+                    'challenge_completed': challenge_completed
+                }
+            )
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Error updating lesson progress: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+
+# ==================== FILE OPERATIONS ====================
+
+@app.get("/api/download-file/{file_id}")
+async def download_file(file_id: str, current_user: dict = Depends(get_current_user)):
+    """Скачать файл по ID"""
+    try:
+        # Проверяем пользователя
+        user_id = current_user.get('user_id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Получаем информацию о файле
+        file_info = await db.files.find_one({"id": file_id})
+        if not file_info:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Проверяем существование файла на диске
+        # Сначала ищем в папке урока, затем в корне папки learning_v2
+        lesson_id = file_info.get('lesson_id')
+        if lesson_id:
+            file_path = Path(f"uploads/learning_v2/{lesson_id}/{file_info['stored_name']}")
+            if not file_path.exists():
+                # Если не найден в папке урока, ищем в корне
+                file_path = Path(f"uploads/learning_v2/{file_info['stored_name']}")
+                if not file_path.exists():
+                    raise HTTPException(status_code=404, detail="File not found on disk")
+        else:
+            file_path = Path(f"uploads/learning_v2/{file_info['stored_name']}")
+            if not file_path.exists():
+                raise HTTPException(status_code=404, detail="File not found on disk")
+
+        # Определяем правильный MIME type
+        mime_type = file_info.get('mime_type', 'application/octet-stream')
+        if not mime_type or mime_type == 'application/octet-stream':
+            # Если MIME type не определен, пытаемся определить по расширению
+            mime_type = mimetypes.guess_type(file_info['original_name'])[0] or 'application/octet-stream'
+
+        # Возвращаем файл для скачивания/просмотра
+        return FileResponse(
+            path=file_path,
+            media_type=mime_type,
+            filename=file_info['original_name']
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading file {file_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}")
+
+@app.delete("/api/admin/files/{file_id}")
+async def delete_file_admin(file_id: str, current_user: dict = Depends(get_current_user)):
+    """Удалить файл (только для админов)"""
+    try:
+        # Получаем полные данные пользователя из базы данных
+        user_id = current_user.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({"id": user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Получаем информацию о файле
+        file_info = await db.files.find_one({"id": file_id})
+        if not file_info:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Удаляем файл с диска
+        file_path = Path(f"uploads/learning_v2/{file_info['stored_name']}")
+        if file_path.exists():
+            file_path.unlink()
+
+        # Удаляем запись из базы данных
+        await db.files.delete_one({"id": file_id})
+
+        # Удаляем файл из массива файлов урока
+        await db.lessons_v2.update_one(
+            {"id": file_info["lesson_id"]},
+            {"$pull": {"files": {"id": file_id}}}
+        )
+
+        return {"message": "Файл успешно удален"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting file {file_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
+
+# ==================== LEARNING POINTS CONFIGURATION ====================
+
+@app.get("/api/admin/learning-points-config")
+async def get_learning_points_config_endpoint(current_user: dict = Depends(get_current_user)):
+    """Получить конфигурацию начисления баллов за обучение"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        config = await get_learning_points_config()
+        return {"config": config}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting learning points config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting learning points config: {str(e)}")
+
+@app.put("/api/admin/learning-points-config")
+async def update_learning_points_config(
+    config_update: LearningPointsConfigUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить конфигурацию начисления баллов за обучение"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Получаем текущую активную конфигурацию
+        existing_config = await db.learning_points_config.find_one({'is_active': True})
+        
+        # Подготавливаем данные для обновления
+        update_data = config_update.dict(exclude_unset=True)
+        update_data['updated_at'] = datetime.utcnow()
+        update_data['updated_by'] = user.get('email', user_id)
+        
+        if existing_config:
+            # Обновляем существующую конфигурацию
+            await db.learning_points_config.update_one(
+                {'_id': existing_config['_id']},
+                {'$set': update_data}
+            )
+            config_id = existing_config.get('id')
+        else:
+            # Создаем новую конфигурацию
+            new_config = LearningPointsConfig(**update_data)
+            result = await db.learning_points_config.insert_one(new_config.dict())
+            config_id = new_config.id
+
+        # Получаем обновленную конфигурацию
+        updated_config = await get_learning_points_config()
+        
+        logger.info(f"Learning points config updated by {user.get('email', user_id)}")
+
+        return {
+            "message": "Конфигурация начисления баллов успешно обновлена",
+            "config": updated_config
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating learning points config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error updating learning points config: {str(e)}")
+
+# ==================== NUMEROLOGY CREDITS CONFIGURATION ====================
+
+async def get_numerology_credits_config() -> dict:
+    """Получить конфигурацию стоимости услуг нумерологии"""
+    try:
+        config = await db.numerology_credits_config.find_one({'is_active': True})
+        if config:
+            config.pop('_id', None)
+            return config
+    except Exception as e:
+        logger.error(f"Error getting numerology credits config: {e}")
+    
+    # Возвращаем значения по умолчанию
+    default_config = NumerologyCreditsConfig()
+    return default_config.dict()
+
+@app.get("/api/admin/numerology-credits-config")
+async def get_numerology_credits_config_endpoint(current_user: dict = Depends(get_current_user)):
+    """Получить конфигурацию стоимости услуг нумерологии"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        config = await get_numerology_credits_config()
+        return {"config": config}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting numerology credits config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting numerology credits config: {str(e)}")
+
+@app.put("/api/admin/numerology-credits-config")
+async def update_numerology_credits_config(
+    config_update: NumerologyCreditsConfigUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить конфигурацию стоимости услуг нумерологии"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Получаем текущую активную конфигурацию
+        existing_config = await db.numerology_credits_config.find_one({'is_active': True})
+        
+        # Подготавливаем данные для обновления
+        update_data = config_update.dict(exclude_unset=True)
+        update_data['updated_at'] = datetime.utcnow()
+        update_data['updated_by'] = user.get('email', user_id)
+        
+        if existing_config:
+            # Обновляем существующую конфигурацию
+            await db.numerology_credits_config.update_one(
+                {'_id': existing_config['_id']},
+                {'$set': update_data}
+            )
+            config_id = existing_config.get('id')
+        else:
+            # Создаем новую конфигурацию
+            new_config = NumerologyCreditsConfig(**update_data)
+            result = await db.numerology_credits_config.insert_one(new_config.dict())
+            config_id = new_config.id
+
+        # Получаем обновленную конфигурацию
+        updated_config = await get_numerology_credits_config()
+        
+        logger.info(f"Numerology credits config updated by {user.get('email', user_id)}")
+
+        return {
+            "message": "Конфигурация стоимости услуг нумерологии успешно обновлена",
+            "config": updated_config
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating numerology credits config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error updating numerology credits config: {str(e)}")
+
+# ==================== CREDITS DEDUCTION CONFIGURATION (ЕДИНАЯ СИСТЕМА) ====================
+
+@app.get("/api/admin/credits-deduction-config")
+async def get_credits_deduction_config_endpoint(current_user: dict = Depends(get_current_user)):
+    """Получить единую конфигурацию всех списаний баллов"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        config = await get_credits_deduction_config()
+        return {"config": config}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting credits deduction config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting credits deduction config: {str(e)}")
+
+@app.put("/api/admin/credits-deduction-config")
+async def update_credits_deduction_config(
+    config_update: CreditsDeductionConfigUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить единую конфигурацию всех списаний баллов"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Получаем текущую активную конфигурацию
+        existing_config = await db.credits_deduction_config.find_one({'is_active': True})
+        
+        # Подготавливаем данные для обновления
+        update_data = config_update.dict(exclude_unset=True)
+        update_data['updated_at'] = datetime.utcnow()
+        update_data['updated_by'] = user.get('email', user_id)
+        
+        if existing_config:
+            # Обновляем существующую конфигурацию
+            await db.credits_deduction_config.update_one(
+                {'_id': existing_config['_id']},
+                {'$set': update_data}
+            )
+            config_id = existing_config.get('id')
+        else:
+            # Создаем новую конфигурацию
+            new_config = CreditsDeductionConfig(**update_data)
+            result = await db.credits_deduction_config.insert_one(new_config.dict())
+            config_id = new_config.id
+
+        # Получаем обновленную конфигурацию
+        updated_config = await get_credits_deduction_config()
+        
+        logger.info(f"Credits deduction config updated by {user.get('email', user_id)}")
+        
+        return {
+            "message": "Конфигурация списания баллов успешно обновлена",
+            "config": updated_config
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating credits deduction config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error updating credits deduction config: {str(e)}")
+
+# ==================== PLANETARY ENERGY MODIFIERS CONFIGURATION ====================
+
+async def get_planetary_energy_modifiers_config() -> dict:
+    """Получить конфигурацию модификаторов энергии планет"""
+    try:
+        config = await db.planetary_energy_modifiers_config.find_one({'is_active': True})
+        if config:
+            config.pop('_id', None)
+            return config
+    except Exception as e:
+        logger.error(f"Error getting planetary energy modifiers config: {e}")
+    
+    # Возвращаем значения по умолчанию
+    default_config = PlanetaryEnergyModifiersConfig()
+    return default_config.dict()
+
+@app.get("/api/admin/planetary-energy-modifiers-config")
+async def get_planetary_energy_modifiers_config_endpoint(current_user: dict = Depends(get_current_user)):
+    """Получить конфигурацию модификаторов энергии планет"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        config = await get_planetary_energy_modifiers_config()
+        return {"config": config}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting planetary energy modifiers config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting planetary energy modifiers config: {str(e)}")
+
+@app.put("/api/admin/planetary-energy-modifiers-config")
+async def update_planetary_energy_modifiers_config(
+    config_update: PlanetaryEnergyModifiersConfigUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить конфигурацию модификаторов энергии планет"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Получаем текущую активную конфигурацию
+        existing_config = await db.planetary_energy_modifiers_config.find_one({'is_active': True})
+        
+        # Подготавливаем данные для обновления
+        update_data = config_update.dict(exclude_unset=True)
+        update_data['updated_at'] = datetime.utcnow()
+        update_data['updated_by'] = user.get('email', user_id)
+        
+        if existing_config:
+            # Обновляем существующую конфигурацию
+            await db.planetary_energy_modifiers_config.update_one(
+                {'_id': existing_config['_id']},
+                {'$set': update_data}
+            )
+            config_id = existing_config.get('id')
+        else:
+            # Создаем новую конфигурацию
+            new_config = PlanetaryEnergyModifiersConfig(**update_data)
+            result = await db.planetary_energy_modifiers_config.insert_one(new_config.dict())
+            config_id = new_config.id
+
+        # Получаем обновленную конфигурацию
+        updated_config = await get_planetary_energy_modifiers_config()
+        
+        logger.info(f"Planetary energy modifiers config updated by {user.get('email', user_id)}")
+        
+        return {
+            "message": "Конфигурация модификаторов энергии планет успешно обновлена",
+            "config": updated_config
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating planetary energy modifiers config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error updating planetary energy modifiers config: {str(e)}")
+
+# ==================== MONTHLY ROUTE CONFIG ENDPOINTS ====================
+
+async def get_monthly_route_config() -> dict:
+    """Получить конфигурацию месячного маршрута"""
+    try:
+        config = await db.monthly_route_config.find_one({'is_active': True})
+        if config:
+            config.pop('_id', None)
+            return config
+    except Exception as e:
+        logger.error(f"Error getting monthly route config: {e}")
+    
+    # Возвращаем значения по умолчанию
+    from models import MonthlyRouteConfig
+    default_config = MonthlyRouteConfig()
+    return default_config.dict()
+
+@app.get("/api/admin/monthly-route-config")
+async def get_monthly_route_config_endpoint(current_user: dict = Depends(get_current_user)):
+    """Получить конфигурацию месячного маршрута"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        config = await get_monthly_route_config()
+        return {"config": config}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting monthly route config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error getting monthly route config: {str(e)}")
+
+@app.put("/api/admin/monthly-route-config")
+async def update_monthly_route_config(
+    config_update: MonthlyRouteConfigUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Обновить конфигурацию месячного маршрута"""
+    try:
+        user_id = current_user.get('user_id') or current_user.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Проверка прав администратора
+        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+        # Получаем текущую активную конфигурацию
+        existing_config = await db.monthly_route_config.find_one({'is_active': True})
+        
+        # Подготавливаем данные для обновления
+        update_data = config_update.dict(exclude_unset=True)
+        update_data['updated_at'] = datetime.utcnow()
+        update_data['updated_by'] = user.get('email', user_id)
+        
+        if existing_config:
+            # Обновляем существующую конфигурацию
+            await db.monthly_route_config.update_one(
+                {'_id': existing_config['_id']},
+                {'$set': update_data}
+            )
+            config_id = existing_config.get('id')
+        else:
+            # Создаем новую конфигурацию
+            from models import MonthlyRouteConfig
+            new_config = MonthlyRouteConfig(**update_data)
+            result = await db.monthly_route_config.insert_one(new_config.dict())
+            config_id = new_config.id
+
+        # Получаем обновленную конфигурацию
+        updated_config = await get_monthly_route_config()
+        
+        logger.info(f"Monthly route config updated by {user.get('email', user_id)}")
+        
+        return {
+            "message": "Конфигурация месячного маршрута успешно обновлена",
+            "config": updated_config
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating monthly route config: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error updating monthly route config: {str(e)}")
+
+# ==================== REPORTS ENDPOINTS ====================
+
+@app.post("/api/reports/html/numerology")
+async def generate_numerology_html_report(
+    html_request: HTMLReportRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Генерация HTML отчёта по нумерологии"""
+    try:
+        user_id = current_user.get('user_id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail='Пользователь не найден')
+
+        # Получаем стоимость из конфигурации
+        config = await get_credits_deduction_config()
+        cost = config.get('html_report_numerology', 3)
+
+        # Списываем баллы (включая premium пользователей)
+        await deduct_credits(
+            user_id,
+            cost,
+            'Генерация HTML отчёта по нумерологии',
+            'report',
+            {'report_type': 'html', 'report_category': 'numerology'}
+        )
+
+        # Подготавливаем данные пользователя
+        user_data = {
+            'full_name': user.get('full_name', ''),
+            'email': user.get('email', ''),
+            'birth_date': user.get('birth_date', ''),
+            'city': user.get('city', ''),
+            'phone_number': user.get('phone_number', ''),
+            'car_number': user.get('car_number', ''),
+            'street': user.get('street', ''),
+            'house_number': user.get('house_number', ''),
+            'apartment_number': user.get('apartment_number', ''),
+            'postal_code': user.get('postal_code', '')
+        }
+
+        # Вычисляем данные
+        calculations = calculate_personal_numbers(user.get('birth_date', ''))
+        
+        pythagorean_data = None
+        try:
+            d, m, y = parse_birth_date(user.get('birth_date', ''))
+            pythagorean_data = create_pythagorean_square(d, m, y)
+        except Exception:
+            pass
+
+        # Выбранные расчёты
+        selected_calculations = html_request.selected_calculations
+        if not selected_calculations:
+            selected_calculations = []
+            if html_request.include_vedic:
+                selected_calculations.append('vedic_times')
+            if html_request.include_charts:
+                selected_calculations.extend(['personal_numbers', 'pythagorean_square'])
+            if html_request.include_compatibility:
+                selected_calculations.append('compatibility')
+
+        if not selected_calculations:
+            selected_calculations = ['personal_numbers', 'pythagorean_square']
+
+        # Ведические данные
+        vedic_data = None
+        vedic_times = None
+        if 'vedic_times' in selected_calculations and user.get('city'):
+            try:
+                vedic_times = get_vedic_day_schedule(city=user.get('city'), date=datetime.utcnow())
+            except Exception:
+                pass
+
+        # Планетарный маршрут
+        planetary_route = None
+        if 'planetary_route' in selected_calculations and user.get('city'):
+            try:
+                planetary_route = {
+                    'date': datetime.utcnow().strftime('%Y-%m-%d'),
+                    'city': user.get('city'),
+                    'daily_route': []
+                }
+            except Exception:
+                pass
+
+        # Данные для графиков
+        charts_data = None
+        if any(calc in selected_calculations for calc in ['personal_numbers', 'pythagorean_square']):
+            try:
+                user_numbers = None
+                if user.get('birth_date'):
+                    try:
+                        personal_numbers = calculate_personal_numbers(user.get('birth_date', ''))
+                        user_numbers = {
+                            'soul_number': personal_numbers.get('soul_number'),
+                            'mind_number': personal_numbers.get('mind_number'),
+                            'destiny_number': personal_numbers.get('destiny_number'),
+                            'personal_day': personal_numbers.get('personal_day')
+                        }
+                    except:
+                        pass
+                user_city = user.get('city', 'Москва') or 'Москва'
+                
+                # Prepare enhanced calculation data
+                pythagorean_square_data = pythagorean_data
+                fractal_behavior = None
+                problem_numbers = None
+                name_numbers = None
+                weekday_energy = None
+                
+                if user.get('birth_date'):
+                    try:
+                        d, m, y = parse_birth_date(user.get('birth_date', ''))
+                        
+                        # Calculate fractal behavior
+                        day_reduced = reduce_to_single_digit(d)
+                        month_reduced = reduce_to_single_digit(m)
+                        year_reduced = reduce_to_single_digit(y)
+                        year_sum = reduce_to_single_digit(d + m + y)
+                        fractal_behavior = [day_reduced, month_reduced, year_reduced, year_sum]
+                        
+                        # Calculate problem numbers
+                        soul_num = user_numbers.get('soul_number', 1) if user_numbers else 1
+                        mind_num = user_numbers.get('mind_number', 1) if user_numbers else 1
+                        destiny_num = user_numbers.get('destiny_number', 1) if user_numbers else 1
+                        problem1 = reduce_to_single_digit(abs(soul_num - mind_num))
+                        problem2 = reduce_to_single_digit(abs(soul_num - year_reduced))
+                        problem3 = reduce_to_single_digit(abs(problem1 - problem2))
+                        problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
+                        problem_numbers = [problem1, problem2, problem3, problem4]
+                        
+                        # Get name numbers if available
+                        if user.get('full_name'):
+                            # Calculate name numbers (name and surname separately)
+                            from numerology import calculate_name_numerology
+                            try:
+                                name_data = calculate_name_numerology(user.get('full_name', ''))
+                                name_numbers = {
+                                    'first_name_number': name_data.get('first_name_number'),
+                                    'last_name_number': name_data.get('last_name_number'),
+                                    'total_name_number': name_data.get('total_name_number'),
+                                    'full_name_number': name_data.get('total_name_number')  # Alias
+                                }
+                            except:
+                                # Fallback to simple calculation
+                                try:
+                                    from numerology import calculate_full_name_number
+                                    name_num = calculate_full_name_number(user.get('full_name', ''))
+                                    name_numbers = {'name_number': name_num, 'full_name_number': name_num}
+                                except:
+                                    pass
+                        
+                        # Calculate weekday energy (personal energy by day of week)
+                        try:
+                            from numerology import calculate_planetary_strength
+                            planetary_strength_data = calculate_planetary_strength(d, m, y)
+                            strength_dict = planetary_strength_data.get('strength', {})
+                            
+                            # Map planet names to energy keys
+                            planet_name_to_key = {
+                                'Солнце': 'surya',
+                                'Луна': 'chandra',
+                                'Марс': 'mangal',
+                                'Меркурий': 'budha',
+                                'Юпитер': 'guru',
+                                'Венера': 'shukra',
+                                'Сатурн': 'shani'
+                            }
+                            
+                            weekday_energy = {}
+                            for planet_name, energy_value in strength_dict.items():
+                                planet_key = planet_name_to_key.get(planet_name)
+                                if planet_key:
+                                    weekday_energy[planet_key] = float(energy_value)
+                        except:
+                            weekday_energy = None
+                        
+                        # Calculate Janma Ank
+                        try:
+                            from vedic_numerology import calculate_janma_ank
+                            janma_ank_value = calculate_janma_ank(d, m, y)
+                            total_before_reduction = d + m + y
+                            if total_before_reduction == 22:
+                                janma_ank_value = 22
+                        except:
+                            janma_ank_value = None
+                    except:
+                        pass
+                
+                charts_data = {
+                    'planetary_energy': generate_weekly_planetary_energy(
+                        user.get('birth_date', ''), user_numbers, user_city,
+                        pythagorean_square=pythagorean_square_data,
+                        fractal_behavior=fractal_behavior,
+                        problem_numbers=problem_numbers,
+                        name_numbers=name_numbers,
+                        weekday_energy=weekday_energy,
+                        janma_ank=janma_ank_value if 'janma_ank_value' in locals() else None,
+                        modifiers_config=await get_planetary_energy_modifiers_config()
+                    )
+                }
+            except Exception:
+                pass
+
+        # Загружаем сохранённые расчёты
+        saved_calculations_query = {'user_id': user_id}
+        saved_calculations_list = await db.numerology_calculations.find(saved_calculations_query).sort('created_at', -1).to_list(length=100)
+        
+        # Группируем по типу и берём последний для каждого типа
+        saved_calculations = {}
+        for calc in saved_calculations_list:
+            calc_type = calc.get('calculation_type')
+            if calc_type not in saved_calculations:
+                saved_calculations[calc_type] = calc.get('results', {})
+        
+        # Объединяем все данные
+        all_data = {
+            'personal_numbers': calculations,
+            'pythagorean_square': pythagorean_data,
+            'vedic_times': vedic_times,
+            'planetary_route': saved_calculations.get('planetary_route_daily') or planetary_route,
+            'charts': charts_data,
+            'compatibility': saved_calculations.get('compatibility'),
+            'group_compatibility': saved_calculations.get('group_compatibility'),
+            'name_numerology': saved_calculations.get('name_numerology'),
+            'address_numerology': saved_calculations.get('address_numerology'),
+            'car_numerology': saved_calculations.get('car_numerology')
+        }
+
+        # Генерируем HTML отчёт
+        html_str = create_numerology_report_html(
+            user_data=user_data,
+            all_data=all_data,
+            vedic_data=vedic_data,
+            charts_data=charts_data,
+            theme=html_request.theme,
+            selected_calculations=selected_calculations
+        )
+
+        if not html_str or len(html_str) < 100:
+            raise HTTPException(
+                status_code=500,
+                detail='Ошибка генерации HTML: пустой результат'
+            )
+
+        return Response(content=html_str, media_type='text/html; charset=utf-8')
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"HTML generation error: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f'Ошибка генерации HTML отчёта: {str(e)}'
+        )
+
+@app.post("/api/reports/pdf/numerology")
+async def generate_numerology_pdf_report(
+    pdf_request: PDFReportRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Генерация PDF отчёта по нумерологии"""
+    try:
+        user_id = current_user.get('user_id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail='Пользователь не найден')
+
+        # Получаем стоимость из конфигурации
+        config = await get_credits_deduction_config()
+        cost = config.get('pdf_report_numerology', 5)
+
+        # Списываем баллы (включая premium пользователей)
+        await deduct_credits(
+            user_id,
+            cost,
+            'Генерация PDF отчёта по нумерологии',
+            'report',
+            {'report_type': 'pdf', 'report_category': 'numerology'}
+        )
+
+        # Подготавливаем данные пользователя
+        user_data = {
+            'full_name': user.get('full_name', ''),
+            'email': user.get('email', ''),
+            'birth_date': user.get('birth_date', ''),
+            'city': user.get('city', '')
+        }
+
+        # Вычисляем данные
+        calculations = calculate_personal_numbers(user.get('birth_date', ''))
+
+        pythagorean_data = None
+        try:
+            d, m, y = parse_birth_date(user.get('birth_date', ''))
+            pythagorean_data = create_pythagorean_square(d, m, y)
+        except Exception:
+            pass
+
+        # Ведические данные
+        vedic_data = None
+        if pdf_request.include_vedic:
+            try:
+                vedic_data = calculate_comprehensive_vedic_numerology(
+                    user.get('birth_date', ''),
+                    user.get('full_name', '')
+                )
+            except Exception:
+                pass
+
+        # Данные для графиков
+        charts_data = None
+        if pdf_request.include_charts:
+            try:
+                user_numbers = None
+                if user.get('birth_date'):
+                    try:
+                        personal_numbers = calculate_personal_numbers(user.get('birth_date', ''))
+                        user_numbers = {
+                            'soul_number': personal_numbers.get('soul_number'),
+                            'mind_number': personal_numbers.get('mind_number'),
+                            'destiny_number': personal_numbers.get('destiny_number'),
+                            'personal_day': personal_numbers.get('personal_day')
+                        }
+                    except:
+                        pass
+                # Prepare enhanced calculation data
+                pythagorean_square_data = pythagorean_data
+                fractal_behavior = None
+                problem_numbers = None
+                name_numbers = None
+                weekday_energy = None
+                
+                if user.get('birth_date'):
+                    try:
+                        d, m, y = parse_birth_date(user.get('birth_date', ''))
+                        
+                        # Calculate fractal behavior
+                        day_reduced = reduce_to_single_digit(d)
+                        month_reduced = reduce_to_single_digit(m)
+                        year_reduced = reduce_to_single_digit(y)
+                        year_sum = reduce_to_single_digit(d + m + y)
+                        fractal_behavior = [day_reduced, month_reduced, year_reduced, year_sum]
+                        
+                        # Calculate problem numbers
+                        soul_num = user_numbers.get('soul_number', 1) if user_numbers else 1
+                        mind_num = user_numbers.get('mind_number', 1) if user_numbers else 1
+                        destiny_num = user_numbers.get('destiny_number', 1) if user_numbers else 1
+                        problem1 = reduce_to_single_digit(abs(soul_num - mind_num))
+                        problem2 = reduce_to_single_digit(abs(soul_num - year_reduced))
+                        problem3 = reduce_to_single_digit(abs(problem1 - problem2))
+                        problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
+                        problem_numbers = [problem1, problem2, problem3, problem4]
+                        
+                        # Get name numbers if available
+                        if user.get('full_name'):
+                            # Calculate name numbers (name and surname separately)
+                            from numerology import calculate_name_numerology
+                            try:
+                                name_data = calculate_name_numerology(user.get('full_name', ''))
+                                name_numbers = {
+                                    'first_name_number': name_data.get('first_name_number'),
+                                    'last_name_number': name_data.get('last_name_number'),
+                                    'total_name_number': name_data.get('total_name_number'),
+                                    'full_name_number': name_data.get('total_name_number')  # Alias
+                                }
+                            except:
+                                # Fallback to simple calculation
+                                try:
+                                    from numerology import calculate_full_name_number
+                                    name_num = calculate_full_name_number(user.get('full_name', ''))
+                                    name_numbers = {'name_number': name_num, 'full_name_number': name_num}
+                                except:
+                                    pass
+                        
+                        # Calculate weekday energy (personal energy by day of week)
+                        try:
+                            from numerology import calculate_planetary_strength
+                            planetary_strength_data = calculate_planetary_strength(d, m, y)
+                            strength_dict = planetary_strength_data.get('strength', {})
+                            
+                            # Map planet names to energy keys
+                            planet_name_to_key = {
+                                'Солнце': 'surya',
+                                'Луна': 'chandra',
+                                'Марс': 'mangal',
+                                'Меркурий': 'budha',
+                                'Юпитер': 'guru',
+                                'Венера': 'shukra',
+                                'Сатурн': 'shani'
+                            }
+                            
+                            weekday_energy = {}
+                            for planet_name, energy_value in strength_dict.items():
+                                planet_key = planet_name_to_key.get(planet_name)
+                                if planet_key:
+                                    weekday_energy[planet_key] = float(energy_value)
+                        except:
+                            weekday_energy = None
+                    except:
+                        pass
+                
+                charts_data = {
+                    'planetary_energy': generate_weekly_planetary_energy(
+                        user.get('birth_date', ''), user_numbers, user.get('city', 'Москва') or 'Москва',
+                        pythagorean_square=pythagorean_square_data,
+                        fractal_behavior=fractal_behavior,
+                        problem_numbers=problem_numbers,
+                        name_numbers=name_numbers,
+                        weekday_energy=weekday_energy,
+                        modifiers_config=await get_planetary_energy_modifiers_config()
+                    )
+                }
+            except Exception:
+                pass
+
+        # Загружаем сохранённые расчёты (как в HTML отчёте)
+        saved_calculations_query = {'user_id': user_id}
+        saved_calculations_list = await db.numerology_calculations.find(saved_calculations_query).sort('created_at', -1).to_list(length=100)
+        
+        # Группируем по типу и берём последний для каждого типа
+        saved_calculations = {}
+        for calc in saved_calculations_list:
+            calc_type = calc.get('calculation_type')
+            if calc_type not in saved_calculations:
+                saved_calculations[calc_type] = calc.get('results', {})
+        
+        # Получаем планетарный маршрут
+        planetary_route = None
+        if user.get('city'):
+            try:
+                from vedic_time_calculations import get_daily_planetary_route
+                planetary_route = get_daily_planetary_route(
+                    city=user.get('city'),
+                    date=datetime.utcnow(),
+                    birth_date=user.get('birth_date', '')
+                )
+            except:
+                pass
+        
+        # Объединяем все данные для PDF (как в HTML отчете)
+        all_data = {
+            'personal_numbers': calculations,
+            'pythagorean_square': pythagorean_data,
+            'vedic_times': None,
+            'planetary_route': saved_calculations.get('planetary_route_daily') or planetary_route,
+            'charts': charts_data,
+            'compatibility': saved_calculations.get('compatibility'),
+            'group_compatibility': saved_calculations.get('group_compatibility'),
+            'name_numerology': saved_calculations.get('name_numerology'),
+            'address_numerology': saved_calculations.get('address_numerology'),
+            'car_numerology': saved_calculations.get('car_numerology')
+        }
+        
+        # Генерируем PDF отчёт
+        pdf_bytes = create_numerology_report_pdf(
+            user_data=user_data,
+            all_data=all_data,
+            vedic_data=vedic_data,
+            charts_data=charts_data,
+            selected_calculations=None  # Включаем все доступные
+        )
+
+        if not pdf_bytes:
+            raise HTTPException(
+                status_code=500,
+                detail='Ошибка генерации PDF: пустой результат'
+            )
+
+        return Response(
+            content=pdf_bytes,
+            media_type='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="numerology_report_{user_id}.pdf"'
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF generation error: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f'Ошибка генерации PDF отчёта: {str(e)}'
+        )
+
+@app.post("/api/reports/html/compatibility")
+async def generate_compatibility_html_report(
+    compatibility_request: CompatibilityRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Генерация HTML отчёта по совместимости"""
+    try:
+        user_id = current_user.get('user_id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail='Пользователь не найден')
+
+        # Получаем стоимость из конфигурации
+        config = await get_credits_deduction_config()
+        cost = config.get('html_report_compatibility', 3)
+
+        # Списываем баллы (включая premium пользователей)
+        await deduct_credits(
+            user_id,
+            cost,
+            'Генерация HTML отчёта по совместимости',
+            'report',
+            {'report_type': 'html', 'report_category': 'compatibility'}
+        )
+
+        # Вычисляем совместимость
+        compatibility_result = calculate_compatibility(
+            compatibility_request.person1_birth_date,
+            compatibility_request.person2_birth_date
+        )
+
+        # Подготавливаем данные пользователей
+        user1_data = {
+            'name': compatibility_request.person1_name or 'Человек 1',
+            'birth_date': compatibility_request.person1_birth_date
+        }
+        user2_data = {
+            'name': compatibility_request.person2_name or 'Человек 2',
+            'birth_date': compatibility_request.person2_birth_date
+        }
+
+        # Генерируем HTML отчёт
+        from html_generator import create_compatibility_html
+        html_str = create_compatibility_html(user1_data, user2_data, compatibility_result)
+
+        if not html_str or len(html_str) < 100:
+            raise HTTPException(
+                status_code=500,
+                detail='Ошибка генерации HTML: пустой результат'
+            )
+
+        return Response(content=html_str, media_type='text/html; charset=utf-8')
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"HTML compatibility report generation error: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f'Ошибка генерации HTML отчёта по совместимости: {str(e)}'
+        )
+
+@app.post("/api/reports/pdf/compatibility")
+async def generate_compatibility_pdf_report(
+    compatibility_request: CompatibilityRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Генерация PDF отчёта по совместимости"""
+    try:
+        user_id = current_user.get('user_id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = await db.users.find_one({'id': user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail='Пользователь не найден')
+
+        # Получаем стоимость из конфигурации
+        config = await get_credits_deduction_config()
+        cost = config.get('pdf_report_compatibility', 5)
+
+        # Списываем баллы (включая premium пользователей)
+        await deduct_credits(
+            user_id,
+            cost,
+            'Генерация PDF отчёта по совместимости',
+            'report',
+            {'report_type': 'pdf', 'report_category': 'compatibility'}
+        )
+
+        # Вычисляем совместимость
+        compatibility_result = calculate_compatibility(
+            compatibility_request.person1_birth_date,
+            compatibility_request.person2_birth_date
+        )
+
+        # Подготавливаем данные пользователей
+        user1_data = {
+            'name': compatibility_request.person1_name or 'Человек 1',
+            'birth_date': compatibility_request.person1_birth_date
+        }
+        user2_data = {
+            'name': compatibility_request.person2_name or 'Человек 2',
+            'birth_date': compatibility_request.person2_birth_date
+        }
+
+        # Генерируем PDF отчёт
+        pdf_bytes = create_compatibility_pdf(user1_data, user2_data, compatibility_result)
+
+        if not pdf_bytes:
+            raise HTTPException(
+                status_code=500,
+                detail='Ошибка генерации PDF: пустой результат'
+            )
+
+        return Response(
+            content=pdf_bytes,
+            media_type='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="compatibility_report_{user_id}.pdf"'
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF compatibility report generation error: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f'Ошибка генерации PDF отчёта по совместимости: {str(e)}'
+        )
 
 if __name__ == "__main__":
     import uvicorn

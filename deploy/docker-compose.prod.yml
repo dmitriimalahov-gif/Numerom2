@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:5.0
+    container_name: numerom_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - numerom_network
+    environment:
+      - MONGO_INITDB_DATABASE=numerom
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: numerom_backend
+    restart: always
+    ports:
+      - "8001:8000"
+    depends_on:
+      - mongodb
+    networks:
+      - numerom_network
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+      - MONGODB_DATABASE=numerom
+      - JWT_SECRET_KEY=your-secret-key-here
+      - FRONTEND_URL=http://localhost:5128
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: numerom_frontend
+    restart: always
+    ports:
+      - "5128:80"
+    depends_on:
+      - backend
+    networks:
+      - numerom_network
+
+volumes:
+  mongodb_data:
+
+networks:
+  numerom_network:
+    driver: bridge

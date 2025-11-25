@@ -1,7 +1,7 @@
 /* eslint-disable no-restricted-globals */
 
 // Версия кэша для управления обновлениями
-const CACHE_VERSION = 'numerom-v1';
+const CACHE_VERSION = 'numerom-v8-hard-debug-2025-11-25-final';
 const CACHE_NAME = `numerom-cache-${CACHE_VERSION}`;
 
 // Ресурсы для кэширования (офлайн режим)
@@ -34,24 +34,35 @@ self.addEventListener('install', (event) => {
 
 // Активация Service Worker
 self.addEventListener('activate', (event) => {
-  console.log('[ServiceWorker] Activating...');
+  console.log('[ServiceWorker] Activating...', CACHE_VERSION);
   event.waitUntil(
     caches.keys().then((cacheNames) => {
+      // Удаляем ВСЕ старые кэши
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('[ServiceWorker] Removing old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
+          console.log('[ServiceWorker] Removing cache:', cacheName);
+          return caches.delete(cacheName);
         })
       );
+    }).then(() => {
+      // Захватить контроль над всеми клиентами немедленно
+      return self.clients.claim();
+    }).then(() => {
+      // Отправить сообщение всем клиентам о необходимости обновления
+      return self.clients.matchAll().then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({
+            type: 'CACHE_UPDATED',
+            cacheVersion: CACHE_VERSION,
+            action: 'RELOAD'
+          });
+        });
+      });
     })
   );
-  // Захватить контроль над всеми клиентами немедленно
-  return self.clients.claim();
 });
 
-// Стратегия кэширования: Network First, падаем на Cache
+// Стратегия кэширования: Network First с принудительным обновлением
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
@@ -64,17 +75,39 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        const responseToCache = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(request, responseToCache);
-        });
-        return response;
-      })
-      .catch(() => caches.match(request))
-  );
+  // Для HTML и JS файлов - всегда запрашиваем с сервера
+  const isHTML = request.headers.get('accept')?.includes('text/html');
+  const isJS = url.pathname.endsWith('.js') || url.pathname.includes('/static/js/');
+  const isCSS = url.pathname.endsWith('.css') || url.pathname.includes('/static/css/');
+
+  if (isHTML || isJS || isCSS) {
+    // Принудительно обновляем с сервера, игнорируя кэш
+    event.respondWith(
+      fetch(request, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } })
+        .then((response) => {
+          // Обновляем кэш новыми данными
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, responseToCache);
+          });
+          return response;
+        })
+        .catch(() => caches.match(request))
+    );
+  } else {
+    // Для остальных ресурсов - обычная стратегия Network First
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, responseToCache);
+          });
+          return response;
+        })
+        .catch(() => caches.match(request))
+    );
+  }
 });
 
 // Обработка Push уведомлений

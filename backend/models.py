@@ -8,12 +8,16 @@ class UserCreate(BaseModel):
     email: str
     password: str
     full_name: str
+    name: Optional[str] = None  # Имя
+    surname: Optional[str] = None  # Фамилия
     birth_date: str  # DD.MM.YYYY format
     city: Optional[str] = "Москва"  # Город по умолчанию
     phone_number: Optional[str] = None  # Номер телефона с кодом страны
 
 class UserProfileUpdate(BaseModel):
     full_name: Optional[str] = None
+    name: Optional[str] = None  # Имя
+    surname: Optional[str] = None  # Фамилия
     phone_number: Optional[str] = None  # +37369183398 format
     city: Optional[str] = None
     car_number: Optional[str] = None  # До 13 символов, любая раскладка
@@ -41,6 +45,8 @@ class UserResponse(BaseModel):
     id: str
     email: str
     full_name: str
+    name: Optional[str] = None  # Имя
+    surname: Optional[str] = None  # Фамилия
     birth_date: str
     city: str = "Москва"
     phone_number: Optional[str] = None
@@ -61,6 +67,8 @@ class User(BaseModel):
     email: str
     password_hash: str
     full_name: str
+    name: Optional[str] = None  # Имя
+    surname: Optional[str] = None  # Фамилия
     birth_date: str  # DD.MM.YYYY format
     city: str = "Москва"  # Город пользователя для временных расчетов
     phone_number: Optional[str] = None  # Номер телефона с кодом страны (+37369183398)
@@ -265,8 +273,12 @@ CREDIT_COSTS = {
     'pythagorean_square': 1,        # Квадрат Пифагора
     'vedic_daily': 1,              # Ведическое время на день
     'planetary_daily': 1,           # Планетарный маршрут на день
-    'planetary_monthly': 5,         # Планетарный маршрут на месяц
-    'planetary_quarterly': 10,      # Планетарный маршрут на квартал
+    'planetary_weekly': 10,         # Планетарный маршрут на неделю
+    'planetary_monthly': 30,        # Планетарный маршрут на месяц
+    'planetary_quarterly': 100,     # Планетарный маршрут на квартал
+    'planetary_energy_weekly': 10,  # Динамика энергии планет на неделю
+    'planetary_energy_monthly': 30, # Динамика энергии планет на месяц
+    'planetary_energy_quarterly': 100, # Динамика энергии планет на квартал
     'compatibility_pair': 1,        # Совместимость пары
     'group_compatibility': 5,       # Групповая совместимость (5 человек)
     'personality_test': 1,          # Тест личности
@@ -481,6 +493,133 @@ class LessonMaterialResponse(BaseModel):
     file_url: Optional[str] = None  # URL для доступа к файлу
     created_at: datetime
     uploaded_by: str  # ID суперадминистратора
+
+# ===== НОВАЯ СИСТЕМА ОБУЧЕНИЯ V2 =====
+
+class TheoryBlock(BaseModel):
+    """Блок теоретического материала"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    content: str
+    order: int = 0
+
+class Exercise(BaseModel):
+    """Интерактивное упражнение"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    description: str
+    type: str = "text"  # text, multiple_choice, calculation, reflection
+    instructions: str
+    expected_outcome: str
+    options: Optional[List[str]] = None  # Для multiple_choice
+    correct_answer: Optional[str] = None  # Для проверки
+    order: int = 0
+
+class ChallengeDay(BaseModel):
+    """День челленджа"""
+    day: int
+    title: str
+    description: str
+    tasks: List[str]
+    completed: bool = False
+
+class Challenge(BaseModel):
+    """Челлендж на несколько дней"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    description: str
+    duration_days: int
+    daily_tasks: List[ChallengeDay] = []
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+class QuizQuestion(BaseModel):
+    """Вопрос теста"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    question: str
+    type: str = "multiple_choice"  # multiple_choice, text, true_false
+    options: Optional[List[str]] = None
+    correct_answer: Optional[str] = None
+    explanation: Optional[str] = None
+    points: int = 1
+
+class Quiz(BaseModel):
+    """Тест на знания"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    description: Optional[str] = None
+    questions: List[QuizQuestion] = []
+    passing_score: int = 70  # Процент для прохождения
+    time_limit_minutes: Optional[int] = None
+
+class ExerciseResult(BaseModel):
+    """Результат выполнения упражнения"""
+    exercise_id: str
+    user_id: str
+    answer: str
+    is_correct: Optional[bool] = None
+    feedback: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+class LessonAnalytics(BaseModel):
+    """Аналитика прохождения урока"""
+    lesson_id: str
+    user_id: str
+    theory_read_time: int = 0  # Время чтения теории в минутах
+    exercises_completed: int = 0
+    exercises_correct: int = 0
+    quiz_score: Optional[int] = None
+    challenge_progress: int = 0  # Процент выполнения челленджа
+    total_time_spent: int = 0  # Общее время в минутах
+    recommendations: List[str] = []  # Персональные рекомендации
+    strengths: List[str] = []  # Сильные стороны
+    areas_for_improvement: List[str] = []  # Зоны роста
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class LessonFile(BaseModel):
+    """Файл урока (PDF, Word, TXT, Excel, Video)"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    filename: str
+    original_filename: str
+    file_type: str  # pdf, word, txt, excel, video
+    file_size: int
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    lesson_section: str  # theory, exercises, challenge, quiz, analytics
+
+class LessonV2(BaseModel):
+    """Новая модель урока с 5 разделами"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    description: str
+    module: str
+    level: int = 1
+    order: int = 0
+    points_required: int = 0
+    is_active: bool = True
+
+    # 1. ТЕОРИЯ - структурированная теория
+    theory: List[TheoryBlock] = []
+
+    # 2. УПРАЖНЕНИЯ - интерактивные задания
+    exercises: List[Exercise] = []
+
+    # 3. ЧЕЛЛЕНДЖ - ежедневные задания
+    challenge: Optional[Challenge] = None
+
+    # 4. ТЕСТ - проверка знаний
+    quiz: Optional[Quiz] = None
+
+    # 5. АНАЛИТИКА - результаты и рекомендации (вычисляется динамически)
+    analytics_enabled: bool = True
+
+    # Файлы
+    files: List[LessonFile] = []
+
+    # Мета-информация
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: str
+    updated_by: str
 
 class EnhancedLessonContent(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -700,6 +839,495 @@ class ScoringConfigUpdate(BaseModel):
     planet_friendship: Optional[int] = None
     planet_hostility: Optional[int] = None
     name_resonance: Optional[int] = None
+
+# Learning Points Configuration Models
+class LearningPointsConfig(BaseModel):
+    """Конфигурация начисления баллов за обучение"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    
+    # Баллы за просмотр видео (за минуту)
+    video_points_per_minute: int = 1  # 1 балл за минуту просмотра видео
+    
+    # Баллы за просмотр PDF файлов
+    pdf_points_per_view: int = 5  # 5 баллов за просмотр PDF документа
+    media_points_per_view: int = 10  # 10 баллов за просмотр медиафайла
+    
+    # Баллы за время нахождения на сайте (за минуту)
+    time_points_per_minute: int = 1  # 1 балл за минуту на сайте
+    
+    # Баллы за прохождение челленджа
+    challenge_points_per_day: int = 10  # 10 баллов за каждый день челленджа
+    challenge_bonus_points: int = 50  # 50 бонусных баллов за завершение всего челленджа
+    
+    # Баллы за прохождение теста
+    quiz_points_per_attempt: int = 10  # 10 баллов за прохождение теста
+    
+    # Баллы за выполнение упражнения
+    exercise_points_per_submission: int = 10  # 10 баллов за отправку упражнения
+    
+    # Метаданные
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_by: Optional[str] = None  # email администратора
+    is_active: bool = True  # Активная конфигурация
+    version: int = 1  # Версия конфигурации
+
+class LearningPointsConfigUpdate(BaseModel):
+    """Модель для обновления конфигурации начисления баллов за обучение"""
+    video_points_per_minute: Optional[int] = None
+    pdf_points_per_view: Optional[int] = None
+    media_points_per_view: Optional[int] = None
+    time_points_per_minute: Optional[int] = None
+    challenge_points_per_day: Optional[int] = None
+    challenge_bonus_points: Optional[int] = None
+    quiz_points_per_attempt: Optional[int] = None
+    exercise_points_per_submission: Optional[int] = None
+
+class NumerologyCreditsConfig(BaseModel):
+    """Конфигурация стоимости услуг нумерологии"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    
+    # Планетарные маршруты
+    planetary_weekly: int = 10  # Планетарный маршрут на неделю
+    planetary_monthly: int = 30  # Планетарный маршрут на месяц
+    planetary_quarterly: int = 100  # Планетарный маршрут на квартал
+    
+    # Динамика энергии планет
+    planetary_energy_weekly: int = 10  # Динамика энергии планет на неделю
+    planetary_energy_monthly: int = 30  # Динамика энергии планет на месяц
+    planetary_energy_quarterly: int = 100  # Динамика энергии планет на квартал
+    
+    # Метаданные
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_by: Optional[str] = None  # email администратора
+    is_active: bool = True  # Активная конфигурация
+    version: int = 1  # Версия конфигурации
+
+class NumerologyCreditsConfigUpdate(BaseModel):
+    """Модель для обновления конфигурации стоимости услуг нумерологии"""
+    planetary_weekly: Optional[int] = None
+    planetary_monthly: Optional[int] = None
+    planetary_quarterly: Optional[int] = None
+    planetary_energy_weekly: Optional[int] = None
+    planetary_energy_monthly: Optional[int] = None
+    planetary_energy_quarterly: Optional[int] = None
+
+class CreditsDeductionConfig(BaseModel):
+    """Единая конфигурация всех списаний баллов"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    
+    # === НУМЕРОЛОГИЯ ===
+    name_numerology: int = 1                    # Нумерология имени
+    personal_numbers: int = 1                   # Расчёт персональных чисел
+    pythagorean_square: int = 1                 # Квадрат Пифагора
+    compatibility_pair: int = 1                 # Совместимость пары
+    group_compatibility: int = 5                # Групповая совместимость (5 человек)
+    
+    # === ВЕДИЧЕСКОЕ ВРЕМЯ ===
+    vedic_daily: int = 1                        # Ведическое время на день
+    planetary_daily: int = 1                    # Планетарный маршрут на день
+    planetary_weekly: int = 10                  # Планетарный маршрут на неделю
+    planetary_monthly: int = 30                 # Планетарный маршрут на месяц
+    planetary_quarterly: int = 100              # Планетарный маршрут на квартал
+    
+    # === ДИНАМИКА ЭНЕРГИИ ПЛАНЕТ ===
+    planetary_energy_weekly: int = 10           # Динамика энергии планет на неделю
+    planetary_energy_monthly: int = 30          # Динамика энергии планет на месяц
+    planetary_energy_quarterly: int = 100       # Динамика энергии планет на квартал
+    
+    # === ТЕСТЫ/КВИЗЫ ===
+    personality_test: int = 1                   # Тест личности
+    quiz_completion: int = 1                    # Прохождение Quiz
+    
+    # === ОБУЧЕНИЕ ===
+    lesson_viewing: int = 10                    # Просмотр урока
+    material_viewing: int = 1                   # Просмотр материалов
+    
+    # === ОТЧЁТЫ ===
+    pdf_report_numerology: int = 5              # Генерация PDF отчёта по нумерологии
+    html_report_numerology: int = 3             # Генерация HTML отчёта по нумерологии
+    pdf_report_compatibility: int = 5           # Генерация PDF отчёта по совместимости
+    html_report_compatibility: int = 3          # Генерация HTML отчёта по совместимости
+    
+    # Метаданные
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_by: Optional[str] = None  # email администратора
+    is_active: bool = True  # Активная конфигурация
+    version: int = 1  # Версия конфигурации
+
+class CreditsDeductionConfigUpdate(BaseModel):
+    """Модель для обновления конфигурации списания баллов"""
+    # Нумерология
+    name_numerology: Optional[int] = None
+    personal_numbers: Optional[int] = None
+    pythagorean_square: Optional[int] = None
+    compatibility_pair: Optional[int] = None
+    group_compatibility: Optional[int] = None
+    
+    # Ведическое время
+    vedic_daily: Optional[int] = None
+    planetary_daily: Optional[int] = None
+    planetary_weekly: Optional[int] = None
+    planetary_monthly: Optional[int] = None
+    planetary_quarterly: Optional[int] = None
+    
+    # Динамика энергии планет
+    planetary_energy_weekly: Optional[int] = None
+    planetary_energy_monthly: Optional[int] = None
+    planetary_energy_quarterly: Optional[int] = None
+    
+    # Тесты/Квизы
+    personality_test: Optional[int] = None
+    quiz_completion: Optional[int] = None
+    
+    # Обучение
+    lesson_viewing: Optional[int] = None
+    material_viewing: Optional[int] = None
+    
+    # Отчёты
+    pdf_report_numerology: Optional[int] = None
+    html_report_numerology: Optional[int] = None
+    pdf_report_compatibility: Optional[int] = None
+    html_report_compatibility: Optional[int] = None
+
+class PlanetaryEnergyModifiersConfig(BaseModel):
+    """Конфигурация модификаторов для расчёта энергии планет"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    
+    # === БАЗОВЫЕ МОДИФИКАТОРЫ ===
+    # Дружественность/враждебность планет
+    friend_planet_bonus: float = 0.10  # +10% для дружественных планет
+    enemy_planet_penalty: float = 0.10  # -10% для вражеских планет
+    
+    # Фрактал поведения
+    fractal_present_bonus: float = 0.10  # +10% если планета присутствует во фрактале
+    fractal_absent_penalty: float = 0.10  # -10% если планета отсутствует во фрактале
+    
+    # Числа проблем
+    problem_number_penalty: float = 0.10  # -10% если планета в числах проблем
+    
+    # === ИНДИВИДУАЛЬНЫЕ ЧИСЛА ===
+    individual_year_bonus: float = 0.06  # +6% за число индивидуального года
+    individual_month_bonus: float = 0.05  # +5% за число индивидуального месяца
+    individual_day_bonus: float = 0.07  # +7% за число индивидуального дня
+    
+    # === КВАДРАТ ПИФАГОРА ===
+    pythagorean_digit_bonus: float = 0.03  # +3% за каждую цифру в квадрате
+    
+    # === ПЕРСОНАЛЬНЫЕ ЧИСЛА ===
+    soul_number_bonus: float = 0.08  # +8% за число души
+    mind_number_bonus: float = 0.06  # +6% за число ума
+    destiny_number_bonus: float = 0.05  # +5% за число судьбы
+    wisdom_number_bonus: float = 0.04  # +4% за число мудрости
+    ruling_number_bonus: float = 0.07  # +7% за правящее число
+    
+    # === ГОРИЗОНТАЛИ, ВЕРТИКАЛИ, ДИАГОНАЛИ ===
+    line_sum_bonus: float = 2.0  # +2 за каждую сумму в линии
+    
+    # === ИМЯ И ФАМИЛИЯ ===
+    name_number_bonus: float = 0.04  # +4% за число имени
+    surname_number_bonus: float = 0.04  # +4% за число фамилии
+    total_name_bonus: float = 0.05  # +5% за полное число имени
+    
+    # === ИНДИКАТОРЫ ДНЯ НЕДЕЛИ ===
+    weekday_multiplier: float = 3.0  # Множитель для индикаторов дня недели
+    
+    # === СОВПАДЕНИЯ ===
+    personal_day_match_bonus: float = 0.60  # +60% если день совпадает с личным днём
+    personal_month_match_bonus: float = 0.50  # +50% если месяц совпадает с днём
+    current_day_match_bonus: float = 0.40  # +40% если число совпадает с текущим днём
+    
+    # === ВРАЖДЕБНОСТЬ/ДРУЖЕСТВЕННОСТЬ ПРИ НЕСОВПАДЕНИИ ===
+    enemy_mismatch_penalty: float = 0.30  # -30% для вражеских планет при несовпадении
+    friend_mismatch_bonus: float = 0.15  # +15% для дружественных планет при несовпадении
+    neutral_mismatch_penalty: float = 0.10  # -10% для нейтральных планет при несовпадении
+    
+    # === ЧИСЛА ПРОБЛЕМ ===
+    problem_number_match_penalty: float = 0.80  # -80% если число проблемы совпадает с важным числом
+    
+    # === JANMA ANK = 22 (МАСТЕР ЧИСЛО) ===
+    janma_ank_22_bonus: float = 0.25  # +25% для Rahu при Janma Ank = 22
+    janma_ank_22_match_bonus: float = 0.30  # +30% дополнительно если совпадает с днём
+    
+    # === ЦИКЛИЧНОСТЬ ===
+    cyclicity_bonus: float = 0.20  # +20% для повторяющихся чисел
+    cyclicity_penalty: float = 0.05  # -5% для неповторяющихся планет при цикличности
+    
+    # === НОРМАЛИЗАЦИЯ ===
+    normalization_min: int = 10  # Минимальное значение после нормализации (не 0)
+    normalization_max: int = 90  # Максимальное значение после нормализации (не 100)
+    energy_cap_multiplier: float = 3.0  # Максимальная энергия = destiny_number * multiplier
+    energy_floor_multiplier: float = 0.1  # Минимальная энергия = destiny_number * multiplier
+    
+    # === АНТИЦИКЛИЧНОСТЬ ===
+    anti_cyclicity_enabled: bool = True  # Включить функцию убирания цикличности
+    anti_cyclicity_threshold: float = 5.0  # Порог стандартного отклонения для обнаружения цикличности
+    anti_cyclicity_variation: float = 3.0  # Величина вариации для разбалансировки (в единицах энергии)
+    
+    # === ПОРОГ БЛАГОПРИЯТНЫХ/НЕБЛАГОПРИЯТНЫХ ДНЕЙ ===
+    favorable_day_threshold: float = 60.0  # Порог средней энергии планет для определения благоприятных дней (в процентах) - устаревший параметр
+    favorable_day_score_threshold: float = 50.0  # Порог баллов для определения благоприятных дней (0-100, где 50 - нейтральный день)
+    
+    # Метаданные
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_by: Optional[str] = None  # email администратора
+    is_active: bool = True  # Активная конфигурация
+    version: int = 1  # Версия конфигурации
+
+class MonthlyRouteConfig(BaseModel):
+    """Конфигурация настроек для расчёта месячного планетарного маршрута"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    
+    # === ПОРОГИ ДЛЯ КЛАССИФИКАЦИИ ДНЕЙ ===
+    favorable_day_threshold: float = 60.0  # Порог для благоприятных дней (avg_energy >= threshold)
+    best_day_threshold: float = 70.0  # Порог для лучших дней (avg_energy >= threshold)
+    challenging_day_threshold: float = 40.0  # Порог для сложных дней (avg_energy < threshold)
+    
+    # === ПОРОГИ ДЛЯ НЕДЕЛЬНОГО АНАЛИЗА ===
+    high_energy_week_threshold: float = 70.0  # Высокая энергия недели (avg_energy >= threshold)
+    low_energy_week_threshold: float = 40.0  # Низкая энергия недели (avg_energy < threshold)
+    favorable_week_threshold: float = 60.0  # Благоприятная неделя (avg_energy >= threshold)
+    challenging_week_threshold: float = 40.0  # Сложная неделя (avg_energy < threshold)
+    many_favorable_days_threshold: int = 5  # Много благоприятных дней (>= threshold)
+    several_challenging_days_threshold: int = 3  # Несколько сложных дней (>= threshold)
+    
+    # === ПОРОГИ ДЛЯ СФЕР ЖИЗНИ ===
+    sphere_excellent_threshold: float = 70.0  # Отлично (energy >= threshold)
+    sphere_good_threshold: float = 55.0  # Хорошо (energy >= threshold)
+    sphere_satisfactory_threshold: float = 40.0  # Удовлетворительно (energy >= threshold)
+    sphere_attention_threshold: float = 40.0  # Требует внимания (energy < threshold)
+    sphere_best_days_threshold: float = 70.0  # Лучшие дни сферы (energy >= threshold)
+    sphere_challenging_days_threshold: float = 40.0  # Сложные дни сферы (energy < threshold)
+    
+    # === ПОРОГИ ДЛЯ ТРЕНДОВ ===
+    optimal_start_energy_threshold: float = 65.0  # Оптимальный период для начинаний (energy >= threshold)
+    optimal_start_min_days: int = 3  # Минимум дней подряд для оптимального периода
+    completion_energy_min: float = 40.0  # Минимум энергии для периода завершения
+    completion_energy_max: float = 55.0  # Максимум энергии для периода завершения
+    completion_min_days: int = 2  # Минимум дней подряд для периода завершения
+    trend_rising_threshold: float = 5.0  # Рост энергии (second_avg > first_avg + threshold)
+    trend_declining_threshold: float = 5.0  # Снижение энергии (second_avg < first_avg - threshold)
+    
+    # === ПОРОГИ ДЛЯ ТРАНЗИТОВ ===
+    transit_peak_threshold: float = 85.0  # Пик энергии планеты (energy >= threshold)
+    transit_low_threshold: float = 15.0  # Низкая энергия планеты (energy <= threshold)
+    max_transits_per_month: int = 20  # Максимальное количество транзитов в месяц
+    
+    # === ПОРОГИ ДЛЯ МЕСЯЧНОГО АНАЛИЗА ===
+    month_high_energy_threshold: float = 65.0  # Высокая энергия месяца (avg_month_energy >= threshold)
+    month_low_energy_threshold: float = 45.0  # Низкая энергия месяца (avg_month_energy < threshold)
+    
+    # Метаданные
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_by: Optional[str] = None  # email администратора
+    is_active: bool = True  # Активная конфигурация
+    version: int = 1  # Версия конфигурации
+
+class MonthlyRouteConfigUpdate(BaseModel):
+    """Модель для обновления конфигурации месячного маршрута"""
+    # Пороги для классификации дней
+    favorable_day_threshold: Optional[float] = None
+    best_day_threshold: Optional[float] = None
+    challenging_day_threshold: Optional[float] = None
+    
+    # Пороги для недельного анализа
+    high_energy_week_threshold: Optional[float] = None
+    low_energy_week_threshold: Optional[float] = None
+    favorable_week_threshold: Optional[float] = None
+    challenging_week_threshold: Optional[float] = None
+    many_favorable_days_threshold: Optional[int] = None
+    several_challenging_days_threshold: Optional[int] = None
+    
+    # Пороги для сфер жизни
+    sphere_excellent_threshold: Optional[float] = None
+    sphere_good_threshold: Optional[float] = None
+    sphere_satisfactory_threshold: Optional[float] = None
+    sphere_attention_threshold: Optional[float] = None
+    sphere_best_days_threshold: Optional[float] = None
+    sphere_challenging_days_threshold: Optional[float] = None
+    
+    # Пороги для трендов
+    optimal_start_energy_threshold: Optional[float] = None
+    optimal_start_min_days: Optional[int] = None
+    completion_energy_min: Optional[float] = None
+    completion_energy_max: Optional[float] = None
+    completion_min_days: Optional[int] = None
+    trend_rising_threshold: Optional[float] = None
+    trend_declining_threshold: Optional[float] = None
+    
+    # Пороги для транзитов
+    transit_peak_threshold: Optional[float] = None
+    transit_low_threshold: Optional[float] = None
+    max_transits_per_month: Optional[int] = None
+    
+    # Пороги для месячного анализа
+    month_high_energy_threshold: Optional[float] = None
+    month_low_energy_threshold: Optional[float] = None
+
+class PlanetaryEnergyModifiersConfigUpdate(BaseModel):
+    """Модель для обновления конфигурации модификаторов энергии планет"""
+    # Базовые модификаторы
+    friend_planet_bonus: Optional[float] = None
+    enemy_planet_penalty: Optional[float] = None
+    fractal_present_bonus: Optional[float] = None
+    fractal_absent_penalty: Optional[float] = None
+    problem_number_penalty: Optional[float] = None
+    
+    # Индивидуальные числа
+    individual_year_bonus: Optional[float] = None
+    individual_month_bonus: Optional[float] = None
+    individual_day_bonus: Optional[float] = None
+    
+    # Квадрат Пифагора
+    pythagorean_digit_bonus: Optional[float] = None
+    
+    # Персональные числа
+    soul_number_bonus: Optional[float] = None
+    mind_number_bonus: Optional[float] = None
+    destiny_number_bonus: Optional[float] = None
+    wisdom_number_bonus: Optional[float] = None
+    ruling_number_bonus: Optional[float] = None
+    
+    # Горизонтали, вертикали, диагонали
+    line_sum_bonus: Optional[float] = None
+    
+    # Имя и фамилия
+    name_number_bonus: Optional[float] = None
+    surname_number_bonus: Optional[float] = None
+    total_name_bonus: Optional[float] = None
+    
+    # Индикаторы дня недели
+    weekday_multiplier: Optional[float] = None
+    
+    # Совпадения
+    personal_day_match_bonus: Optional[float] = None
+    personal_month_match_bonus: Optional[float] = None
+    current_day_match_bonus: Optional[float] = None
+    
+    # Враждебность/дружественность при несовпадении
+    enemy_mismatch_penalty: Optional[float] = None
+    friend_mismatch_bonus: Optional[float] = None
+    neutral_mismatch_penalty: Optional[float] = None
+    
+    # Числа проблем
+    problem_number_match_penalty: Optional[float] = None
+    
+    # Janma Ank = 22
+    janma_ank_22_bonus: Optional[float] = None
+    janma_ank_22_match_bonus: Optional[float] = None
+    
+    # Цикличность
+    cyclicity_bonus: Optional[float] = None
+    cyclicity_penalty: Optional[float] = None
+    
+    # Нормализация
+    normalization_min: Optional[int] = None
+    normalization_max: Optional[int] = None
+    energy_cap_multiplier: Optional[float] = None
+    energy_floor_multiplier: Optional[float] = None
+    
+    # Антицикличность
+    anti_cyclicity_enabled: Optional[bool] = None
+    anti_cyclicity_threshold: Optional[float] = None
+    anti_cyclicity_variation: Optional[float] = None
+    
+    # Порог благоприятных/неблагоприятных дней
+    favorable_day_threshold: Optional[float] = None  # Порог средней энергии планет для определения благоприятных дней (в процентах) - устаревший параметр
+    favorable_day_score_threshold: Optional[float] = None  # Порог баллов для определения благоприятных дней (0-100)
+
+# ===== МОДЕЛИ ДЛЯ ХРАНЕНИЯ ОТВЕТОВ СТУДЕНТОВ =====
+
+class ExerciseResponse(BaseModel):
+    """Ответ студента на упражнение"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    lesson_id: str
+    exercise_id: str
+    response_text: str
+    submitted_at: datetime = Field(default_factory=datetime.utcnow)
+    reviewed: bool = False
+    admin_comment: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    reviewed_by: Optional[str] = None
+
+class QuizAttempt(BaseModel):
+    """Попытка прохождения теста"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    lesson_id: str
+    quiz_id: str
+    answers: List[Dict[str, Any]]  # [{question_id, selected_answer, is_correct}]
+    score: int  # Набранные баллы
+    max_score: int  # Максимальные баллы
+    percentage: float  # Процент правильных ответов
+    passed: bool  # Прошел ли тест
+    started_at: datetime
+    completed_at: datetime = Field(default_factory=datetime.utcnow)
+    time_spent_minutes: Optional[int] = None
+
+class ChallengeProgress(BaseModel):
+    """Прогресс прохождения челленджа"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    lesson_id: str
+    challenge_id: str
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_days: List[int] = []  # Список завершенных дней [1, 2, 3]
+    daily_notes: Dict[int, str] = {}  # {day: note}
+    is_completed: bool = False
+    completed_at: Optional[datetime] = None
+
+class LessonProgress(BaseModel):
+    """Общий прогресс по уроку"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    lesson_id: str
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+
+    # Прогресс по разделам
+    theory_completed: bool = False
+    exercises_completed: int = 0  # Количество завершенных упражнений
+    challenge_completed: bool = False
+    quiz_completed: bool = False
+    quiz_passed: bool = False
+
+    # Общий прогресс
+    completion_percentage: float = 0.0
+    is_completed: bool = False
+
+    # Метаданные
+    last_activity_at: datetime = Field(default_factory=datetime.utcnow)
+    time_spent_minutes: int = 0
+
+class StudentAnalytics(BaseModel):
+    """Аналитика по студенту для урока"""
+    user_id: str
+    lesson_id: str
+
+    # Статистика
+    total_exercises: int
+    completed_exercises: int
+    quiz_attempts: int
+    best_quiz_score: Optional[float] = None
+    challenge_progress: Optional[int] = None  # Количество завершенных дней
+
+    # Временные метрики
+    time_spent_minutes: int
+    first_access: datetime
+    last_access: datetime
+
+    # Активность
+    is_active: bool
+    completion_rate: float  # Процент завершения урока
+
+
+
+    description: Optional[str] = None
     name_conflict: Optional[int] = None
     rahu_kaal_penalty: Optional[int] = None
     favorable_period_bonus: Optional[int] = None

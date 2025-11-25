@@ -998,19 +998,69 @@ const personalCycles = [
     [energyRangeMode, theme]
   );
 
+  // Загрузка данных динамики энергии планет из backend
+  const [energyData, setEnergyData] = useState(null);
+  const [energyLoading, setEnergyLoading] = useState(false);
+
+  useEffect(() => {
+    const loadEnergyData = async () => {
+      if (!energyRangeConfig?.days || !user?.birth_date) {
+        setEnergyData(null);
+        return;
+      }
+      
+      setEnergyLoading(true);
+      try {
+        const token = localStorage.getItem('token');
+        const headers = { 'Authorization': `Bearer ${token}` };
+        const url = getBackendUrl();
+        const response = await fetch(`${url}/api/charts/planetary-energy/${energyRangeConfig.days}`, { headers });
+        if (!response.ok) throw new Error('Ошибка загрузки данных');
+        const data = await response.json();
+        setEnergyData(data);
+      } catch (error) {
+        console.error('Ошибка загрузки динамики энергии:', error);
+        setEnergyData(null);
+      } finally {
+        setEnergyLoading(false);
+      }
+    };
+
+    loadEnergyData();
+  }, [energyRangeConfig?.days, user?.birth_date]);
+
   const energyRangeResult = useMemo(() => {
-    if (!energyRangeConfig?.startDate) {
+    if (!energyData?.chart_data || energyData.chart_data.length === 0) {
       return { series: [], startDate: null, endDate: null };
     }
-    return calculatePlanetaryEnergySeries(
-      user?.birth_date,
-      user?.full_name || user?.name || '',
-      {
-        startDate: energyRangeConfig.startDate,
-        days: energyRangeConfig.days
-      }
-    );
-  }, [energyRangeConfig, user?.birth_date, user?.full_name, user?.name]);
+    
+    // Преобразуем данные из backend в формат, ожидаемый компонентом
+    const series = energyData.chart_data.map((day) => {
+      const date = new Date(day.date);
+      return {
+        date: date.toISOString(),
+        displayDate: date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+        dayLabel: day.day_name || date.toLocaleDateString('ru-RU', { weekday: 'long' }),
+        dayShort: date.toLocaleDateString('ru-RU', { weekday: 'short' }),
+        energies: {
+          surya: day.surya || 0,
+          chandra: day.chandra || 0,
+          mangal: day.mangal || 0,
+          budha: day.budha || 0,
+          guru: day.guru || 0,
+          shukra: day.shukra || 0,
+          shani: day.shani || 0,
+          rahu: day.rahu || 0,
+          ketu: day.ketu || 0
+        }
+      };
+    });
+
+    const startDate = series.length > 0 ? new Date(series[0].date) : null;
+    const endDate = series.length > 0 ? new Date(series[series.length - 1].date) : null;
+
+    return { series, startDate, endDate };
+  }, [energyData]);
 
   const energySeries = energyRangeResult.series || [];
   const energyRangeStart = energyRangeResult.startDate;
@@ -1092,11 +1142,22 @@ const personalCycles = [
     return {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false
+      },
       plugins: {
         legend: {
           display: false
         },
         tooltip: {
+          backgroundColor: theme === 'dark' ? 'rgba(31, 41, 55, 0.95)' : 'rgba(255, 255, 255, 0.95)',
+          titleColor: theme === 'dark' ? '#fff' : '#000',
+          bodyColor: theme === 'dark' ? '#d1d5db' : '#4b5563',
+          borderColor: theme === 'dark' ? 'rgba(75, 85, 99, 0.3)' : 'rgba(209, 213, 219, 0.8)',
+          borderWidth: 1,
+          padding: 12,
+          displayColors: true,
           callbacks: {
             label: (context) => {
               const value = context.parsed.y;
@@ -1613,7 +1674,8 @@ const personalCycles = [
                     >
                       <span className="text-3xl font-semibold">{horizontalSums[rowIndex] ?? '-'}</span>
                       <span className={`mt-1 text-[11px] uppercase tracking-[0.35em] ${textSubtleClass}`}>
-                        горизонталь {rowIndex + 1}
+                        <span className="md:hidden">гор. {rowIndex + 1}</span>
+                        <span className="hidden md:inline">горизонталь {rowIndex + 1}</span>
                       </span>
                     </SquareShell>
                   </React.Fragment>
@@ -1644,7 +1706,8 @@ const personalCycles = [
                 >
                   <span className="text-3xl font-semibold">{value}</span>
                   <span className={`mt-1 text-[11px] uppercase tracking-[0.35em] ${textSubtleClass}`}>
-                    вертикаль {idx + 1}
+                    <span className="md:hidden">вер. {idx + 1}</span>
+                    <span className="hidden md:inline">вертикаль {idx + 1}</span>
                   </span>
                 </SquareShell>
               ))}

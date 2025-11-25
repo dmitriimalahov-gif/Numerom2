@@ -138,6 +138,7 @@ const CompatibilityNew = () => {
 
     try {
       const response = await axios.post(`${backendUrl}/api/numerology/group-compatibility`, groupData);
+      console.log('📊 Group compatibility result:', response.data);
       setGroupResults(response.data);
     } catch (err) {
       setGroupError(err.response?.data?.detail || 'Произошла ошибка при расчете групповой совместимости');
@@ -732,7 +733,7 @@ const CompatibilityNew = () => {
 
           {/* Group Results */}
           {groupResults && (
-            <GroupCompatibilityChart results={groupResults} />
+            <GroupCompatibilityChart groupResults={groupResults} />
           )}
         </TabsContent>
       </Tabs>

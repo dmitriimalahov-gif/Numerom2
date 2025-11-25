@@ -47,9 +47,17 @@ const PersonalConsultations = () => {
         }
       });
       setConsultations(response.data);
+      setError(''); // Очищаем ошибку при успешной загрузке
     } catch (error) {
-      console.error('Error fetching consultations:', error);
-      setError('Ошибка загрузки консультаций');
+      // Если эндпоинт не существует (404), просто показываем пустой список
+      if (error.response?.status === 404) {
+        console.log('Consultations endpoint not found, showing empty list');
+        setConsultations([]);
+        setError(''); // Не показываем ошибку для 404
+      } else {
+        console.error('Error fetching consultations:', error);
+        setError('Ошибка загрузки консультаций');
+      }
     } finally {
       setLoading(false);
     }

@@ -20,14 +20,19 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
-  ExternalLink
+  ExternalLink,
+  BarChart3,
+  Download,
+  Activity,
+  Sparkles,
+  CheckCircle
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { getBackendUrl } from '../utils/backendUrl';
 
 const CreditHistory = ({ onNavigate }) => {
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -43,19 +48,51 @@ const CreditHistory = ({ onNavigate }) => {
     'vedic': <Clock className="w-4 h-4" />,
     'learning': <Video className="w-4 h-4" />,
     'quiz': <HelpCircle className="w-4 h-4" />,
+    'challenge': <BookOpen className="w-4 h-4" />,
+    'exercise': <FileText className="w-4 h-4" />,
+    'lesson': <BookOpen className="w-4 h-4" />,
     'materials': <FileText className="w-4 h-4" />,
     'purchase': <TrendingUp className="w-4 h-4" />,
-    'refund': <RefreshCw className="w-4 h-4" />
+    'subscription': <TrendingUp className="w-4 h-4" />,
+    'refund': <RefreshCw className="w-4 h-4" />,
+    'report': <Download className="w-4 h-4" />,
+    'admin': <Users className="w-4 h-4" />,
+    'exercise_review': <CheckCircle className="w-4 h-4" />
   };
 
   const categoryColors = {
-    'numerology': 'bg-blue-100 text-blue-800',
-    'vedic': 'bg-purple-100 text-purple-800',
-    'learning': 'bg-green-100 text-green-800',
-    'quiz': 'bg-orange-100 text-orange-800',
-    'materials': 'bg-cyan-100 text-cyan-800',
-    'purchase': 'bg-emerald-100 text-emerald-800',
-    'refund': 'bg-yellow-100 text-yellow-800'
+    'numerology': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+    'vedic': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+    'learning': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+    'quiz': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+    'challenge': 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200',
+    'exercise': 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200',
+    'lesson': 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
+    'materials': 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200',
+    'purchase': 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200',
+    'subscription': 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200',
+    'refund': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+    'report': 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+    'admin': 'bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200',
+    'exercise_review': 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200'
+  };
+
+  // Названия категорий для отображения
+  const categoryNames = {
+    'numerology': 'Нумерология',
+    'vedic': 'Ведическое время',
+    'learning': 'Обучение',
+    'quiz': 'Тест',
+    'challenge': 'Челлендж',
+    'exercise': 'Упражнение',
+    'lesson': 'Урок',
+    'materials': 'Материалы',
+    'purchase': 'Покупка',
+    'subscription': 'Подписка',
+    'refund': 'Возврат',
+    'report': 'Отчёт',
+    'admin': 'Администратор',
+    'exercise_review': 'Проверка ДЗ'
   };
 
   useEffect(() => {
@@ -81,6 +118,10 @@ const CreditHistory = ({ onNavigate }) => {
       
       if (page === 0) {
         setTransactions(newTransactions);
+        // Обновляем профиль пользователя для актуального баланса
+        if (refreshProfile) {
+          refreshProfile();
+        }
       } else {
         setTransactions(prev => [...prev, ...newTransactions]);
       }
@@ -124,17 +165,35 @@ const CreditHistory = ({ onNavigate }) => {
   const refresh = () => {
     setPage(0);
     loadTransactions();
+    // Обновляем профиль пользователя для актуального баланса
+    if (refreshProfile) {
+      refreshProfile();
+    }
   };
 
   // Маппинг типов расчетов на секции навигации
   const calculationTypeToSection = {
     'personal_numbers': 'numerology',
-    'pythagorean_square': 'square',
+    'pythagorean_square': 'numerology-design',
+    'name_numerology': 'name-numerology',
+    'compatibility_pair': 'compatibility',
+    'group_compatibility': 'compatibility',
+    'planetary_energy': 'planetary-route',
+    'vedic_daily': 'vedic-time',
+    'planetary_daily': 'planetary-route',
+    'planetary_weekly': 'planetary-route',
+    'planetary_monthly': 'planetary-route',
+    'planetary_quarterly': 'planetary-route',
     'numerology': 'numerology', // общая категория нумерологии
     'vedic': 'vedic-time',
     'compatibility': 'compatibility',
     'quiz': 'quiz',
-    'learning': 'learning'
+    'personality_test': 'quiz',
+    'learning': 'learning-v2',
+    'lesson': 'learning-v2',
+    'exercise': 'learning-v2',
+    'challenge': 'learning-v2',
+    'report': 'report-export'
   };
 
   const handleTransactionClick = (transaction) => {
@@ -193,14 +252,14 @@ const CreditHistory = ({ onNavigate }) => {
           ) : (
             <div className="space-y-3">
               {/* Сводка */}
-              <div className="bg-gray-50 rounded-lg p-4 mb-6">
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 mb-6">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">Всего транзакций:</span>
-                  <span className="font-medium">{totalTransactions}</span>
+                  <span className="text-gray-600 dark:text-gray-300">Всего транзакций:</span>
+                  <span className="font-medium dark:text-gray-100">{totalTransactions}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm mt-2">
-                  <span className="text-gray-600">Текущий баланс:</span>
-                  <span className="font-medium text-blue-600">{user?.credits_remaining || 0} баллов</span>
+                  <span className="text-gray-600 dark:text-gray-300">Текущий баланс:</span>
+                  <span className="font-medium text-blue-600 dark:text-blue-400">{user?.credits_remaining || 0} баллов</span>
                 </div>
               </div>
 
@@ -208,7 +267,7 @@ const CreditHistory = ({ onNavigate }) => {
               {transactions.map((transaction) => {
                 const amountInfo = getAmountDisplay(transaction);
                 const categoryIcon = categoryIcons[transaction.category] || <Calculator className="w-4 h-4" />;
-                const categoryColor = categoryColors[transaction.category] || 'bg-gray-100 text-gray-800';
+                const categoryColor = categoryColors[transaction.category] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200';
                 const calculationType = transaction.details?.calculation_type || transaction.category;
                 const isClickable = calculationTypeToSection[calculationType];
 
@@ -228,22 +287,37 @@ const CreditHistory = ({ onNavigate }) => {
                         <h4 className="font-medium text-sm">{transaction.description}</h4>
                         <div className="flex items-center space-x-2 mt-1">
                           <Badge variant="secondary" className="text-xs">
-                            {transaction.category}
+                            {categoryNames[transaction.category] || transaction.category}
                           </Badge>
-                          <span className="text-xs text-gray-500">
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
                             {formatDate(transaction.created_at)}
                           </span>
                         </div>
                         {transaction.details && Object.keys(transaction.details).length > 0 && (
-                          <div className="text-xs text-gray-500 mt-1">
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 space-y-1">
                             {transaction.details.lesson_title && (
-                              <span>Урок: {transaction.details.lesson_title}</span>
+                              <div>Урок: {transaction.details.lesson_title}</div>
                             )}
                             {transaction.details.material_title && (
-                              <span>Материал: {transaction.details.material_title}</span>
+                              <div>Материал: {transaction.details.material_title}</div>
                             )}
                             {transaction.details.calculation_type && (
-                              <span>Тип: {transaction.details.calculation_type}</span>
+                              <div>Тип: {transaction.details.calculation_type}</div>
+                            )}
+                            {transaction.details.report_type && (
+                              <div>Формат: {transaction.details.report_type === 'html' ? 'HTML' : 'PDF'}</div>
+                            )}
+                            {transaction.details.report_category && (
+                              <div>Категория: {transaction.details.report_category === 'numerology' ? 'Нумерология' : transaction.details.report_category === 'compatibility' ? 'Совместимость' : transaction.details.report_category}</div>
+                            )}
+                            {transaction.details.period && (
+                              <div>Период: {transaction.details.period === 'weekly' ? 'Неделя' : transaction.details.period === 'monthly' ? 'Месяц' : transaction.details.period === 'quarterly' ? 'Квартал' : transaction.details.period}</div>
+                            )}
+                            {transaction.details.days && (
+                              <div>Дней: {transaction.details.days}</div>
+                            )}
+                            {transaction.details.package_type && (
+                              <div>Пакет: {transaction.details.package_name || transaction.details.package_type}</div>
                             )}
                           </div>
                         )}

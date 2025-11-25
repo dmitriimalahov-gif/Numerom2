@@ -1,0 +1,31 @@
+# ===== BACKEND ДЛЯ СИСТЕМЫ ОБУЧЕНИЯ V2 =====
+
+FROM python:3.12-slim
+
+# Устанавливаем системные зависимости (без gcc для timezonefinder)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создаем рабочую директорию
+WORKDIR /app
+
+# Копируем requirements.txt
+COPY requirements.txt .
+
+# Устанавливаем Python зависимости
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Копируем исходный код
+COPY . .
+
+# Создаем директории для загрузок
+RUN mkdir -p uploads uploads/learning_v2
+
+# Открываем порт 8000
+EXPOSE 8000
+
+# Запускаем сервер Learning V2
+CMD ["python", "server.learning-v2.py"]

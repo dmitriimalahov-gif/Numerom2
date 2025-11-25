@@ -1,87 +1,194 @@
-import React, { useState, useEffect, useMemo } from 'react';
+/**
+ * UNIVERSAL LESSON VIEWER
+ * Универсальный просмотрщик уроков для всех типов уроков
+ *
+ * Этот компонент отображает урок с теорией, упражнениями, тестами,
+ * челленджами и трекером привычек. Поддерживает как первый урок,
+ * так и кастомные уроки из админ-панели.
+ */
+
+import React, { useState, useEffect, useMemo, Fragment } from 'react';
+
+// UI компоненты для интерфейса
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Checkbox } from './ui/checkbox';
+
+// Иконки для визуального оформления
 import {
   BookOpen, PlayCircle, CheckCircle, Clock, Target, Zap,
   Star, Calendar, Award, ArrowRight, ArrowLeft,
   Sparkles, Sun, Moon, Loader, Trophy, Heart,
-  Brain, Lightbulb, FileText, Timer, Rocket, Eye, Download, Video, Lock, File
+  Brain, Lightbulb, FileText, Timer, Rocket, Eye, Download, Video, Lock, File,
+  Scroll, Info, Compass
 } from 'lucide-react';
+
+// Хуки и контекст
 import { useAuth } from './AuthContext';
+
+// Дополнительные компоненты для просмотра медиа
 import EnhancedVideoViewer from './EnhancedVideoViewer';
-import ConsultationPDFViewer from './ConsultationPDFViewer';
-import WordViewer from './WordViewer';
+import LessonDocumentViewer from './LessonDocumentViewer';
 import PushNotificationSettings from './PushNotificationSettings';
 import BunnyVideoPlayer from './BunnyVideoPlayer';
+
+// Утилиты
 import { getBackendUrl } from '../utils/backendUrl';
 
-const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
+const UniversalLessonViewer = ({ lessonId, onBack }) => {
+  console.log('🚀 UniversalLessonViewer запущен с lessonId:', lessonId);
+
+  // Получаем данные пользователя из контекста аутентификации
   const { user } = useAuth();
   const backendUrl = getBackendUrl();
-  
-  // Состояния для управления уроком
+
+  // ==================== ОСНОВНЫЕ СОСТОЯНИЯ УРОКА ====================
+
+  // Данные урока, загруженные с сервера
   const [lessonData, setLessonData] = useState(null);
+  // Состояние загрузки данных урока
   const [loading, setLoading] = useState(true);
+  // Сообщение об ошибке при загрузке
   const [error, setError] = useState('');
+
+  // Активная вкладка (теория, упражнения, тест и т.д.)
+  // Восстанавливается из localStorage для сохранения позиции пользователя
   const [activeSection, setActiveSection] = useState(() => {
-    // Восстановить последнюю активную секцию из localStorage
     return localStorage.getItem(`lesson_${lessonId}_activeSection`) || 'theory';
   });
+
+  // Множество завершенных секций урока
   const [completedSections, setCompletedSections] = useState(new Set());
+  // Общий прогресс прохождения урока (в процентах)
   const [overallProgress, setOverallProgress] = useState(0);
   
-  // Состояния для квиза
+  // ==================== СОСТОЯНИЯ ДЛЯ КВИЗА ====================
+
+  // Ответы пользователя на вопросы теста (ключ - ID вопроса, значение - ответ)
   const [quizAnswers, setQuizAnswers] = useState({});
+  // Результаты прохождения теста после отправки
   const [quizResults, setQuizResults] = useState(null);
+  // Флаг отправки теста на сервер
   const [quizSubmitting, setQuizSubmitting] = useState(false);
-  
-  // Состояния для челленджа
+
+  // ==================== СОСТОЯНИЯ ДЛЯ ЧЕЛЛЕНДЖА ====================
+
+  // Прогресс выполнения челленджа (дни, задачи и т.д.)
   const [challengeProgress, setChallengeProgress] = useState(null);
+  // Флаг, запущен ли челлендж пользователем
   const [challengeStarted, setChallengeStarted] = useState(false);
+  // Выбранный день челленджа для просмотра/редактирования
   const [selectedChallengeDay, setSelectedChallengeDay] = useState(1);
+  // Флаг завершения всего челленджа
   const [challengeCompleted, setChallengeCompleted] = useState(false);
+  // Оценка пользователя челленджу (1-5 звезд)
   const [challengeRating, setChallengeRating] = useState(0);
-  const [challengeDayNotes, setChallengeDayNotes] = useState(''); // Впечатления о дне
-  
-  // Состояния для трекера привычек  
+  // Заметки пользователя о прошедшем дне челленджа
+  const [challengeDayNotes, setChallengeDayNotes] = useState('');
+
+  // ==================== СОСТОЯНИЯ ДЛЯ ТРЕКЕРА ПРИВЫЧЕК ====================
+
+  // Конфигурация трекера привычек для урока
   const [habitTracker, setHabitTracker] = useState(null);
+  // Состояние привычек на сегодня (выполнено/не выполнено)
   const [todayHabits, setTodayHabits] = useState({});
+  // Прогресс выполнения привычек за день (в процентах)
   const [habitProgress, setHabitProgress] = useState(0);
+  // Количество дней подряд без пропусков
   const [habitStreakDays, setHabitStreakDays] = useState(0);
-  
-  // Состояния для упражнений
+
+  // ==================== СОСТОЯНИЯ ДЛЯ УПРАЖНЕНИЙ ====================
+
+  // Ответы пользователя на упражнения (ключ - ID упражнения, значение - ответ)
   const [exerciseResponses, setExerciseResponses] = useState({});
+  // Множество завершенных упражнений
   const [completedExercises, setCompletedExercises] = useState(new Set());
+  // Множество упражнений, ответы на которые сохранены локально
   const [savedExercises, setSavedExercises] = useState(new Set());
   
-  // Состояния для загруженных файлов урока
+  // ==================== СОСТОЯНИЯ ДЛЯ МЕДИАФАЙЛОВ ====================
+
+  // Информация о загруженных файлах урока (видео, PDF, Word)
   const [uploadedLessonFiles, setUploadedLessonFiles] = useState({
     video: null,
     pdf: null,
     word: null
   });
-  
-  // Состояния для модальных окон (как в PersonalConsultations)
+
+  // ==================== СОСТОЯНИЯ ДЛЯ МОДАЛЬНЫХ ОКОН ====================
+
+  // Выбранное видео для просмотра в модальном окне
   const [selectedVideo, setSelectedVideo] = useState(null);
-  const [selectedPDF, setSelectedPDF] = useState(null);
-  const [selectedWord, setSelectedWord] = useState(null);
-  
-  // Состояние для дополнительных PDF файлов
+  // Выбранный документ для просмотра в модальном окне
+  const [selectedDocument, setSelectedDocument] = useState(null);
+
+  // ==================== СОСТОЯНИЯ ДЛЯ ДОПОЛНИТЕЛЬНЫХ МАТЕРИАЛОВ ====================
+
+  // Список дополнительных PDF файлов урока
   const [additionalPdfs, setAdditionalPdfs] = useState([]);
-  
-  // Состояние для дополнительных видео файлов
+  // Список всех ресурсов урока (PDF, Word, Excel и др.)
+  const [lessonResources, setLessonResources] = useState([]);
+  // Список дополнительных видео файлов
   const [additionalVideos, setAdditionalVideos] = useState([]);
 
-  // Состояния для улучшенной навигации материалов
-  const [materialsFilter, setMaterialsFilter] = useState('all'); // 'all', 'videos', 'pdfs'
-  const [materialsSearch, setMaterialsSearch] = useState('');
-  const [materialsSortBy, setMaterialsSortBy] = useState('recent'); // 'recent', 'name', 'type'
+  // ==================== СОСТОЯНИЯ ДЛЯ НАВИГАЦИИ МАТЕРИАЛОВ ====================
 
+  // Фильтр материалов: 'all' (все), 'videos' (видео), 'pdfs' (PDF)
+  const [materialsFilter, setMaterialsFilter] = useState('all');
+  // Поисковый запрос для фильтрации материалов
+  const [materialsSearch, setMaterialsSearch] = useState('');
+  // Сортировка материалов: 'recent' (по дате), 'name' (по имени), 'type' (по типу)
+  const [materialsSortBy, setMaterialsSortBy] = useState('recent');
+
+  // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
+  /**
+   * Определяет формат документа по его метаданным
+   * Используется для правильного отображения иконок и фильтрации
+   */
+  const determineDocumentFormat = (item) => {
+    if (!item) return 'other';
+    const contentType = (item.content_type || item.contentType || '').toLowerCase();
+    const filename = (item.filename || item.title || '').toLowerCase();
+    const extension = (item.file_extension || '').toLowerCase();
+
+    const byExtension = (value) => {
+      if (!value) return null;
+      if (value.endsWith('.pdf')) return 'pdf';
+      if (value.endsWith('.docx') || value.endsWith('.doc')) return 'word';
+      if (value.endsWith('.xlsx') || value.endsWith('.xls')) return 'excel';
+      if (value.endsWith('.pptx') || value.endsWith('.ppt')) return 'presentation';
+      if (value.endsWith('.txt') || value.endsWith('.csv')) return 'text';
+      return null;
+    };
+
+    const byContentType = () => {
+      if (contentType.includes('pdf')) return 'pdf';
+      if (contentType.includes('word')) return 'word';
+      if (contentType.includes('excel') || contentType.includes('spreadsheet')) return 'excel';
+      if (contentType.includes('presentation') || contentType.includes('powerpoint')) return 'presentation';
+      if (contentType.includes('text') || contentType.includes('csv') || contentType.includes('plain')) return 'text';
+      return null;
+    };
+
+    return (
+      byExtension(extension) ||
+      byExtension(filename) ||
+      byContentType() ||
+      'other'
+    );
+  };
+
+  // ==================== ЭФФЕКТЫ ЗАГРУЗКИ ДАННЫХ ====================
+
+  /**
+   * Эффект для загрузки урока при изменении lessonId
+   * Сбрасывает все состояния и загружает новые данные
+   */
   useEffect(() => {
-    // Сбросить состояния при смене урока
+    // Сбросить все состояния при смене урока
     setLessonData(null);
     setLoading(true);
     setError('');
@@ -102,21 +209,32 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
     setExerciseResponses({});
     setCompletedExercises(new Set());
     setSavedExercises(new Set());
+    setAdditionalPdfs([]);
+    setLessonResources([]);
+    setAdditionalVideos([]);
+    setSelectedVideo(null);
+    setSelectedDocument(null);
 
     // Загрузить новый урок
     loadLesson();
   }, [lessonId]); // Перезагружать урок при изменении lessonId
 
-  // Загрузить медиафайлы после загрузки урока
+  /**
+   * Эффект для загрузки медиафайлов после успешной загрузки данных урока
+   */
   useEffect(() => {
     if (lessonData) {
       loadUploadedLessonFiles();
       loadAdditionalPdfs();
       loadAdditionalVideos();
+      loadLessonResources();
     }
   }, [lessonData]); // Перезагружать медиафайлы при изменении lessonData
 
-  // Сохранять активную секцию в localStorage при изменении
+  /**
+   * Эффект для сохранения активной секции в localStorage
+   * Позволяет пользователю вернуться к той же вкладке при следующем посещении урока
+   */
   useEffect(() => {
     localStorage.setItem(`lesson_${lessonId}_activeSection`, activeSection);
   }, [activeSection]);
@@ -147,8 +265,8 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
     // Определяем доступные секции первого урока
     const availableSections = [];
 
-    // 1. Теория
-    if (lessonData.content.theory) {
+    // 1. Теория (проверяем и обычную theory, и custom_theory_blocks)
+    if (lessonData.content.theory || lessonData.content.custom_theory_blocks?.blocks?.length > 0) {
       availableSections.push({
         name: 'theory',
         completed: completedSections.has('theory')
@@ -156,15 +274,18 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
     }
 
     // 2. Упражнения
-    if (lessonData.content.exercises?.length > 0) {
+    const exercises = lessonData.exercises || lessonData.content?.exercises || [];
+    if (exercises.length > 0) {
       availableSections.push({
         name: 'exercises',
-        completed: completedExercises.size === lessonData.content.exercises.length
+        completed: completedExercises.size === exercises.length
       });
     }
 
     // 3. Квиз
-    if (lessonData.content.quiz?.questions?.length > 0) {
+    // Проверяем квиз в content.quiz (для обычных уроков) или на верхнем уровне (для первого урока)
+    const quizQuestions = lessonData.content?.quiz?.questions || lessonData.quiz?.questions || [];
+    if (quizQuestions.length > 0) {
       availableSections.push({
         name: 'quiz',
         completed: completedSections.has('quiz')
@@ -172,7 +293,9 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
     }
 
     // 4. Челлендж (всегда учитываем если есть)
-    if (lessonData.content.challenge?.daily_tasks?.length > 0) {
+    // Проверяем челлендж в content.challenge или на верхнем уровне
+    const challengeTasks = lessonData.content?.challenge?.daily_tasks || lessonData.challenges?.[0]?.daily_tasks || [];
+    if (challengeTasks.length > 0) {
       availableSections.push({
         name: 'challenge',
         completed: challengeStarted
@@ -252,9 +375,11 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
     return allMaterials;
   };
 
-  const filteredMaterials = getFilteredAndSortedMaterials();
-  const videoMaterials = filteredMaterials.filter(m => m.type === 'video');
-  const pdfMaterials = filteredMaterials.filter(m => m.type === 'pdf');
+const filteredMaterials = getFilteredAndSortedMaterials();
+const videoMaterials = filteredMaterials.filter(m => m.type === 'video');
+const documentMaterials = filteredMaterials.filter(m => m.type === 'document');
+const totalVideosCount = additionalVideos.length;
+const totalDocumentsCount = additionalPdfs.length + lessonResources.length;
 
   // Загрузка загруженных файлов урока (дополнительные материалы)
   // ОСНОВНЫЕ МЕДИАФАЙЛЫ (video_file_id, pdf_file_id) ЗАГРУЖАЮТСЯ ПРЯМО В lessonData
@@ -312,14 +437,23 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
   const loadAdditionalPdfs = async () => {
     try {
       const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${backendUrl}/api/lessons/lesson_numerom_intro/additional-pdfs`, {
+      if (!lessonId) return;
+      const response = await fetch(`${backendUrl}/api/lessons/${lessonId}/additional-pdfs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
       if (response.ok) {
         const data = await response.json();
-        setAdditionalPdfs(data.additional_pdfs || []);
+        const pdfs = (data.additional_pdfs || []).map((pdf) => ({
+          ...pdf,
+          type: 'document',
+          origin: 'pdf',
+          format: 'pdf',
+          resource_url: pdf.pdf_url,
+          searchText: (pdf.title || pdf.filename || '').toLowerCase(),
+          date: pdf.uploaded_at || new Date().toISOString()
+        }));
+        setAdditionalPdfs(pdfs);
       } else {
         console.log('Дополнительные PDF для урока не найдены');
         setAdditionalPdfs([]);
@@ -334,8 +468,8 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
   const loadAdditionalVideos = async () => {
     try {
       const token = localStorage.getItem('token');
-      
-      const response = await fetch(`${backendUrl}/api/lessons/lesson_numerom_intro/additional-videos`, {
+      if (!lessonId) return;
+      const response = await fetch(`${backendUrl}/api/lessons/${lessonId}/additional-videos`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
@@ -352,16 +486,24 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
     }
   };
 
-  // Загрузка данных первого урока
+  // ==================== ЗАГРУЗКА ДАННЫХ УРОКА ====================
+
+  /**
+   * Загружает данные урока с сервера
+   * Поддерживает как первый урок (lesson_numerom_intro), так и кастомные уроки из админ-панели
+   */
   const loadLesson = async () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
 
-      // Для первого урока используем специальный endpoint, для остальных - общий
+      // Определяем endpoint в зависимости от типа урока
+      // Первый урок имеет специальный endpoint для обратной совместимости
       const endpoint = lessonId === 'lesson_numerom_intro'
         ? `${backendUrl}/api/lessons/first-lesson`
         : `${backendUrl}/api/lessons/${lessonId}`;
+
+      console.log(`📚 Загружаем урок: ${lessonId} с endpoint: ${endpoint}`);
 
       const response = await fetch(endpoint, {
         headers: {
@@ -377,12 +519,18 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
       const data = await response.json();
       console.log('📚 Урок загружен:', data.lesson?.id);
       console.log('📖 Content:', data.lesson?.content ? 'есть' : 'нет');
+      console.log('🔧 Source:', data.lesson?.source);
       console.log('📖 Theory:', data.lesson?.content?.theory ? 'есть' : 'нет');
       if (data.lesson?.content?.theory) {
         console.log('📖 Поля theory:', Object.keys(data.lesson.content.theory));
       }
+      console.log('📖 Custom theory blocks:', data.lesson?.content?.custom_theory_blocks ? 'есть' : 'нет');
+      if (data.lesson?.content?.custom_theory_blocks?.blocks) {
+        console.log('📖 Блоков теории:', data.lesson.content.custom_theory_blocks.blocks.length);
+      }
       console.log('💪 Exercises:', data.lesson?.exercises?.length || 0);
-      console.log('❓ Quiz:', data.lesson?.quiz ? 'есть' : 'нет');
+      console.log('❓ Quiz:', data.lesson?.content?.quiz ? 'есть' : 'нет');
+      console.log('🏆 Challenge:', data.lesson?.content?.challenge ? 'есть' : 'нет');
       setLessonData(data.lesson);
 
       // Загрузить прогресс пользователя если есть (передаем lesson для получения challenge/quiz ID)
@@ -733,9 +881,13 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
     setHabitProgress(0);
   };
 
+  // Получить данные квиза и челленджа (работают с обоими форматами)
+  const quizData = lessonData?.content?.quiz || lessonData?.quiz || {};
+  const challengeData = lessonData?.content?.challenge || lessonData?.challenges?.[0] || {};
+
   // Отправить квиз
   const submitQuiz = async () => {
-    const totalQuestions = lessonData?.content?.quiz?.questions?.length || 0;
+    const totalQuestions = quizData.questions?.length || 0;
     if (Object.keys(quizAnswers).length < totalQuestions) {
       setError('Пожалуйста, ответьте на все вопросы');
       return;
@@ -745,7 +897,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
       setQuizSubmitting(true);
       const token = localStorage.getItem('token');
       const formData = new FormData();
-      const quizId = lessonData?.content?.quiz?.id || 'quiz_intro_1';
+      const quizId = quizData.id || 'quiz_intro_1';
       formData.append('quiz_id', quizId);
       formData.append('answers', JSON.stringify(quizAnswers));
 
@@ -834,15 +986,20 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
   }
 
   if (!lessonData) {
+    console.log('⚠️ lessonData отсутствует, показываем сообщение об ошибке');
+    console.log('🔍 Состояние:', { loading, error, lessonId });
     return (
       <Card>
         <CardContent className="text-center py-8">
           <BookOpen className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <p>Урок не найден</p>
+          <p className="text-sm text-gray-500 mt-2">ID: {lessonId}</p>
         </CardContent>
       </Card>
     );
   }
+
+  console.log('✅ Рендерим урок:', lessonData.id);
 
   const sectionProgress = [
     { id: 'theory', title: 'Теория', icon: <BookOpen className="w-4 h-4" />, completed: completedSections.has('theory') },
@@ -852,9 +1009,13 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
     { id: 'habits', title: 'Привычки', icon: <Star className="w-4 h-4" />, completed: habitTracker !== null }
   ];
 
+  /**
+   * Основная функция рендеринга компонента UniversalLessonViewer
+   * Отображает урок с вкладками: теория, упражнения, тест, челлендж, привычки
+   */
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
-      {/* УЛУЧШЕННЫЙ ЗАГОЛОВОК УРОКА */}
+      {/* ==================== ЗАГОЛОВОК УРОКА ==================== */}
       <div className="relative overflow-hidden">
         <Card className="border border-gray-200 bg-white shadow-sm">          
           <CardHeader className="p-6 border-b border-gray-100">
@@ -894,7 +1055,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                         onClick={() => {
                           // Используем consultations endpoint для PDF (как в консультациях)
                           const pdfUrl = `${backendUrl}/api/consultations/pdf/${lessonData.pdf_file_id}`;
-                          setSelectedPDF({
+                          setSelectedDocument({
                             url: pdfUrl,
                             title: `${lessonData.title} - PDF материалы`
                           });
@@ -926,7 +1087,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                     <Button
                       onClick={() => {
                         const wordUrl = `${backendUrl}/api/lessons/word/${lessonData.word_file_id}`;
-                        setSelectedWord({
+                        setSelectedDocument({
                           url: wordUrl,
                           title: `${lessonData.title} - Word материалы`
                         });
@@ -1044,7 +1205,10 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
           </TabsList>
         </div>
 
+        {/* ==================== КОНТЕНТ ВКЛАДОК ==================== */}
+
         {/* ТЕОРИЯ - динамическое отображение с кастомными заголовками */}
+        {/* Поддерживает как первый урок, так и кастомные блоки теории */}
         <TabsContent value="theory" className="space-y-6">
           {/* Определяем является ли это первым уроком */}
           {(() => {
@@ -1075,6 +1239,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
 
             if (isFirstLesson) {
               // Блоки для первого урока
+              console.log('🎯 Отображение ПЕРВОГО урока');
               return (
                 <>
                   {!hiddenFields.has('what_is_numerology') && lessonData.content?.theory?.what_is_numerology && (
@@ -1129,14 +1294,13 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
             } else {
               // Блоки для других уроков
               // Отладочная информация
-              if (lessonData && lessonData.content && lessonData.content.theory) {
-                console.log('🔍 Отображение теории для обычного урока:', {
-                  hasTheory: !!lessonData.content.theory,
-                  hasWhatIsTopic: !!lessonData.content.theory.what_is_topic,
-                  hasMainStory: !!lessonData.content.theory.main_story,
-                  theoryKeys: Object.keys(lessonData.content.theory)
-                });
-              }
+              console.log('🎯 Отображение ОБЫЧНОГО урока:', {
+                lessonId,
+                isFirstLesson,
+                hasTheory: !!lessonData?.content?.theory,
+                theoryKeys: lessonData?.content?.theory ? Object.keys(lessonData.content.theory) : [],
+                lessonDataKeys: lessonData ? Object.keys(lessonData) : []
+              });
               return (
                 <>
                   {!hiddenFields.has('what_is_topic') && lessonData.content?.theory?.what_is_topic && (
@@ -1202,6 +1366,113 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                       </CardContent>
                     </Card>
                   )}
+
+                  {/* Динамическое отображение всех остальных блоков теории */}
+                  {(() => {
+                    const theoryKeys = Object.keys(lessonData.content?.theory || {}).filter(key =>
+                      !['full_text', 'what_is_topic', 'main_story', 'key_concepts', 'practical_applications'].includes(key) &&
+                      lessonData.content.theory[key] &&
+                      typeof lessonData.content.theory[key] === 'string' &&
+                      lessonData.content.theory[key].trim().length > 0
+                    );
+
+                    console.log('🎯 ДИНАМИЧЕСКИЕ БЛОКИ ТЕОРИИ:', {
+                      allKeys: Object.keys(lessonData.content?.theory || {}),
+                      filteredKeys: theoryKeys,
+                      theoryData: lessonData.content?.theory
+                    });
+
+                    // ВРЕМЕННЫЙ КОД ДЛЯ ОТОБРАЖЕНИЯ ВСЕХ БЛОКОВ ТЕОРИИ
+                    if (theoryKeys.length === 0) {
+                      console.warn('⚠️ НЕТ ДИНАМИЧЕСКИХ БЛОКОВ ТЕОРИИ! Показываем все доступные блоки:');
+                      const allTheoryKeys = Object.keys(lessonData.content?.theory || {}).filter(key => key !== 'full_text');
+                      console.log('Все блоки теории:', allTheoryKeys);
+
+                      return allTheoryKeys.map((key) => {
+                        const displayName = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        return (
+                          <Card key={key}>
+                            <CardHeader>
+                              <CardTitle className="flex items-center">
+                                <BookOpen className="w-5 h-5 mr-2" />
+                                {displayName} (ОТЛАДКА)
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent className="prose max-w-none">
+                              <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                                {lessonData.content.theory[key] || 'БЛОК ПУСТОЙ ИЛИ НЕ НАЙДЕН'}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      });
+                    }
+
+                    return theoryKeys.map((key) => {
+                      // Преобразуем ключ в читаемое название
+                      const displayName = key
+                        .replace(/_/g, ' ')
+                        .replace(/\b\w/g, l => l.toUpperCase())
+                        .replace(/O/g, 'о')
+                        .replace(/A/g, 'а')
+                        .replace(/И/g, 'и')
+                        .replace(/В/g, 'в')
+                        .replace(/С/g, 'с')
+                        .replace(/У/g, 'у')
+                        .replace(/П/g, 'п')
+                        .replace(/К/g, 'к')
+                        .replace(/Н/g, 'н')
+                        .replace(/М/g, 'м')
+                        .replace(/Д/g, 'д')
+                        .replace(/Т/g, 'т')
+                        .replace(/Р/g, 'р')
+                        .replace(/Е/g, 'е')
+                        .replace(/Й/g, 'й')
+                        .replace(/Г/g, 'г')
+                        .replace(/Ш/g, 'ш')
+                        .replace(/Щ/g, 'щ')
+                        .replace(/З/g, 'з')
+                        .replace(/Х/g, 'х')
+                        .replace(/Ъ/g, 'ъ')
+                        .replace(/Ь/g, 'ь')
+                        .replace(/Ю/g, 'ю')
+                        .replace(/Я/g, 'я');
+
+                      // Выбираем подходящую иконку в зависимости от типа блока
+                      let IconComponent = BookOpen;
+                      if (key.includes('ключев') || key.includes('концепц')) {
+                        IconComponent = Lightbulb;
+                      } else if (key.includes('практич') || key.includes('применен')) {
+                        IconComponent = Target;
+                      } else if (key.includes('миф') || key.includes('истор')) {
+                        IconComponent = Scroll;
+                      } else if (key.includes('введен')) {
+                        IconComponent = Info;
+                      } else if (key.includes('тел') || key.includes('тело')) {
+                        IconComponent = Heart;
+                      } else if (key.includes('карм') || key.includes('задач')) {
+                        IconComponent = Compass;
+                      } else if (key.includes('упай') || key.includes('гармониз')) {
+                        IconComponent = Sun;
+                      }
+
+                      return (
+                        <Card key={key}>
+                          <CardHeader>
+                            <CardTitle className="flex items-center">
+                              <IconComponent className="w-5 h-5 mr-2" />
+                              {displayName}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="prose max-w-none">
+                            <div className="text-gray-700 leading-relaxed text-base whitespace-pre-wrap">
+                              {lessonData.content.theory[key]}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    });
+                  })()}
                 </>
               );
             }
@@ -1281,7 +1552,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                                   : 'text-gray-600 hover:bg-purple-50'
                               }`}
                             >
-                              Все ({additionalVideos.length + additionalPdfs.length})
+                              Все ({totalVideosCount + totalDocumentsCount})
                             </button>
                             <button
                               onClick={() => setMaterialsFilter('videos')}
@@ -1292,18 +1563,18 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                               }`}
                             >
                               <PlayCircle className="w-4 h-4 inline mr-1" />
-                              Видео ({additionalVideos.length})
+                              Видео ({totalVideosCount})
                             </button>
                             <button
-                              onClick={() => setMaterialsFilter('pdfs')}
+                              onClick={() => setMaterialsFilter('documents')}
                               className={`px-4 py-2 text-sm font-medium transition-all border-l border-purple-200/50 ${
-                                materialsFilter === 'pdfs' 
+                                materialsFilter === 'documents' 
                                   ? 'bg-purple-600 text-white' 
                                   : 'text-gray-600 hover:bg-purple-50'
                               }`}
                             >
                               <FileText className="w-4 h-4 inline mr-1" />
-                              PDF ({additionalPdfs.length})
+                              Документы ({totalDocumentsCount})
                             </button>
                           </div>
                         </div>
@@ -1355,7 +1626,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                           {materialsFilter !== 'all' && (
                             <span className="inline-flex items-center px-3 py-1 rounded-full text-xs bg-purple-100 text-purple-800">
                               {materialsFilter === 'videos' ? '🎬' : '📄'} 
-                              {materialsFilter === 'videos' ? 'Только видео' : 'Только PDF'}
+                              {materialsFilter === 'videos' ? 'Только видео' : 'Только документы'}
                               <button 
                                 onClick={() => setMaterialsFilter('all')}
                                 className="ml-2 hover:text-purple-900"
@@ -1393,7 +1664,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                         </Button>
                       </div>
                     ) : (
-                      <>
+                      <Fragment>
                         {/* Видео материалы */}
                         {videoMaterials.length > 0 && (materialsFilter === 'all' || materialsFilter === 'videos') && (
                           <div className="p-6 border-b border-purple-200/30">
@@ -1404,12 +1675,12 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                                 </div>
                                 <div>
                                   <h4 className="text-lg font-semibold text-gray-900">Видеоуроки</h4>
-                                  <p className="text-sm text-gray-600">
-                                    {videoMaterials.length} из {additionalVideos.length} видео
+                              <p className="text-sm text-gray-600">
+                                {videoMaterials.length} из {totalVideosCount} видео
                                   </p>
                                 </div>
                               </div>
-                              {videoMaterials.length !== additionalVideos.length && (
+                          {videoMaterials.length !== totalVideosCount && (
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -1460,84 +1731,118 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                           </div>
                         )}
 
-                        {/* PDF материалы */}
-                        {pdfMaterials.length > 0 && (materialsFilter === 'all' || materialsFilter === 'pdfs') && (
-                          <div className="p-6">
-                            <div className="flex items-center justify-between mb-4">
-                              <div className="flex items-center">
-                                <div className="flex items-center justify-center w-10 h-10 bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg mr-3">
-                                  <FileText className="w-5 h-5 text-white" />
-                                </div>
-                                <div>
-                                  <h4 className="text-lg font-semibold text-gray-900">Справочные материалы</h4>
-                                  <p className="text-sm text-gray-600">
-                                    {pdfMaterials.length} из {additionalPdfs.length} документов
-                                  </p>
-                                </div>
-                              </div>
-                              {pdfMaterials.length !== additionalPdfs.length && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setMaterialsFilter('pdfs');
-                                    setMaterialsSearch('');
-                                  }}
-                                  className="text-green-600 border-green-600 hover:bg-green-50"
-                                >
-                                  Показать все PDF
-                                </Button>
-                              )}
+                    {/* Документы */}
+                    {documentMaterials.length > 0 && (materialsFilter === 'all' || materialsFilter === 'documents') && (
+                      <div className="p-6">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center">
+                            <div className="flex items-center justify-center w-10 h-10 bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg mr-3">
+                              <FileText className="w-5 h-5 text-white" />
                             </div>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                              {pdfMaterials.map((pdf, index) => (
-                                <div key={pdf.file_id} className="group bg-white rounded-xl border border-green-200/50 shadow-sm hover:shadow-md transition-all duration-200 p-4">
-                                  <div className="flex items-start mb-3">
-                                    <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg mr-3 flex-shrink-0 relative">
-                                      <FileText className="w-6 h-6 text-white" />
-                                      <div className="absolute -top-1 -right-1 bg-green-700 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
-                                        {index + 1}
-                                      </div>
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <h5 className="font-semibold text-gray-900 mb-1">{pdf.title}</h5>
-                                      <p className="text-sm text-gray-600">Дополнительный справочный материал</p>
-                                    </div>
-                                  </div>
-                                  <div className="space-y-2">
-                                    <Button 
-                                      onClick={() => {
-                                        setSelectedPDF({
-                                          url: `${backendUrl}${pdf.pdf_url}`,
-                                          title: pdf.title
-                                        });
-                                      }}
-                                      className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-medium"
-                                    >
-                                      <Eye className="w-4 h-4 mr-2" />
-                                      Открыть PDF
-                                    </Button>
-                                    <Button 
-                                      onClick={() => {
-                                        const link = document.createElement('a');
-                                        link.href = `${backendUrl}${pdf.pdf_url}`;
-                                        link.download = pdf.filename;
-                                        link.click();
-                                      }}
-                                      variant="outline" 
-                                      className="w-full border-green-600 text-green-600 hover:bg-green-50 font-medium"
-                                    >
-                                      <Download className="w-4 h-4 mr-2" />
-                                      Скачать
-                                    </Button>
-                                  </div>
-                                </div>
-                              ))}
+                            <div>
+                              <h4 className="text-lg font-semibold text-gray-900">Справочные материалы</h4>
+                              <p className="text-sm text-gray-600">
+                                {documentMaterials.length} из {totalDocumentsCount} документов
+                              </p>
                             </div>
                           </div>
-                        )}
-                      </>
+                          {documentMaterials.length !== totalDocumentsCount && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setMaterialsFilter('documents');
+                                setMaterialsSearch('');
+                              }}
+                              className="text-green-600 border-green-600 hover:bg-green-50"
+                            >
+                              Показать все документы
+                            </Button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {documentMaterials.map((doc, index) => {
+                            const format = doc.format || determineDocumentFormat(doc);
+                            const gradientClasses = {
+                              pdf: 'from-green-600 to-emerald-600',
+                              word: 'from-blue-600 to-indigo-600',
+                              excel: 'from-teal-600 to-green-500',
+                              presentation: 'from-amber-500 to-orange-500',
+                              text: 'from-slate-600 to-gray-600',
+                              other: 'from-purple-600 to-blue-600'
+                            };
+                            const gradient = gradientClasses[format] || gradientClasses.other;
+                            const gradientClass = `flex items-center justify-center w-12 h-12 rounded-lg mr-3 flex-shrink-0 relative text-white bg-gradient-to-r ${gradient}`;
+                            const labelMap = {
+                              pdf: 'PDF',
+                              word: 'Word',
+                              excel: 'Excel',
+                              presentation: 'Презентация',
+                              text: 'Текст',
+                              other: 'Документ'
+                            };
+                            const label = labelMap[format] || 'Документ';
+                            const resourceUrl = doc.resource_url || doc.url || doc.pdf_url;
+                            const sourceLabel = doc.origin === 'resource' ? 'Ресурсы' : 'PDF';
+
+                            return (
+                              <div key={doc.file_id} className="group bg-white rounded-xl border border-green-200/50 shadow-sm hover:shadow-md transition-all duration-200 p-4">
+                                <div className="flex items-start mb-3">
+                                  <div className={gradientClass}>
+                                    <FileText className="w-6 h-6 text-white" />
+                                    <div className="absolute -top-1 -right-1 bg-green-700 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                                      {index + 1}
+                                    </div>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <h5 className="font-semibold text-gray-900 mb-1">{doc.title}</h5>
+                                    <p className="text-sm text-gray-600">Дополнительный материал ({label})</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between text-xs text-gray-500 mb-3">
+                                  <span>Файл: {doc.filename}</span>
+                                  <span>Источник: {sourceLabel}</span>
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button
+                                    onClick={() => {
+                                      setSelectedDocument({
+                                        ...doc,
+                                        resource_url: resourceUrl,
+                                        filename: doc.filename,
+                                        title: doc.title,
+                                        content_type: doc.content_type
+                                      });
+                                    }}
+                                    className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
+                                  >
+                                    <Eye className="w-4 h-4 mr-2" />
+                                    Открыть
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                      if (!resourceUrl) return;
+                                      const baseHref = resourceUrl.startsWith('http') ? resourceUrl : `${backendUrl}${resourceUrl}`;
+                                      const href = baseHref.includes('?') ? `${baseHref}&download=1` : `${baseHref}?download=1`;
+                                      const link = document.createElement('a');
+                                      link.href = href;
+                                      link.target = '_blank';
+                                      link.rel = 'noopener noreferrer';
+                                      link.click();
+                                    }}
+                                    className="border-green-200 text-green-600 hover:bg-green-50"
+                                  >
+                                    <Download className="w-4 h-4 mr-2" />
+                                    Скачать
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
                     )}
 
                     {/* Улучшенная информационная панель */}
@@ -1546,7 +1851,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                         <div className="flex items-center text-sm text-gray-600">
                           <Sparkles className="w-4 h-4 mr-2 text-purple-600" />
                           <span>
-                            Показано {filteredMaterials.length} из {additionalVideos.length + additionalPdfs.length} материалов
+                            Показано {filteredMaterials.length} из {totalVideosCount + totalDocumentsCount} материалов
                           </span>
                         </div>
                         <div className="flex items-center gap-4 text-xs text-gray-500">
@@ -1556,7 +1861,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                           </div>
                           <div className="flex items-center">
                             <FileText className="w-3 h-3 mr-1 text-green-600" />
-                            {pdfMaterials.length} PDF
+                            {documentMaterials.length} документов
                           </div>
                           <div className="flex items-center">
                             <Timer className="w-3 h-3 mr-1 text-blue-600" />
@@ -1565,16 +1870,17 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </Fragment>
               )}
-              </CardContent>
+                </div>
+            </CardContent>
             </Card>
           )}
         </TabsContent>
 
         {/* УПРАЖНЕНИЯ */}
         <TabsContent value="exercises" className="space-y-6">
-          {lessonData.exercises?.map((exercise, index) => (
+          {(lessonData.exercises || lessonData.content?.exercises)?.map((exercise, index) => (
             <Card key={exercise.id}>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
@@ -1621,11 +1927,21 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
 
                 <div>
                   <h4 className="font-semibold mb-2">Инструкции:</h4>
-                  <ul className="list-disc pl-5 space-y-1 text-sm">
-                    {exercise.instructions?.map((instruction, idx) => (
-                      <li key={idx}>{instruction}</li>
-                    ))}
-                  </ul>
+                  {exercise.instructions ? (
+                    Array.isArray(exercise.instructions) ? (
+                      <ul className="list-disc pl-5 space-y-1 text-sm">
+                        {exercise.instructions.map((instruction, idx) => (
+                          <li key={idx}>{instruction}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="text-sm whitespace-pre-line pl-5">
+                        {exercise.instructions}
+                      </div>
+                    )
+                  ) : (
+                    <p className="text-sm text-gray-500 pl-5">Инструкции не указаны</p>
+                  )}
                 </div>
                 
                 <div className="p-3 bg-blue-50 rounded-lg">
@@ -1730,20 +2046,20 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Target className="w-5 h-5 mr-2" />
-                  {lessonData.quiz?.title}
+                  {quizData.title}
                 </CardTitle>
                 <CardDescription>
                   Ответьте на все вопросы для проверки знаний. Для прохождения нужно набрать минимум 60%.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                {lessonData.quiz?.questions?.map((question, index) => (
+                {quizData.questions?.map((question, index) => (
                   <div key={index} className="p-4 border rounded-lg">
                     <h4 className="font-semibold mb-3">
                       Вопрос {index + 1}: {question.question}
                     </h4>
                     <div className="space-y-2">
-                      {question.options?.map((option, optIndex) => (
+                      {(question.options || []).map((option, optIndex) => (
                         <label key={optIndex} className="flex items-center space-x-2 cursor-pointer p-2 hover:bg-gray-50 rounded">
                           <input
                             type="radio"
@@ -1805,7 +2121,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {quizResults.results?.map((result, index) => (
+                {(quizResults.results || []).map((result, index) => (
                   <div key={index} className={`p-3 rounded-lg border ${result.is_correct ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
                     <div className="font-medium text-sm mb-1">{result.question}</div>
                     <div className="text-xs space-y-1">
@@ -1857,10 +2173,10 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Sun className="w-5 h-5 mr-2 text-yellow-600" />
-                  {lessonData.challenges?.[0]?.title}
+                  {challengeData.title}
                 </CardTitle>
                 <CardDescription>
-                  {lessonData.challenges?.[0]?.description}
+                  {challengeData.description}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1876,11 +2192,11 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                 </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {lessonData.challenges?.[0]?.daily_tasks?.slice(0, 3).map((task, index) => (
+                  {(challengeData.daily_tasks || []).slice(0, 3).map((task, index) => (
                     <div key={index} className="p-3 border rounded-lg">
                       <div className="font-medium text-sm mb-2">День {task.day}: {task.title}</div>
                       <ul className="text-xs text-gray-600 space-y-1">
-                        {task.tasks?.slice(0, 2).map((subtask, idx) => (
+                        {(task.tasks || []).slice(0, 2).map((subtask, idx) => (
                           <li key={idx}>• {subtask}</li>
                         ))}
                         {task.tasks?.length > 2 && <li>• и еще {task.tasks.length - 2}...</li>}
@@ -2071,12 +2387,12 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    День {selectedChallengeDay}: {lessonData.challenges?.[0]?.daily_tasks?.[selectedChallengeDay - 1]?.title}
+                    День {selectedChallengeDay}: {challengeData.daily_tasks?.[selectedChallengeDay - 1]?.title}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <ul className="space-y-2">
-                    {lessonData.challenges?.[0]?.daily_tasks?.[selectedChallengeDay - 1]?.tasks?.map((task, index) => (
+                    {(challengeData.daily_tasks?.[selectedChallengeDay - 1]?.tasks || []).map((task, index) => (
                       <li key={index} className="flex items-start space-x-2">
                         <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
                         <span className="text-sm">{task}</span>
@@ -2239,7 +2555,7 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {habitTracker.active_habits?.map((habit, index) => (
+                  {(habitTracker.active_habits || []).map((habit, index) => (
                     <div
                       key={index}
                       className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors"
@@ -2303,22 +2619,12 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
         />
       )}
 
-      {/* PDF Viewer Modal - как в PersonalConsultations */}
-      {selectedPDF && (
-        <ConsultationPDFViewer
-          pdfUrl={selectedPDF.url}
-          title={selectedPDF.title}
-          onClose={() => setSelectedPDF(null)}
-        />
-      )}
-
-      {/* Word Viewer Modal */}
-      {selectedWord && (
-        <WordViewer
-          wordUrl={selectedWord.url}
-          title={selectedWord.title}
+      {/* Document Viewer Modal */}
+      {selectedDocument && (
+        <LessonDocumentViewer
+          resource={selectedDocument}
           backendUrl={backendUrl}
-          onClose={() => setSelectedWord(null)}
+          onClose={() => setSelectedDocument(null)}
         />
       )}
     </div>
@@ -2326,3 +2632,15 @@ const UniversalLessonViewer = ({ lessonId = lessonId, onBack }) => {
 };
 
 export default UniversalLessonViewer;
+
+/**
+ * КОНЕЦ КОМПОНЕНТА UniversalLessonViewer
+ *
+ * Этот компонент предоставляет полную функциональность для изучения уроков в системе NumerOM:
+ * - Динамическая загрузка уроков с сервера
+ * - Поддержка различных типов контента (теория, упражнения, тесты, челлендж, привычки)
+ * - Интерактивный интерфейс с прогрессом и состоянием завершения
+ * - Медиа поддержка (видео, PDF, документы)
+ * - Адаптивный дизайн для различных устройств
+ * - Сохранение прогресса пользователя
+ */

@@ -20,7 +20,8 @@ import {
   Clock3,
   Sparkles,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  Activity
 } from 'lucide-react';
 import { getApiBaseUrl } from '../utils/backendUrl';
 
@@ -1006,6 +1007,86 @@ const VedicTimeCalculations = () => {
           )}
               </div>
             </div>
+
+          {/* График планетарных энергий */}
+            {schedule.planetary_energies && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Activity className="h-5 w-5 text-purple-300" />
+                  <h2 className="text-xl font-semibold">Энергия планет на день</h2>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    {Object.entries(schedule.planetary_energies).map(([planetKey, energy]) => {
+                      const planetNames = {
+                        surya: 'Сурья (Солнце)',
+                        chandra: 'Чандра (Луна)',
+                        mangal: 'Мангал (Марс)',
+                        budha: 'Будха (Меркурий)',
+                        guru: 'Гуру (Юпитер)',
+                        shukra: 'Шукра (Венера)',
+                        shani: 'Шани (Сатурн)',
+                        rahu: 'Раху',
+                        ketu: 'Кету'
+                      };
+                      const planetColor = getPlanetColor(planetKey.charAt(0).toUpperCase() + planetKey.slice(1));
+                      const energyPercent = Math.round(energy);
+                      
+                      return (
+                        <div
+                          key={planetKey}
+                          className="rounded-xl border p-4"
+                          style={{
+                            borderColor: planetColor + '40',
+                            backgroundColor: planetColor + '10'
+                          }}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-semibold" style={{ color: planetColor }}>
+                              {planetNames[planetKey] || planetKey}
+                            </span>
+                            <span className="text-lg font-bold" style={{ color: planetColor }}>
+                              {energyPercent}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all duration-500"
+                              style={{
+                                width: `${energyPercent}%`,
+                                backgroundColor: planetColor,
+                                boxShadow: `0 0 10px ${planetColor}60`
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {schedule.total_energy !== undefined && (
+                    <div className="mt-4 pt-4 border-t border-white/10">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-purple-200">
+                          Общая энергия дня
+                        </span>
+                        <span className="text-xl font-bold text-purple-300">
+                          {Math.round(schedule.total_energy / 9)}%
+                        </span>
+                      </div>
+                      <div className="mt-2 w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-purple-400 to-purple-600"
+                          style={{
+                            width: `${Math.min(100, Math.round(schedule.total_energy / 9))}%`,
+                            boxShadow: '0 0 15px rgba(168, 85, 247, 0.6)'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
           {/* Планетарные часы дня */}
             <div className="rounded-2xl border border-white/10 bg-white/5 p-5">

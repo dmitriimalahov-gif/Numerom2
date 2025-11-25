@@ -49,7 +49,7 @@ const MainDashboard = () => {
     );
   }
 
-  // If user is logged in, redirect to dashboard
+  // If user is logged in, redirect to main dashboard
   if (user) {
     console.log('MainDashboard: пользователь найден, перенаправляем на /dashboard для:', user.email);
     return <Navigate to="/dashboard" replace />;

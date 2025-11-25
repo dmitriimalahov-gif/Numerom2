@@ -8,12 +8,13 @@ import os
 from models import User, UserResponse
 
 # Security configuration
-SECRET_KEY = os.environ.get("SECRET_KEY", "your-secret-key-change-in-production")
+# Поддерживаем оба варианта для совместимости
+SECRET_KEY = os.environ.get("SECRET_KEY") or os.environ.get("JWT_SECRET_KEY") or "your-secret-key-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 часа
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)  # Отключаем автоматическую ошибку для более гибкой обработки
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
@@ -31,24 +32,52 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    if not credentials:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error("No credentials provided in request")
+        raise credentials_exception
+    
     try:
         token = credentials.credentials
+        if not token:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error("Token is empty")
+            raise credentials_exception
+            
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Attempting to decode token, SECRET_KEY length: {len(SECRET_KEY) if SECRET_KEY else 0}")
+        
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         role: str = payload.get("role", "user")  # По умолчанию "user"
+        
         if user_id is None:
+            logger.error("user_id is None in token payload")
             raise credentials_exception
-    except JWTError:
+            
+        logger.info(f"Token decoded successfully, user_id: {user_id}, role: {role}")
+        return {"user_id": user_id, "role": role}
+        
+    except JWTError as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"JWT decode error: {str(e)}, SECRET_KEY length: {len(SECRET_KEY) if SECRET_KEY else 0}, token preview: {token[:20] if token else 'None'}...")
         raise credentials_exception
-
-    # Return user_id and role for further processing
-    return {"user_id": user_id, "role": role}
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Unexpected error in get_current_user: {str(e)}")
+        raise credentials_exception
 
 
 async def get_current_user_full(credentials: HTTPAuthorizationCredentials = Depends(security), db=None):
@@ -81,6 +110,8 @@ def create_user_response(user: User) -> UserResponse:
         id=user.id,
         email=user.email,
         full_name=user.full_name,
+        name=user.name,
+        surname=user.surname,
         birth_date=user.birth_date,
         city=user.city,
         phone_number=user.phone_number,

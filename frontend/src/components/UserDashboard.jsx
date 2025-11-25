@@ -7,10 +7,11 @@ import { Avatar, AvatarFallback } from './ui/avatar';
 import {
   Sparkles, Calculator, Compass, Heart, HelpCircle, BarChart3,
   BookOpen, FileText, Settings, Grid3X3, Clock, MapPin,
-  LogOut, CreditCard, Crown, Menu, User, Calendar, TrendingUp, Video
+  LogOut, CreditCard, Crown, Menu, User, Calendar, TrendingUp, Video, Brain
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import PaymentModal from './PaymentModal';
+import { getBackendUrl } from '../utils/backendUrl';
 
 const UserDashboard = () => {
   const { user, logout, loading, isAuthenticated, isInitialized } = useAuth();
@@ -20,6 +21,7 @@ const UserDashboard = () => {
   // State hooks - должны быть до любых условных возвратов
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [hasNewConsultations, setHasNewConsultations] = useState(false);
   const [theme, setTheme] = useState(() => {
     // Загружаем тему из localStorage
     return localStorage.getItem('theme') || 'light';
@@ -53,6 +55,54 @@ const UserDashboard = () => {
       navigate('/dashboard/home', { replace: true });
     }
   }, [location.pathname, navigate]);
+
+  // Проверка наличия новых консультаций
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+
+    const checkNewConsultations = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+
+        const backendUrl = getBackendUrl();
+        const response = await fetch(`${backendUrl}/api/user/consultations`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const consultations = await response.json();
+          // Проверяем, есть ли консультации, которые были обновлены за последние 7 дней
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          
+          const hasNew = consultations.some(consultation => {
+            if (consultation.updated_at) {
+              const updatedDate = new Date(consultation.updated_at);
+              return updatedDate > sevenDaysAgo;
+            }
+            if (consultation.created_at) {
+              const createdDate = new Date(consultation.created_at);
+              return createdDate > sevenDaysAgo;
+            }
+            return false;
+          });
+
+          setHasNewConsultations(hasNew);
+        }
+      } catch (error) {
+        console.error('Error checking consultations:', error);
+      }
+    };
+
+    checkNewConsultations();
+    // Проверяем каждые 5 минут
+    const interval = setInterval(checkNewConsultations, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, user]);
 
   const handleSectionChange = (section) => {
     // Проверяем аутентификацию перед навигацией
@@ -98,14 +148,17 @@ const UserDashboard = () => {
     { id: 'planetary-route', label: 'Планетарный маршрут', icon: <MapPin className="w-4 h-4" /> },
     { id: 'compatibility', label: 'Совместимость', icon: <Heart className="w-4 h-4" /> },
     { id: 'quiz', label: 'Тест личности', icon: <HelpCircle className="w-4 h-4" /> },
-    { id: 'learning', label: 'Обучение', icon: <BookOpen className="w-4 h-4" /> },
+    { id: 'learning-v2', label: 'Обучение', icon: <Brain className="w-4 h-4" /> },
     { id: 'consultations', label: 'Личные консультации', icon: <Video className="w-4 h-4" /> },
+    { id: 'comprehensive-report', label: 'Комплексный отчёт', icon: <BarChart3 className="w-4 h-4" /> },
     { id: 'report-export', label: 'Загрузка отчётов', icon: <FileText className="w-4 h-4" /> },
     { id: 'settings', label: 'Настройки', icon: <Settings className="w-4 h-4" /> }
   ];
 
   // Добавить админские пункты меню для администраторов
-  const adminItems = [];
+  const adminItems = [
+    { id: 'admin-v2', label: 'Админ панель V2', icon: <Crown className="w-4 h-4" /> }
+  ];
 
   const navigationItems = (user?.is_super_admin || user?.is_admin)
     ? [...baseItems.slice(0, 12), { id: 'admin', label: 'Админ панель', icon: <Grid3X3 className="w-4 h-4" /> }, ...baseItems.slice(12), ...adminItems]
@@ -127,25 +180,44 @@ const UserDashboard = () => {
       </div>
       
       {/* Навигационные элементы - всегда в полном виде с текстом */}
-      {navigationItems.map((item) => (
-        <Button
-          key={item.id}
-          variant={activeSection === item.id ? 'default' : 'ghost'}
-          className={`w-full flex items-center justify-start p-3 transition-colors ${
-            activeSection === item.id 
-              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md hover:from-purple-700 hover:to-indigo-700' 
-              : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
-          }`}
-          onClick={() => switchTo(item.id)}
-        >
-          <div className="flex-shrink-0">
-            {item.icon}
-          </div>
-          <span className="ml-3 text-sm font-medium whitespace-nowrap">
-            {item.label}
-          </span>
-        </Button>
-      ))}
+      {navigationItems.map((item) => {
+        // Определяем, нужно ли мерцание
+        const shouldPulseLearning = item.id === 'learning-v2' && activeSection !== 'learning-v2';
+        const shouldPulseConsultations = item.id === 'consultations' && hasNewConsultations && activeSection !== 'consultations';
+        
+        return (
+          <Button
+            key={item.id}
+            variant={activeSection === item.id ? 'default' : 'ghost'}
+            className={`w-full flex items-center justify-start p-3 transition-all relative ${
+              activeSection === item.id 
+                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md hover:from-purple-700 hover:to-indigo-700' 
+                : shouldPulseLearning
+                ? 'text-gray-700 hover:bg-gray-100 hover:text-gray-900 animate-pulse-blue border border-blue-300'
+                : shouldPulseConsultations
+                ? 'text-gray-700 hover:bg-gray-100 hover:text-gray-900 animate-pulse-green border border-green-300'
+                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+            }`}
+            onClick={() => {
+              switchTo(item.id);
+              // Останавливаем мерцание консультаций после клика
+              if (item.id === 'consultations') {
+                setHasNewConsultations(false);
+              }
+            }}
+          >
+            <div className="flex-shrink-0">
+              {item.icon}
+            </div>
+            <span className="ml-3 text-sm font-medium whitespace-nowrap">
+              {item.label}
+            </span>
+            {shouldPulseConsultations && (
+              <span className="ml-auto w-2 h-2 bg-green-500 rounded-full animate-ping"></span>
+            )}
+          </Button>
+        );
+      })}
     </div>
   );
 

@@ -6,6 +6,7 @@ import { Label } from './ui/label';
 import { Badge } from './ui/badge';
 import { Alert, AlertDescription } from './ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import AdminPanelV2 from './AdminPanelV2';
 import { 
   Upload, 
   FileText, 
@@ -31,19 +32,26 @@ import {
   Zap,
   PlayCircle,
   Lightbulb,
-  Download
+  Download,
+  Activity,
+  Sparkles,
+  CalendarRange
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
-import UnifiedLessonEditor from './UnifiedLessonEditor';
 import { getBackendUrl } from '../utils/backendUrl';
 
 const AdminPanel = () => {
   const { user } = useAuth();
+
+  // Проверка доступа к управлению уроками V2 (только для суперадминистратора)
+  const canManageLessonsV2 = user?.email === 'dmitrii.malahov@gmail.com';
   const [activeTab, setActiveTab] = useState(() => {
     // Восстановить последнюю активную вкладку из localStorage
-    return localStorage.getItem('adminPanel_activeTab') || 'users';
+    const savedTab = localStorage.getItem('adminPanel_activeTab') || 'users';
+    // Если сохраненная вкладка - lessons-v2, но пользователь не имеет доступа, выбрать users
+    return (savedTab === 'lessons-v2' && !canManageLessonsV2) ? 'users' : savedTab;
   });
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -119,6 +127,36 @@ const AdminPanel = () => {
   const [loadingScoringConfig, setLoadingScoringConfig] = useState(false);
   const [savingScoringConfig, setSavingScoringConfig] = useState(false);
   const [editedScoringConfig, setEditedScoringConfig] = useState(null);
+  
+  // State for learning points configuration
+  const [learningPointsConfig, setLearningPointsConfig] = useState(null);
+  const [loadingLearningPointsConfig, setLoadingLearningPointsConfig] = useState(false);
+  const [savingLearningPointsConfig, setSavingLearningPointsConfig] = useState(false);
+  const [editedLearningPointsConfig, setEditedLearningPointsConfig] = useState(null);
+  
+  // State for numerology credits configuration
+  const [numerologyCreditsConfig, setNumerologyCreditsConfig] = useState(null);
+  const [loadingNumerologyCreditsConfig, setLoadingNumerologyCreditsConfig] = useState(false);
+  const [savingNumerologyCreditsConfig, setSavingNumerologyCreditsConfig] = useState(false);
+  const [editedNumerologyCreditsConfig, setEditedNumerologyCreditsConfig] = useState(null);
+  
+  // State for credits deduction configuration (единая система)
+  const [creditsDeductionConfig, setCreditsDeductionConfig] = useState(null);
+  const [loadingCreditsDeductionConfig, setLoadingCreditsDeductionConfig] = useState(false);
+  const [savingCreditsDeductionConfig, setSavingCreditsDeductionConfig] = useState(false);
+  const [editedCreditsDeductionConfig, setEditedCreditsDeductionConfig] = useState(null);
+  
+  // State for planetary energy modifiers configuration
+  const [planetaryEnergyModifiersConfig, setPlanetaryEnergyModifiersConfig] = useState(null);
+  const [loadingPlanetaryEnergyModifiersConfig, setLoadingPlanetaryEnergyModifiersConfig] = useState(false);
+  const [savingPlanetaryEnergyModifiersConfig, setSavingPlanetaryEnergyModifiersConfig] = useState(false);
+  const [editedPlanetaryEnergyModifiersConfig, setEditedPlanetaryEnergyModifiersConfig] = useState(null);
+  
+  // State for monthly route configuration
+  const [monthlyRouteConfig, setMonthlyRouteConfig] = useState(null);
+  const [loadingMonthlyRouteConfig, setLoadingMonthlyRouteConfig] = useState(false);
+  const [savingMonthlyRouteConfig, setSavingMonthlyRouteConfig] = useState(false);
+  const [editedMonthlyRouteConfig, setEditedMonthlyRouteConfig] = useState(null);
 
   // Поиск пользователей
   const [userSearchTerm, setUserSearchTerm] = useState('');
@@ -259,6 +297,286 @@ const AdminPanel = () => {
       alert('Ошибка сброса конфигурации');
     } finally {
       setSavingScoringConfig(false);
+    }
+  };
+
+  // Загрузка конфигурации начисления баллов за обучение
+  const fetchLearningPointsConfig = async () => {
+    setLoadingLearningPointsConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/learning-points-config`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setLearningPointsConfig(data.config);
+        setEditedLearningPointsConfig(data.config);
+      } else {
+        console.error('Ошибка загрузки конфигурации баллов за обучение');
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки конфигурации баллов за обучение:', error);
+    } finally {
+      setLoadingLearningPointsConfig(false);
+    }
+  };
+
+  // Сохранение конфигурации начисления баллов за обучение
+  const saveLearningPointsConfig = async () => {
+    if (!editedLearningPointsConfig) return;
+    
+    setSavingLearningPointsConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/learning-points-config`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(editedLearningPointsConfig)
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setLearningPointsConfig(data.config);
+        setEditedLearningPointsConfig(data.config);
+        alert('Конфигурация начисления баллов за обучение успешно сохранена!');
+      } else {
+        const errorData = await response.json();
+        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
+      }
+    } catch (error) {
+      console.error('Ошибка сохранения конфигурации баллов за обучение:', error);
+      alert('Ошибка сохранения конфигурации');
+    } finally {
+      setSavingLearningPointsConfig(false);
+    }
+  };
+
+  // Загрузка конфигурации стоимости услуг нумерологии
+  const fetchNumerologyCreditsConfig = async () => {
+    setLoadingNumerologyCreditsConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/numerology-credits-config`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setNumerologyCreditsConfig(data.config);
+        setEditedNumerologyCreditsConfig(data.config);
+      } else {
+        console.error('Ошибка загрузки конфигурации стоимости услуг нумерологии');
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки конфигурации стоимости услуг нумерологии:', error);
+    } finally {
+      setLoadingNumerologyCreditsConfig(false);
+    }
+  };
+
+  // Сохранение конфигурации стоимости услуг нумерологии
+  const saveNumerologyCreditsConfig = async () => {
+    if (!editedNumerologyCreditsConfig) return;
+    
+    setSavingNumerologyCreditsConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/numerology-credits-config`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(editedNumerologyCreditsConfig)
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setNumerologyCreditsConfig(data.config);
+        setEditedNumerologyCreditsConfig(data.config);
+        alert('Конфигурация стоимости услуг нумерологии успешно сохранена!');
+      } else {
+        const errorData = await response.json();
+        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
+      }
+    } catch (error) {
+      console.error('Ошибка сохранения конфигурации стоимости услуг нумерологии:', error);
+      alert('Ошибка сохранения конфигурации');
+    } finally {
+      setSavingNumerologyCreditsConfig(false);
+    }
+  };
+
+  // Загрузка единой конфигурации списания баллов
+  const fetchCreditsDeductionConfig = async () => {
+    setLoadingCreditsDeductionConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/credits-deduction-config`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setCreditsDeductionConfig(data.config);
+        setEditedCreditsDeductionConfig(data.config);
+      } else {
+        console.error('Ошибка загрузки конфигурации списания баллов');
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки конфигурации списания баллов:', error);
+    } finally {
+      setLoadingCreditsDeductionConfig(false);
+    }
+  };
+
+  // Сохранение единой конфигурации списания баллов
+  const saveCreditsDeductionConfig = async () => {
+    if (!editedCreditsDeductionConfig) return;
+    
+    setSavingCreditsDeductionConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/credits-deduction-config`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(editedCreditsDeductionConfig)
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setCreditsDeductionConfig(data.config);
+        setEditedCreditsDeductionConfig(data.config);
+        alert('Конфигурация списания баллов успешно сохранена!');
+      } else {
+        const errorData = await response.json();
+        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
+      }
+    } catch (error) {
+      console.error('Ошибка сохранения конфигурации списания баллов:', error);
+      alert('Ошибка сохранения конфигурации');
+    } finally {
+      setSavingCreditsDeductionConfig(false);
+    }
+  };
+
+  // Загрузка конфигурации модификаторов энергии планет
+  const fetchPlanetaryEnergyModifiersConfig = async () => {
+    setLoadingPlanetaryEnergyModifiersConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/planetary-energy-modifiers-config`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setPlanetaryEnergyModifiersConfig(data.config);
+        setEditedPlanetaryEnergyModifiersConfig(data.config);
+      } else {
+        console.error('Ошибка загрузки конфигурации модификаторов энергии планет');
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки конфигурации модификаторов энергии планет:', error);
+    } finally {
+      setLoadingPlanetaryEnergyModifiersConfig(false);
+    }
+  };
+
+  // Загрузка конфигурации месячного маршрута
+  const fetchMonthlyRouteConfig = async () => {
+    setLoadingMonthlyRouteConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/monthly-route-config`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setMonthlyRouteConfig(data.config);
+        setEditedMonthlyRouteConfig(data.config);
+      } else {
+        console.error('Ошибка загрузки конфигурации месячного маршрута');
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки конфигурации месячного маршрута:', error);
+    } finally {
+      setLoadingMonthlyRouteConfig(false);
+    }
+  };
+
+  // Сохранение конфигурации месячного маршрута
+  const saveMonthlyRouteConfig = async () => {
+    if (!editedMonthlyRouteConfig) return;
+    
+    setSavingMonthlyRouteConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/monthly-route-config`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(editedMonthlyRouteConfig)
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setMonthlyRouteConfig(data.config);
+        setEditedMonthlyRouteConfig(data.config);
+        alert('Конфигурация месячного маршрута успешно сохранена!');
+      } else {
+        const errorData = await response.json();
+        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
+      }
+    } catch (error) {
+      console.error('Ошибка сохранения конфигурации месячного маршрута:', error);
+      alert('Ошибка сохранения конфигурации');
+    } finally {
+      setSavingMonthlyRouteConfig(false);
+    }
+  };
+
+  // Сохранение конфигурации модификаторов энергии планет
+  const savePlanetaryEnergyModifiersConfig = async () => {
+    if (!editedPlanetaryEnergyModifiersConfig) return;
+    
+    setSavingPlanetaryEnergyModifiersConfig(true);
+    try {
+      const response = await fetch(`${backendUrl}/api/admin/planetary-energy-modifiers-config`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(editedPlanetaryEnergyModifiersConfig)
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setPlanetaryEnergyModifiersConfig(data.config);
+        setEditedPlanetaryEnergyModifiersConfig(data.config);
+        alert('Конфигурация модификаторов энергии планет успешно сохранена!');
+      } else {
+        const errorData = await response.json();
+        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
+      }
+    } catch (error) {
+      console.error('Ошибка сохранения конфигурации модификаторов энергии планет:', error);
+      alert('Ошибка сохранения конфигурации');
+    } finally {
+      setSavingPlanetaryEnergyModifiersConfig(false);
     }
   };
 
@@ -1542,16 +1860,55 @@ const AdminPanel = () => {
     if (activeTab === 'scoring' && !scoringConfig) {
       fetchScoringConfig();
     }
-  }, [activeTab, scoringConfig]);
+    
+    // Загружаем конфигурацию баллов за обучение при переключении на вкладку настроек
+    if (activeTab === 'settings' && !learningPointsConfig && !loadingLearningPointsConfig) {
+      fetchLearningPointsConfig();
+    }
+    
+    // Загружаем конфигурацию стоимости услуг нумерологии при переключении на вкладку настроек
+    if (activeTab === 'settings' && !numerologyCreditsConfig && !loadingNumerologyCreditsConfig) {
+      fetchNumerologyCreditsConfig();
+    }
+    
+    // Загружаем единую конфигурацию списания баллов при переключении на вкладку настроек
+    if (activeTab === 'settings' && !creditsDeductionConfig && !loadingCreditsDeductionConfig) {
+      fetchCreditsDeductionConfig();
+    }
+    
+    // Загружаем конфигурацию модификаторов энергии планет при переключении на вкладку настроек
+    if (activeTab === 'settings' && !planetaryEnergyModifiersConfig && !loadingPlanetaryEnergyModifiersConfig) {
+      fetchPlanetaryEnergyModifiersConfig();
+    }
+    
+    // Загружаем конфигурацию месячного маршрута при переключении на вкладку настроек
+    if (activeTab === 'settings' && !monthlyRouteConfig && !loadingMonthlyRouteConfig) {
+      fetchMonthlyRouteConfig();
+    }
+  }, [activeTab, scoringConfig, learningPointsConfig, loadingLearningPointsConfig, numerologyCreditsConfig, loadingNumerologyCreditsConfig, creditsDeductionConfig, loadingCreditsDeductionConfig, planetaryEnergyModifiersConfig, loadingPlanetaryEnergyModifiersConfig, monthlyRouteConfig, loadingMonthlyRouteConfig]);
 
   useEffect(() => {
     if (activeTab === 'users') {
       fetchUsers();
     } else if (activeTab === 'consultations') {
       fetchConsultations();
+    } else if (activeTab === 'settings' && !learningPointsConfig) {
+      fetchLearningPointsConfig();
+      fetchNumerologyCreditsConfig();
+      fetchCreditsDeductionConfig();
+      fetchPlanetaryEnergyModifiersConfig();
+      fetchMonthlyRouteConfig();
       fetchUsers(); // Загружаем пользователей для выбора в консультациях
     }
   }, [activeTab]);
+
+  // Проверяем доступ к вкладке lessons-v2 и перенаправляем если нет доступа
+  useEffect(() => {
+    if (activeTab === 'lessons-v2' && !canManageLessonsV2) {
+      console.log('Пользователь не имеет доступа к управлению уроками V2, перенаправляем на users');
+      setActiveTab('users');
+    }
+  }, [activeTab, canManageLessonsV2]);
 
   // Functions for lessons management
   const fetchLessons = async () => {
@@ -3791,7 +4148,7 @@ const AdminPanel = () => {
                       {/* Header with name and status */}
                       <div className="flex justify-between items-start">
                         <div>
-                          <div className="font-semibold text-sm">{u.name || 'Без имени'}</div>
+                          <div className="font-semibold text-sm">{u.name}</div>
                           <div className="text-xs text-gray-500">{u.email}</div>
                         </div>
                         <div className="flex flex-col items-end gap-1">
@@ -3982,7 +4339,7 @@ const AdminPanel = () => {
                     <tr key={u.id} className="border-b hover:bg-gray-50">
                       <td className="p-2">
                         <div>
-                          <div className="font-medium">{u.name || 'Без имени'}</div>
+                          <div className="font-medium">{u.name}</div>
                           <div className="text-xs text-gray-500">{u.id}</div>
                         </div>
                       </td>
@@ -4641,7 +4998,49 @@ const AdminPanel = () => {
                       {lesson.duration_minutes} мин • Порядок: {lesson.order}
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center">
+                    <div className="flex items-center gap-2 mr-2">
+                      <input
+                        type="checkbox"
+                        id={`lesson_active_${lesson.id}`}
+                        checked={lesson.is_active === 1 || lesson.is_active === true}
+                        onChange={async (e) => {
+                          try {
+                            const response = await fetch(`${backendUrl}/api/admin/lessons/${lesson.id}`, {
+                              method: 'PUT',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${localStorage.getItem('token')}`
+                              },
+                              body: JSON.stringify({
+                                is_active: e.target.checked ? 1 : 0
+                              })
+                            });
+
+                            if (response.ok) {
+                              // Обновляем локальный state
+                              setLessons(prevLessons =>
+                                prevLessons.map(l =>
+                                  l.id === lesson.id
+                                    ? {...l, is_active: e.target.checked ? 1 : 0}
+                                    : l
+                                )
+                              );
+                              alert(`Урок "${lesson.title}" ${e.target.checked ? 'включен' : 'выключен'}`);
+                            } else {
+                              alert('Ошибка при обновлении статуса урока');
+                            }
+                          } catch (error) {
+                            console.error('Error updating lesson status:', error);
+                            alert('Ошибка при обновлении статуса урока');
+                          }
+                        }}
+                        className="w-4 h-4"
+                      />
+                      <Label htmlFor={`lesson_active_${lesson.id}`} className="text-xs text-gray-600">
+                        {lesson.is_active === 1 || lesson.is_active === true ? 'Активен' : 'Неактивен'}
+                      </Label>
+                    </div>
                     <Button
                       size="sm"
                       variant="outline"
@@ -4916,7 +5315,7 @@ const AdminPanel = () => {
       </Card>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className={`grid w-full ${canManageLessonsV2 ? 'grid-cols-5' : 'grid-cols-4'}`}>
           <TabsTrigger value="users" className="flex items-center justify-center px-1 sm:px-3" title="Ученики">
             <Users className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Ученики</span>
@@ -4925,10 +5324,12 @@ const AdminPanel = () => {
             <Video className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Консультации</span>
           </TabsTrigger>
-          <TabsTrigger value="lessons" className="flex items-center justify-center px-1 sm:px-3" title="Уроки">
-            <BookOpen className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">Уроки</span>
-          </TabsTrigger>
+          {canManageLessonsV2 && (
+            <TabsTrigger value="lessons-v2" className="flex items-center justify-center px-1 sm:px-3" title="Уроки V2">
+              <Brain className="w-4 h-4 sm:mr-2" />
+              <span className="hidden sm:inline">Уроки V2</span>
+            </TabsTrigger>
+          )}
           <TabsTrigger value="scoring" className="flex items-center justify-center px-1 sm:px-3" title="Система баллов">
             <Target className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Баллы</span>
@@ -4951,9 +5352,12 @@ const AdminPanel = () => {
           {renderConsultationsTab()}
         </TabsContent>
 
-        <TabsContent value="lessons" className="space-y-6">
-          <UnifiedLessonEditor showLessonsList={true} />
-        </TabsContent>
+
+        {canManageLessonsV2 && (
+          <TabsContent value="lessons-v2" className="space-y-6">
+            <AdminPanelV2 />
+          </TabsContent>
+        )}
 
         <TabsContent value="scoring" className="space-y-6">
           {renderScoringTab()}
@@ -4969,6 +5373,2166 @@ const AdminPanel = () => {
               <CardDescription>Управление настройками платформы NumerOM</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* Управление начислением баллов за обучение */}
+              <Card className="bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-200">
+                <CardHeader>
+                  <CardTitle className="flex items-center text-yellow-900">
+                    <Award className="w-5 h-5 mr-2" />
+                    Управление начислением баллов за обучение
+                  </CardTitle>
+                  <CardDescription>Настройте количество баллов, начисляемых за различные действия студентов</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {loadingLearningPointsConfig ? (
+                    <div className="text-center py-4">Загрузка настроек...</div>
+                  ) : !editedLearningPointsConfig ? (
+                    <div className="text-center py-4">
+                      <p className="text-gray-500 mb-2">Конфигурация не загружена</p>
+                      <Button onClick={fetchLearningPointsConfig} variant="outline">
+                        Загрузить конфигурацию
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="bg-yellow-50 border-b-2 border-yellow-200">
+                              <th className="text-left p-2 font-semibold text-yellow-900">Параметр</th>
+                              <th className="text-left p-2 font-semibold text-yellow-900">Значение</th>
+                              <th className="text-left p-2 font-semibold text-yellow-900">Описание</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Баллы за просмотр видео (за минуту)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedLearningPointsConfig?.video_points_per_minute || 1}
+                                  onChange={(e) => setEditedLearningPointsConfig({
+                                    ...editedLearningPointsConfig,
+                                    video_points_per_minute: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Сколько баллов начисляется за каждую минуту просмотра видео</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Баллы за просмотр PDF (за файл)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedLearningPointsConfig?.pdf_points_per_view || 5}
+                                  onChange={(e) => setEditedLearningPointsConfig({
+                                    ...editedLearningPointsConfig,
+                                    pdf_points_per_view: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Сколько баллов начисляется за просмотр PDF документа</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Баллы за просмотр медиафайла (за файл)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedLearningPointsConfig?.media_points_per_view || 10}
+                                  onChange={(e) => setEditedLearningPointsConfig({
+                                    ...editedLearningPointsConfig,
+                                    media_points_per_view: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Сколько баллов начисляется за просмотр медиафайла (не PDF)</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Баллы за время на сайте (за минуту)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedLearningPointsConfig?.time_points_per_minute || 1}
+                                  onChange={(e) => setEditedLearningPointsConfig({
+                                    ...editedLearningPointsConfig,
+                                    time_points_per_minute: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Сколько баллов начисляется за каждую минуту нахождения на сайте</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Баллы за день челленджа</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedLearningPointsConfig?.challenge_points_per_day || 10}
+                                  onChange={(e) => setEditedLearningPointsConfig({
+                                    ...editedLearningPointsConfig,
+                                    challenge_points_per_day: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Сколько баллов начисляется за каждый завершенный день челленджа</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Бонусные баллы за завершение челленджа</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedLearningPointsConfig?.challenge_bonus_points || 50}
+                                  onChange={(e) => setEditedLearningPointsConfig({
+                                    ...editedLearningPointsConfig,
+                                    challenge_bonus_points: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Сколько бонусных баллов начисляется за завершение всего челленджа</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Баллы за прохождение теста</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedLearningPointsConfig?.quiz_points_per_attempt || 10}
+                                  onChange={(e) => setEditedLearningPointsConfig({
+                                    ...editedLearningPointsConfig,
+                                    quiz_points_per_attempt: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Сколько баллов начисляется за успешное прохождение теста</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Баллы за выполнение упражнения</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedLearningPointsConfig?.exercise_points_per_submission || 10}
+                                  onChange={(e) => setEditedLearningPointsConfig({
+                                    ...editedLearningPointsConfig,
+                                    exercise_points_per_submission: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Сколько баллов начисляется за отправку упражнения</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-4 border-t">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setEditedLearningPointsConfig(learningPointsConfig);
+                          }}
+                          disabled={savingLearningPointsConfig}
+                        >
+                          Отмена
+                        </Button>
+                        <Button
+                          onClick={saveLearningPointsConfig}
+                          disabled={savingLearningPointsConfig}
+                          className="bg-yellow-600 hover:bg-yellow-700"
+                        >
+                          {savingLearningPointsConfig ? 'Сохранение...' : 'Сохранить настройки'}
+                          <Save className="w-4 h-4 ml-2" />
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Управление стоимостью услуг нумерологии */}
+              <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
+                <CardHeader>
+                  <CardTitle className="flex items-center text-purple-900">
+                    <Sparkles className="w-5 h-5 mr-2" />
+                    Управление стоимостью услуг нумерологии
+                  </CardTitle>
+                  <CardDescription>Настройте количество баллов, списываемых за все типы услуг (нумерология, ведическое время, тесты, обучение, отчёты)</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {loadingCreditsDeductionConfig ? (
+                    <div className="text-center py-4">Загрузка настроек...</div>
+                  ) : !editedCreditsDeductionConfig ? (
+                    <div className="text-center py-4">
+                      <p className="text-gray-500 mb-2">Конфигурация не загружена</p>
+                      <Button onClick={fetchCreditsDeductionConfig} variant="outline">
+                        Загрузить конфигурацию
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="bg-purple-50 border-b-2 border-purple-200">
+                              <th className="text-left p-2 font-semibold text-purple-900">Параметр</th>
+                              <th className="text-left p-2 font-semibold text-purple-900">Значение</th>
+                              <th className="text-left p-2 font-semibold text-purple-900">Описание</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Нумерология */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Нумерология</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Нумерология имени</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.name_numerology || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    name_numerology: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта нумерологии имени</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Расчёт персональных чисел</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.personal_numbers || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    personal_numbers: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта персональных чисел</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Квадрат Пифагора</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.pythagorean_square || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    pythagorean_square: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта квадрата Пифагора</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Совместимость пары</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.compatibility_pair || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    compatibility_pair: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта совместимости пары</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Групповая совместимость</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.group_compatibility || 5}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    group_compatibility: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта групповой совместимости</td>
+                            </tr>
+
+                            {/* Ведическое время */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Ведическое время</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Ведическое время на день</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.vedic_daily || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    vedic_daily: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость ведического времени на день</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Планетарный маршрут на день</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_daily || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_daily: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на день</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Планетарный маршрут на неделю</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_weekly || 10}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_weekly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на неделю</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Планетарный маршрут на месяц</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_monthly || 30}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_monthly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на месяц</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Планетарный маршрут на квартал</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_quarterly || 100}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_quarterly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на квартал</td>
+                            </tr>
+
+                            {/* Динамика энергии планет */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Динамика энергии планет</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Динамика энергии на неделю</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_energy_weekly || 10}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_energy_weekly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость динамики энергии на неделю</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Динамика энергии на месяц</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_energy_monthly || 30}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_energy_monthly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость динамики энергии на месяц</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Динамика энергии на квартал</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_energy_quarterly || 100}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_energy_quarterly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость динамики энергии на квартал</td>
+                            </tr>
+
+                            {/* Тесты/Квизы */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Тесты/Квизы</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Тест личности</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.personality_test || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    personality_test: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость прохождения теста личности</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Прохождение Quiz</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.quiz_completion || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    quiz_completion: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость прохождения Quiz</td>
+                            </tr>
+
+                            {/* Обучение */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Обучение</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Просмотр урока</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.lesson_viewing || 10}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    lesson_viewing: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость просмотра урока</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Просмотр материалов</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.material_viewing || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    material_viewing: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость просмотра материалов</td>
+                            </tr>
+
+                            {/* Отчёты */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Отчёты</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">PDF отчёт по нумерологии</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.pdf_report_numerology || 5}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    pdf_report_numerology: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость PDF отчёта по нумерологии</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">HTML отчёт по нумерологии</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.html_report_numerology || 3}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    html_report_numerology: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость HTML отчёта по нумерологии</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">PDF отчёт по совместимости</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.pdf_report_compatibility || 5}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    pdf_report_compatibility: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость PDF отчёта по совместимости</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">HTML отчёт по совместимости</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.html_report_compatibility || 3}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    html_report_compatibility: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость HTML отчёта по совместимости</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-4 border-t">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setEditedCreditsDeductionConfig(creditsDeductionConfig);
+                          }}
+                          disabled={savingCreditsDeductionConfig}
+                        >
+                          Отмена
+                        </Button>
+                        <Button
+                          onClick={saveCreditsDeductionConfig}
+                          disabled={savingCreditsDeductionConfig}
+                          className="bg-purple-600 hover:bg-purple-700"
+                        >
+                          {savingCreditsDeductionConfig ? 'Сохранение...' : 'Сохранить настройки'}
+                          <Save className="w-4 h-4 ml-2" />
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Единая конфигурация списания баллов */}
+              <Card className="bg-gradient-to-r from-indigo-50 to-cyan-50 border-indigo-200">
+                <CardHeader>
+                  <CardTitle className="flex items-center text-indigo-900">
+                    <CreditCard className="w-5 h-5 mr-2" />
+                    Единая конфигурация списания баллов
+                  </CardTitle>
+                  <CardDescription>Управление всеми списаниями баллов в единой системе (нумерология, ведическое время, тесты, обучение, отчёты)</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {loadingCreditsDeductionConfig ? (
+                    <div className="text-center py-4">Загрузка настроек...</div>
+                  ) : !editedCreditsDeductionConfig ? (
+                    <div className="text-center py-4">
+                      <p className="text-gray-500 mb-2">Конфигурация не загружена</p>
+                      <Button onClick={fetchCreditsDeductionConfig} variant="outline">
+                        Загрузить конфигурацию
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="bg-indigo-50 border-b-2 border-indigo-200">
+                              <th className="text-left p-2 font-semibold text-indigo-900">Параметр</th>
+                              <th className="text-left p-2 font-semibold text-indigo-900">Значение</th>
+                              <th className="text-left p-2 font-semibold text-indigo-900">Описание</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Нумерология */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-indigo-800">Нумерология</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Нумерология имени</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.name_numerology || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    name_numerology: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта нумерологии имени</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Расчёт персональных чисел</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.personal_numbers || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    personal_numbers: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта персональных чисел</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Квадрат Пифагора</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.pythagorean_square || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    pythagorean_square: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта квадрата Пифагора</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Совместимость пары</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.compatibility_pair || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    compatibility_pair: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта совместимости пары</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Групповая совместимость</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.group_compatibility || 5}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    group_compatibility: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта групповой совместимости</td>
+                            </tr>
+
+                            {/* Ведическое время */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-indigo-800">Ведическое время</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Ведическое время на день</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.vedic_daily || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    vedic_daily: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость ведического времени на день</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Планетарный маршрут на день</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_daily || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_daily: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на день</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Планетарный маршрут на неделю</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_weekly || 10}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_weekly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на неделю</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Планетарный маршрут на месяц</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_monthly || 30}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_monthly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на месяц</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Планетарный маршрут на квартал</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_quarterly || 100}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_quarterly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на квартал</td>
+                            </tr>
+
+                            {/* Динамика энергии планет */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-indigo-800">Динамика энергии планет</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Динамика энергии на неделю</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_energy_weekly || 10}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_energy_weekly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость динамики энергии на неделю</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Динамика энергии на месяц</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_energy_monthly || 30}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_energy_monthly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость динамики энергии на месяц</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Динамика энергии на квартал</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.planetary_energy_quarterly || 100}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    planetary_energy_quarterly: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость динамики энергии на квартал</td>
+                            </tr>
+
+                            {/* Тесты/Квизы */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-indigo-800">Тесты/Квизы</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Тест личности</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.personality_test || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    personality_test: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость прохождения теста личности</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Прохождение Quiz</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.quiz_completion || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    quiz_completion: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость прохождения Quiz</td>
+                            </tr>
+
+                            {/* Обучение */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-indigo-800">Обучение</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Просмотр урока</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.lesson_viewing || 10}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    lesson_viewing: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость просмотра урока</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Просмотр материалов</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.material_viewing || 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    material_viewing: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость просмотра материалов</td>
+                            </tr>
+
+                            {/* Отчёты */}
+                            <tr className="bg-gray-50">
+                              <td colSpan="3" className="p-2 font-semibold text-indigo-800">Отчёты</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">PDF отчёт по нумерологии</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.pdf_report_numerology || 5}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    pdf_report_numerology: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость PDF отчёта по нумерологии</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">HTML отчёт по нумерологии</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.html_report_numerology || 3}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    html_report_numerology: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость HTML отчёта по нумерологии</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">PDF отчёт по совместимости</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.pdf_report_compatibility || 5}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    pdf_report_compatibility: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость PDF отчёта по совместимости</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">HTML отчёт по совместимости</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={editedCreditsDeductionConfig?.html_report_compatibility || 3}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({
+                                    ...editedCreditsDeductionConfig,
+                                    html_report_compatibility: parseInt(e.target.value) || 0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Стоимость HTML отчёта по совместимости</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-4 border-t">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setEditedCreditsDeductionConfig(creditsDeductionConfig);
+                          }}
+                          disabled={savingCreditsDeductionConfig}
+                        >
+                          Отмена
+                        </Button>
+                        <Button
+                          onClick={saveCreditsDeductionConfig}
+                          disabled={savingCreditsDeductionConfig}
+                          className="bg-indigo-600 hover:bg-indigo-700"
+                        >
+                          {savingCreditsDeductionConfig ? 'Сохранение...' : 'Сохранить настройки'}
+                          <Save className="w-4 h-4 ml-2" />
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Настройки модификаторов энергии планет */}
+              <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200">
+                <CardHeader>
+                  <CardTitle className="flex items-center text-emerald-900">
+                    <Sparkles className="w-5 h-5 mr-2" />
+                    Настройки модификаторов энергии планет
+                  </CardTitle>
+                  <CardDescription>Управление процентными соотношениями для расчёта энергии планет в динамике</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {loadingPlanetaryEnergyModifiersConfig ? (
+                    <div className="text-center py-4">Загрузка настроек...</div>
+                  ) : !editedPlanetaryEnergyModifiersConfig ? (
+                    <div className="text-center py-4">
+                      <p className="text-gray-500 mb-2">Конфигурация не загружена</p>
+                      <Button onClick={fetchPlanetaryEnergyModifiersConfig} variant="outline">
+                        Загрузить конфигурацию
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      {(() => {
+                        // Вычисляем общую сумму бонусов и штрафов
+                        const config = editedPlanetaryEnergyModifiersConfig || {};
+                        const totalBonuses = (
+                          (config.friend_planet_bonus || 0) +
+                          (config.fractal_present_bonus || 0) +
+                          (config.individual_year_bonus || 0) +
+                          (config.individual_month_bonus || 0) +
+                          (config.individual_day_bonus || 0) +
+                          (config.personal_day_match_bonus || 0) +
+                          (config.personal_month_match_bonus || 0) +
+                          (config.current_day_match_bonus || 0)
+                        ) * 100;
+                        
+                        const totalPenalties = (
+                          (config.enemy_planet_penalty || 0) +
+                          (config.fractal_absent_penalty || 0) +
+                          (config.problem_number_penalty || 0)
+                        ) * 100;
+                        
+                        const netTotal = totalBonuses - totalPenalties;
+                        
+                        return (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm border-collapse">
+                              <thead>
+                                <tr className="bg-emerald-50 border-b-2 border-emerald-200">
+                                  <th className="text-left p-2 font-semibold text-emerald-900">Параметр</th>
+                                  <th className="text-left p-2 font-semibold text-emerald-900">Значение</th>
+                                  <th className="text-left p-2 font-semibold text-emerald-900">Описание</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {/* БОНУСЫ (Добавления) */}
+                                <tr className="bg-green-50">
+                                  <td colSpan="3" className="p-2 font-semibold text-green-800">БОНУСЫ (Добавления энергии)</td>
+                                </tr>
+                                
+                                {/* Базовые бонусы */}
+                                <tr className="bg-gray-50">
+                                  <td colSpan="3" className="p-2 font-semibold text-emerald-800 text-xs">Базовые модификаторы</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Бонус дружественных планет</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="1"
+                                        value={config.friend_planet_bonus || 0.10}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          friend_planet_bonus: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-green-600">
+                                        +{((config.friend_planet_bonus || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">+10% = 0.10</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Бонус присутствия во фрактале</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="1"
+                                        value={config.fractal_present_bonus || 0.10}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          fractal_present_bonus: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-green-600">
+                                        +{((config.fractal_present_bonus || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">+10% если планета присутствует во фрактале</td>
+                                </tr>
+
+                                {/* Индивидуальные числа */}
+                                <tr className="bg-gray-50">
+                                  <td colSpan="3" className="p-2 font-semibold text-emerald-800 text-xs">Индивидуальные числа</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Бонус индивидуального года</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="1"
+                                        value={config.individual_year_bonus || 0.06}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          individual_year_bonus: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-green-600">
+                                        +{((config.individual_year_bonus || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">+6% за число индивидуального года</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Бонус индивидуального месяца</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="1"
+                                        value={config.individual_month_bonus || 0.05}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          individual_month_bonus: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-green-600">
+                                        +{((config.individual_month_bonus || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">+5% за число индивидуального месяца</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Бонус индивидуального дня</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="1"
+                                        value={config.individual_day_bonus || 0.07}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          individual_day_bonus: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-green-600">
+                                        +{((config.individual_day_bonus || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">+7% за число индивидуального дня</td>
+                                </tr>
+
+                                {/* Совпадения */}
+                                <tr className="bg-gray-50">
+                                  <td colSpan="3" className="p-2 font-semibold text-emerald-800 text-xs">Совпадения</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Совпадение личного дня</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="2"
+                                        value={config.personal_day_match_bonus || 0.60}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          personal_day_match_bonus: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-green-600">
+                                        +{((config.personal_day_match_bonus || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">+60% если день совпадает с личным днём</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Совпадение личного месяца</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="2"
+                                        value={config.personal_month_match_bonus || 0.50}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          personal_month_match_bonus: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-green-600">
+                                        +{((config.personal_month_match_bonus || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">+50% если месяц совпадает с днём</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Совпадение текущего дня</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="2"
+                                        value={config.current_day_match_bonus || 0.40}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          current_day_match_bonus: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-green-600">
+                                        +{((config.current_day_match_bonus || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">+40% если число совпадает с текущим днём</td>
+                                </tr>
+                                
+                                {/* ИТОГО БОНУСОВ */}
+                                <tr className="bg-green-100 border-t-2 border-green-300">
+                                  <td className="p-2 font-bold text-green-900">ИТОГО БОНУСОВ</td>
+                                  <td className="p-2">
+                                    <span className="text-lg font-bold text-green-700">
+                                      +{totalBonuses.toFixed(1)}%
+                                    </span>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Общая сумма всех бонусов</td>
+                                </tr>
+
+                                {/* ШТРАФЫ (Уменьшения) */}
+                                <tr className="bg-red-50">
+                                  <td colSpan="3" className="p-2 font-semibold text-red-800">ШТРАФЫ (Уменьшения энергии)</td>
+                                </tr>
+                                
+                                {/* Базовые штрафы */}
+                                <tr className="bg-gray-50">
+                                  <td colSpan="3" className="p-2 font-semibold text-emerald-800 text-xs">Базовые модификаторы</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Штраф вражеских планет</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="1"
+                                        value={config.enemy_planet_penalty || 0.10}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          enemy_planet_penalty: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-red-600">
+                                        -{((config.enemy_planet_penalty || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">-10% = 0.10</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Штраф отсутствия во фрактале</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="1"
+                                        value={config.fractal_absent_penalty || 0.10}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          fractal_absent_penalty: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-red-600">
+                                        -{((config.fractal_absent_penalty || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">-10% если планета отсутствует во фрактале</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Штраф чисел проблем</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        max="1"
+                                        value={config.problem_number_penalty || 0.10}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          problem_number_penalty: parseFloat(e.target.value) || 0
+                                        })}
+                                        className="h-8 w-20 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-red-600">
+                                        -{((config.problem_number_penalty || 0) * 100).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">-10% если планета в числах проблем</td>
+                                </tr>
+                                
+                                {/* ИТОГО ШТРАФОВ */}
+                                <tr className="bg-red-100 border-t-2 border-red-300">
+                                  <td className="p-2 font-bold text-red-900">ИТОГО ШТРАФОВ</td>
+                                  <td className="p-2">
+                                    <span className="text-lg font-bold text-red-700">
+                                      -{totalPenalties.toFixed(1)}%
+                                    </span>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Общая сумма всех штрафов</td>
+                                </tr>
+                                
+                                {/* ЧИСТЫЙ БАЛАНС */}
+                                <tr className="bg-blue-100 border-t-2 border-b-2 border-blue-400">
+                                  <td className="p-2 font-bold text-blue-900">ЧИСТЫЙ БАЛАНС</td>
+                                  <td className="p-2">
+                                    <span className={`text-xl font-bold ${netTotal >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                      {netTotal >= 0 ? '+' : ''}{netTotal.toFixed(1)}%
+                                    </span>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Бонусы минус штрафы</td>
+                                </tr>
+
+                                {/* Нормализация */}
+                                <tr className="bg-gray-50">
+                                  <td colSpan="3" className="p-2 font-semibold text-emerald-800">Нормализация</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Минимум после нормализации</td>
+                                  <td className="p-2">
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      max="50"
+                                      value={config.normalization_min || 10}
+                                      onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                        ...config,
+                                        normalization_min: parseInt(e.target.value) || 10
+                                      })}
+                                      className="h-8 w-24 text-sm"
+                                    />
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Минимальное значение после нормализации (не 0)</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Максимум после нормализации</td>
+                                  <td className="p-2">
+                                    <Input
+                                      type="number"
+                                      min="50"
+                                      max="100"
+                                      value={config.normalization_max || 90}
+                                      onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                        ...config,
+                                        normalization_max: parseInt(e.target.value) || 90
+                                      })}
+                                      className="h-8 w-24 text-sm"
+                                    />
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Максимальное значение после нормализации (не 100)</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Множитель максимума энергии</td>
+                                  <td className="p-2">
+                                    <Input
+                                      type="number"
+                                      step="0.1"
+                                      min="1"
+                                      max="10"
+                                      value={config.energy_cap_multiplier || 3.0}
+                                      onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                        ...config,
+                                        energy_cap_multiplier: parseFloat(e.target.value) || 3.0
+                                      })}
+                                      className="h-8 w-24 text-sm"
+                                    />
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Максимальная энергия = destiny_number * multiplier</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Множитель минимума энергии</td>
+                                  <td className="p-2">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      max="1"
+                                      value={config.energy_floor_multiplier || 0.1}
+                                      onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                        ...config,
+                                        energy_floor_multiplier: parseFloat(e.target.value) || 0.1
+                                      })}
+                                      className="h-8 w-24 text-sm"
+                                    />
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Минимальная энергия = destiny_number * multiplier</td>
+                                </tr>
+
+                                {/* Антицикличность */}
+                                <tr className="bg-gray-50">
+                                  <td colSpan="3" className="p-2 font-semibold text-emerald-800">Антицикличность</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Включить антицикличность</td>
+                                  <td className="p-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={config.anti_cyclicity_enabled !== false}
+                                      onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                        ...config,
+                                        anti_cyclicity_enabled: e.target.checked
+                                      })}
+                                      className="w-4 h-4"
+                                    />
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Включить функцию убирания цикличности</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Порог цикличности (стандартное отклонение)</td>
+                                  <td className="p-2">
+                                    <Input
+                                      type="number"
+                                      step="0.1"
+                                      min="0"
+                                      max="50"
+                                      value={config.anti_cyclicity_threshold || 5.0}
+                                      onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                        ...config,
+                                        anti_cyclicity_threshold: parseFloat(e.target.value) || 5.0
+                                      })}
+                                      className="h-8 w-24 text-sm"
+                                    />
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Если стандартное отклонение меньше этого значения, применяется антицикличность</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Величина вариации</td>
+                                  <td className="p-2">
+                                    <Input
+                                      type="number"
+                                      step="0.1"
+                                      min="0"
+                                      max="20"
+                                      value={config.anti_cyclicity_variation || 3.0}
+                                      onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                        ...config,
+                                        anti_cyclicity_variation: parseFloat(e.target.value) || 3.0
+                                      })}
+                                      className="h-8 w-24 text-sm"
+                                    />
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">Величина вариации для разбалансировки энергий (в единицах энергии)</td>
+                                </tr>
+
+                                {/* Порог благоприятных/неблагоприятных дней */}
+                                <tr className="bg-gray-50">
+                                  <td colSpan="3" className="p-2 font-semibold text-emerald-800">Порог благоприятных/неблагоприятных дней</td>
+                                </tr>
+                                <tr className="border-b hover:bg-gray-50">
+                                  <td className="p-2">Порог благоприятных дней (баллы)</td>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <Input
+                                        type="number"
+                                        step="1"
+                                        min="0"
+                                        max="100"
+                                        value={config.favorable_day_score_threshold || 50.0}
+                                        onChange={(e) => setEditedPlanetaryEnergyModifiersConfig({
+                                          ...config,
+                                          favorable_day_score_threshold: parseFloat(e.target.value) || 50.0
+                                        })}
+                                        className="h-8 w-24 text-sm"
+                                      />
+                                      <span className="text-sm font-semibold text-blue-600">
+                                        {config.favorable_day_score_threshold || 50.0} баллов
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-xs text-gray-600">
+                                    Дни с баллом соответствия &lt; {config.favorable_day_score_threshold || 50.0} считаются неблагоприятными, 
+                                    &gt;= {config.favorable_day_score_threshold || 50.0} — благоприятными. Балл рассчитывается на основе сопоставимости личных чисел, энергии планеты дня, коэффициентов даты рождения и других факторов (0-100 баллов)
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+
+                      <div className="flex justify-end gap-2 pt-4 border-t">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setEditedPlanetaryEnergyModifiersConfig(planetaryEnergyModifiersConfig);
+                          }}
+                          disabled={savingPlanetaryEnergyModifiersConfig}
+                        >
+                          Отмена
+                        </Button>
+                        <Button
+                          onClick={savePlanetaryEnergyModifiersConfig}
+                          disabled={savingPlanetaryEnergyModifiersConfig}
+                          className="bg-emerald-600 hover:bg-emerald-700"
+                        >
+                          {savingPlanetaryEnergyModifiersConfig ? 'Сохранение...' : 'Сохранить настройки'}
+                          <Save className="w-4 h-4 ml-2" />
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Настройки месячного планетарного маршрута */}
+              <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
+                <CardHeader>
+                  <CardTitle className="flex items-center text-purple-900">
+                    <CalendarRange className="w-5 h-5 mr-2" />
+                    Алгоритм расчёта планетарного маршрута на месяц
+                  </CardTitle>
+                  <CardDescription>Настройка порогов и параметров для классификации дней, недель, сфер жизни и трендов</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {loadingMonthlyRouteConfig ? (
+                    <div className="text-center py-4">Загрузка настроек...</div>
+                  ) : !editedMonthlyRouteConfig ? (
+                    <div className="text-center py-4">
+                      <p className="text-gray-500 mb-2">Конфигурация не загружена</p>
+                      <Button onClick={fetchMonthlyRouteConfig} variant="outline">
+                        Загрузить конфигурацию
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                        <h4 className="font-semibold text-blue-900 mb-2">📊 Алгоритм расчёта месячного маршрута:</h4>
+                        <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
+                          <li>Для каждого дня месяца рассчитывается средняя энергия всех 9 планет</li>
+                          <li>Дни классифицируются на основе порогов: благоприятные (≥ порог), лучшие (≥ порог), сложные (&lt; порог)</li>
+                          <li>Месяц разбивается на недели, каждая неделя анализируется отдельно</li>
+                          <li>Анализируются 4 сферы жизни: карьера/финансы, отношения/семья, здоровье/энергия, духовное развитие</li>
+                          <li>Определяются тренды энергии: рост, снижение или стабильность</li>
+                          <li>Выявляются оптимальные периоды для начинаний и завершения проектов</li>
+                          <li>Отслеживаются планетарные транзиты (пики и спады энергии)</li>
+                        </ol>
+                      </div>
+
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="bg-purple-50 border-b-2 border-purple-200">
+                              <th className="text-left p-2 font-semibold text-purple-900">Параметр</th>
+                              <th className="text-left p-2 font-semibold text-purple-900">Значение</th>
+                              <th className="text-left p-2 font-semibold text-purple-900">Описание</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Пороги для классификации дней */}
+                            <tr className="bg-blue-50">
+                              <td colSpan="3" className="p-2 font-semibold text-blue-800">ПОРОГИ ДЛЯ КЛАССИФИКАЦИИ ДНЕЙ</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Порог благоприятных дней (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.favorable_day_threshold || 60.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    favorable_day_threshold: parseFloat(e.target.value) || 60.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Дни с avg_energy {'>='} порог считаются благоприятными</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Порог лучших дней (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.best_day_threshold || 70.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    best_day_threshold: parseFloat(e.target.value) || 70.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Дни с avg_energy {'>='} порог считаются лучшими</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Порог сложных дней (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.challenging_day_threshold || 40.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    challenging_day_threshold: parseFloat(e.target.value) || 40.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Дни с avg_energy {'<'} порог считаются сложными</td>
+                            </tr>
+
+                            {/* Пороги для недельного анализа */}
+                            <tr className="bg-green-50">
+                              <td colSpan="3" className="p-2 font-semibold text-green-800">ПОРОГИ ДЛЯ НЕДЕЛЬНОГО АНАЛИЗА</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Высокая энергия недели (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.high_energy_week_threshold || 70.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    high_energy_week_threshold: parseFloat(e.target.value) || 70.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Недели с avg_energy {'>='} порог имеют высокую энергию</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Низкая энергия недели (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.low_energy_week_threshold || 40.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    low_energy_week_threshold: parseFloat(e.target.value) || 40.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Недели с avg_energy {'<'} порог имеют низкую энергию</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Благоприятная неделя (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.favorable_week_threshold || 60.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    favorable_week_threshold: parseFloat(e.target.value) || 60.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Недели с avg_energy {'>='} порог считаются благоприятными</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Сложная неделя (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.challenging_week_threshold || 40.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    challenging_week_threshold: parseFloat(e.target.value) || 40.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Недели с avg_energy {'<'} порог считаются сложными</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Много благоприятных дней (шт.)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  max="7"
+                                  value={editedMonthlyRouteConfig.many_favorable_days_threshold || 5}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    many_favorable_days_threshold: parseInt(e.target.value) || 5
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Неделя с {'>='} порог благоприятных дней считается "много"</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Несколько сложных дней (шт.)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  max="7"
+                                  value={editedMonthlyRouteConfig.several_challenging_days_threshold || 3}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    several_challenging_days_threshold: parseInt(e.target.value) || 3
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Неделя с {'>='} порог сложных дней считается "несколько"</td>
+                            </tr>
+
+                            {/* Пороги для сфер жизни */}
+                            <tr className="bg-yellow-50">
+                              <td colSpan="3" className="p-2 font-semibold text-yellow-800">ПОРОГИ ДЛЯ СФЕР ЖИЗНИ</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Отлично (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.sphere_excellent_threshold || 70.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    sphere_excellent_threshold: parseFloat(e.target.value) || 70.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Рейтинг "Отлично" для energy {'>='} порог</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Хорошо (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.sphere_good_threshold || 55.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    sphere_good_threshold: parseFloat(e.target.value) || 55.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Рейтинг "Хорошо" для energy {'>='} порог</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Удовлетворительно (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.sphere_satisfactory_threshold || 40.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    sphere_satisfactory_threshold: parseFloat(e.target.value) || 40.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Рейтинг "Удовлетворительно" для energy {'>='} порог</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Лучшие дни сферы (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.sphere_best_days_threshold || 70.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    sphere_best_days_threshold: parseFloat(e.target.value) || 70.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Дни сферы с energy {'>='} порог считаются лучшими</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Сложные дни сферы (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.sphere_challenging_days_threshold || 40.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    sphere_challenging_days_threshold: parseFloat(e.target.value) || 40.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Дни сферы с energy {'<'} порог считаются сложными</td>
+                            </tr>
+
+                            {/* Пороги для трендов */}
+                            <tr className="bg-orange-50">
+                              <td colSpan="3" className="p-2 font-semibold text-orange-800">ПОРОГИ ДЛЯ ТРЕНДОВ</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Оптимальный период для начинаний (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.optimal_start_energy_threshold || 65.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    optimal_start_energy_threshold: parseFloat(e.target.value) || 65.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Дни с energy {'>='} порог подходят для начинаний</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Минимум дней для оптимального периода</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  max="10"
+                                  value={editedMonthlyRouteConfig.optimal_start_min_days || 3}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    optimal_start_min_days: parseInt(e.target.value) || 3
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Минимум дней подряд для формирования периода</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Минимум энергии для завершения (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.completion_energy_min || 40.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    completion_energy_min: parseFloat(e.target.value) || 40.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Минимум энергии для периода завершения</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Максимум энергии для завершения (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.completion_energy_max || 55.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    completion_energy_max: parseFloat(e.target.value) || 55.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Максимум энергии для периода завершения</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Минимум дней для периода завершения</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  max="10"
+                                  value={editedMonthlyRouteConfig.completion_min_days || 2}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    completion_min_days: parseInt(e.target.value) || 2
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Минимум дней подряд для периода завершения</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Порог роста энергии (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="50"
+                                  value={editedMonthlyRouteConfig.trend_rising_threshold || 5.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    trend_rising_threshold: parseFloat(e.target.value) || 5.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Если second_avg {'>'} first_avg + порог, энергия растёт</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Порог снижения энергии (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="50"
+                                  value={editedMonthlyRouteConfig.trend_declining_threshold || 5.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    trend_declining_threshold: parseFloat(e.target.value) || 5.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Если second_avg {'<'} first_avg - порог, энергия снижается</td>
+                            </tr>
+
+                            {/* Пороги для транзитов */}
+                            <tr className="bg-indigo-50">
+                              <td colSpan="3" className="p-2 font-semibold text-indigo-800">ПОРОГИ ДЛЯ ТРАНЗИТОВ</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Пик энергии планеты (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.transit_peak_threshold || 85.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    transit_peak_threshold: parseFloat(e.target.value) || 85.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Планета с energy {'>='} порог считается на пике</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Низкая энергия планеты (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.transit_low_threshold || 15.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    transit_low_threshold: parseFloat(e.target.value) || 15.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Планета с energy {'<='} порог считается на минимуме</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Максимум транзитов в месяц</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.max_transits_per_month || 20}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    max_transits_per_month: parseInt(e.target.value) || 20
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Максимальное количество транзитов для отображения</td>
+                            </tr>
+
+                            {/* Пороги для месячного анализа */}
+                            <tr className="bg-pink-50">
+                              <td colSpan="3" className="p-2 font-semibold text-pink-800">ПОРОГИ ДЛЯ МЕСЯЧНОГО АНАЛИЗА</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Высокая энергия месяца (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.month_high_energy_threshold || 65.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    month_high_energy_threshold: parseFloat(e.target.value) || 65.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Месяц с avg_month_energy {'>='} порог имеет высокую энергию</td>
+                            </tr>
+                            <tr className="border-b hover:bg-gray-50">
+                              <td className="p-2">Низкая энергия месяца (%)</td>
+                              <td className="p-2">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={editedMonthlyRouteConfig.month_low_energy_threshold || 45.0}
+                                  onChange={(e) => setEditedMonthlyRouteConfig({
+                                    ...editedMonthlyRouteConfig,
+                                    month_low_energy_threshold: parseFloat(e.target.value) || 45.0
+                                  })}
+                                  className="h-8 w-24 text-sm"
+                                />
+                              </td>
+                              <td className="p-2 text-xs text-gray-600">Месяц с avg_month_energy {'<'} порог имеет низкую энергию</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-4 border-t">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setEditedMonthlyRouteConfig(monthlyRouteConfig);
+                          }}
+                          disabled={savingMonthlyRouteConfig}
+                        >
+                          Отмена
+                        </Button>
+                        <Button
+                          onClick={saveMonthlyRouteConfig}
+                          disabled={savingMonthlyRouteConfig}
+                          className="bg-purple-600 hover:bg-purple-700"
+                        >
+                          {savingMonthlyRouteConfig ? 'Сохранение...' : 'Сохранить настройки'}
+                          <Save className="w-4 h-4 ml-2" />
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
               <div className="grid gap-4">
                 <Card className="bg-blue-50 border-blue-200">
                   <CardContent className="p-4">
@@ -5117,5 +7681,6 @@ const AdminPanel = () => {
     </div>
   );
 };
+
 
 export default AdminPanel;

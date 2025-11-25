@@ -58,7 +58,7 @@ export const AuthProvider = ({ children }) => {
           // НЕ пытаемся загрузить профиль автоматически - это может сбрасывать пользователя
           // Вместо этого делаем простую проверку токена
           try {
-            const response = await axios.get('/user/profile', {
+            const response = await axios.get('/user/profile-v2', {
               timeout: 5000,
               headers: {
                 'Authorization': `Bearer ${token}`
@@ -113,7 +113,7 @@ export const AuthProvider = ({ children }) => {
         return;
       }
 
-      const response = await axios.get('/user/profile', {
+      const response = await axios.get('/user/profile-v2', {
         timeout: 10000,
         headers: {
           'Authorization': `Bearer ${currentToken}` // Явно указываем токен

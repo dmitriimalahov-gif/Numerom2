@@ -1,21 +1,51 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { useAuth } from './AuthContext';
 import PaymentModal from './PaymentModal';
+import { getBackendUrl } from '../utils/backendUrl';
 import {
-  User, Calendar, CreditCard, Calculator, Clock, Heart, BookOpen, TrendingUp
+  User, Calendar, CreditCard, Calculator, Clock, Heart, BookOpen, TrendingUp, Award, ShoppingCart, UserCheck, CheckCircle
 } from 'lucide-react';
 
 const HomeContent = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [pointsBreakdown, setPointsBreakdown] = useState(null);
+  const [loadingPoints, setLoadingPoints] = useState(false);
 
   const handleSectionChange = (section) => {
     navigate(`/dashboard/${section}`);
   };
+
+  // Загрузка разбивки баллов
+  useEffect(() => {
+    const loadPointsBreakdown = async () => {
+      if (!user) return;
+      
+      setLoadingPoints(true);
+      try {
+        const response = await fetch(`${getBackendUrl()}/api/user/points-breakdown`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setPointsBreakdown(data);
+        }
+      } catch (error) {
+        console.error('Error loading points breakdown:', error);
+      } finally {
+        setLoadingPoints(false);
+      }
+    };
+
+    loadPointsBreakdown();
+  }, [user]);
 
   return (
     <>
@@ -64,12 +94,56 @@ const HomeContent = () => {
                 <div className="flex items-center space-x-2">
                   <CreditCard className="w-4 h-4 text-orange-600" />
                   <div>
-                    <p className="text-xs text-muted-foreground">Кредиты</p>
+                    <p className="text-xs text-muted-foreground">Всего баллов</p>
                     <p className="font-medium text-xl">{user?.credits_remaining || 0}</p>
                   </div>
                 </div>
               </div>
             </div>
+
+            {/* Разбивка баллов */}
+            {pointsBreakdown && (
+              <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
+                <h3 className="text-sm font-semibold mb-3 text-gray-800">Детальная информация о баллах</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="p-3 bg-white rounded-lg shadow-sm">
+                    <div className="flex items-center space-x-2 mb-1">
+                      <Award className="w-4 h-4 text-green-600" />
+                      <p className="text-xs text-gray-600">Заработанные</p>
+                    </div>
+                    <p className="text-lg font-bold text-green-600">{pointsBreakdown.earned_points || 0}</p>
+                    <p className="text-xs text-gray-500">Обучение, активность</p>
+                  </div>
+                  
+                  <div className="p-3 bg-white rounded-lg shadow-sm">
+                    <div className="flex items-center space-x-2 mb-1">
+                      <ShoppingCart className="w-4 h-4 text-blue-600" />
+                      <p className="text-xs text-gray-600">Купленные</p>
+                    </div>
+                    <p className="text-lg font-bold text-blue-600">{pointsBreakdown.purchased_points || 0}</p>
+                    <p className="text-xs text-gray-500">Подписка, покупка</p>
+                  </div>
+                  
+                  <div className="p-3 bg-white rounded-lg shadow-sm">
+                    <div className="flex items-center space-x-2 mb-1">
+                      <UserCheck className="w-4 h-4 text-purple-600" />
+                      <p className="text-xs text-gray-600">От администратора</p>
+                    </div>
+                    <p className="text-lg font-bold text-purple-600">{pointsBreakdown.admin_points || 0}</p>
+                    <p className="text-xs text-gray-500">Ручное начисление</p>
+                  </div>
+                  
+                  <div className="p-3 bg-white rounded-lg shadow-sm">
+                    <div className="flex items-center space-x-2 mb-1">
+                      <CheckCircle className="w-4 h-4 text-orange-600" />
+                      <p className="text-xs text-gray-600">За проверку ДЗ</p>
+                    </div>
+                    <p className="text-lg font-bold text-orange-600">{pointsBreakdown.exercise_review_points || 0}</p>
+                    <p className="text-xs text-gray-500">Проверка упражнений</p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="mt-4 p-4 bg-gray-50 rounded-lg">
               <div className="flex items-center justify-between">

@@ -43,13 +43,33 @@ export const getBackendUrl = () => {
   let normalized = normalizeUrl(fromEnv);
 
   if (typeof window !== 'undefined') {
-    const { protocol, hostname } = window.location;
+    const { protocol } = window.location;
     const port = window.location.port || (protocol === 'https:' ? '443' : '80');
     const devPorts = new Set(['3000', '5173', '4173', '4174']);
     const isLocalDev = devPorts.has(port);
     const isDockerFrontend = port === '5128' || port === '80';
-    const targetHost = hostname;
-    const targetPort = isLocalDev || isDockerFrontend ? '8001' : port;
+    const isLearningV2Frontend = port === '5129';
+
+    // Всегда используем localhost для backend, так как он доступен через Docker networking
+    // Независимо от того, как пользователь заходит к frontend (localhost или IP)
+    let targetHost = 'localhost';
+    let targetPort = '8000';
+
+    if (isLearningV2Frontend) {
+      targetPort = '8002';  // Backend для системы обучения V2
+    }
+
+    // Специальная логика для компонентов V2 в основном проекте
+    // Они должны подключаться к основному backend через внешний порт
+    if (window.location.pathname.startsWith('/learning-v2') ||
+        window.location.pathname.startsWith('/admin-v2') ||
+        window.location.pathname === '/learning-v2-dashboard') {
+      targetPort = '8000';  // Основной backend для V2 компонентов
+    }
+
+    // Используем тот же hostname, что и у frontend, для backend
+    // Это работает как для localhost, так и для внешних IP адресов
+    targetHost = window.location.hostname;
 
     if (normalized) {
       try {
@@ -71,7 +91,7 @@ export const getBackendUrl = () => {
     return `${protocol}//${targetHost}:${targetPort}`;
   }
 
-  return normalized || 'http://192.168.110.178:8001';
+  return normalized || 'http://localhost:8000';
 };
 
 export const getApiBaseUrl = () => {

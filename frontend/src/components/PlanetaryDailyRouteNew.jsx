@@ -11,6 +11,30 @@ import { useAuth } from './AuthContext';
 import { getApiBaseUrl } from '../utils/backendUrl';
 import { useTheme } from '../hooks/useTheme';
 import { getPlanetColor } from './constants/colors';
+import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+} from 'chart.js';
+
+// Регистрируем компоненты Chart.js
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 const PlanetaryDailyRouteNew = () => {
   const { theme } = useOutletContext();
@@ -19,51 +43,142 @@ const PlanetaryDailyRouteNew = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedMonthDate, setSelectedMonthDate] = useState(new Date().toISOString().split('T')[0]); // Для выбора месяца
   const [selectedHour, setSelectedHour] = useState(null);
   const [isHourDialogOpen, setIsHourDialogOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [activeTab, setActiveTab] = useState('day'); // day, week, month, quarter
   const [weeklyData, setWeeklyData] = useState(null);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [monthlyData, setMonthlyData] = useState(null);
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
   const [selectedDay, setSelectedDay] = useState(null);
   const [isDayDialogOpen, setIsDayDialogOpen] = useState(false);
   const { user } = useAuth();
   const apiBaseUrl = getApiBaseUrl();
+  
+  // Функция для форматирования даты: день месяц_прописью год
+  const formatDateRu = (dateString) => {
+    if (!dateString) return '';
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return dateString;
+      const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 
+                      'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+      return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+    } catch (e) {
+      return dateString;
+    }
+  };
+  
+  // Логируем монтирование компонента после инициализации всех переменных
+  useEffect(() => {
+    console.log('🚀🚀🚀 КОМПОНЕНТ PlanetaryDailyRouteNew МОНТИРУЕТСЯ');
+    console.log('🚀 Инициализация компонента:', {
+      activeTab,
+      hasUser: !!user,
+      userEmail: user?.email,
+      userCity: user?.city,
+      selectedDate,
+      routeData: !!routeData,
+      weeklyData: !!weeklyData,
+      monthlyData: !!monthlyData
+    });
+  }, []);
+  
+  // Логируем изменения activeTab для отладки
+  useEffect(() => {
+    console.log('📊📊📊 activeTab ИЗМЕНИЛСЯ НА:', activeTab);
+    console.log('📊 Состояние данных:', {
+      routeData: !!routeData,
+      weeklyData: !!weeklyData,
+      monthlyData: !!monthlyData,
+      loading,
+      weeklyLoading,
+      monthlyLoading
+    });
+  }, [activeTab, routeData, weeklyData, monthlyData, loading, weeklyLoading, monthlyLoading]);
 
   // Обновляем текущее время каждую минуту
   useEffect(() => {
+    console.log('⏰ Установлен таймер обновления времени');
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 60000);
-    return () => clearInterval(timer);
+    return () => {
+      console.log('⏰ Таймер обновления времени очищен');
+      clearInterval(timer);
+    };
   }, []);
 
-  // Загрузка данных маршрута
+  // Автоматическая загрузка месячных данных при изменении выбранного месяца (если активна вкладка "Месяц")
   useEffect(() => {
-    if (user?.city) {
-      loadRouteData();
+    if (activeTab === 'month' && user?.city && selectedMonthDate) {
+      console.log('📅 Месяц изменён, загружаем данные для:', selectedMonthDate);
+      loadMonthlyData();
     }
-  }, [selectedDate, user]);
+  }, [selectedMonthDate, activeTab, user?.city]);
+
+  // Загрузка данных дня только при изменении даты (если активна вкладка "День")
+  useEffect(() => {
+    console.log('🔄 useEffect для загрузки данных дня:', {
+      activeTab,
+      hasUser: !!user,
+      userCity: user?.city,
+      selectedDate,
+      shouldLoad: activeTab === 'day' && user?.city
+    });
+    
+    if (activeTab === 'day' && user?.city) {
+      console.log('📅📅📅 ЗАГРУЗКА ДАННЫХ ДНЯ (useEffect)');
+      loadRouteData();
+    } else {
+      console.log('⏸️ Пропускаем загрузку данных дня:', {
+        reason: activeTab !== 'day' ? 'не активна вкладка "День"' : 'нет города'
+      });
+    }
+  }, [selectedDate, user, activeTab]);
 
   const loadRouteData = async () => {
+    if (!user?.city) {
+      console.warn('⚠️ Не могу загрузить данные дня: нет города');
+      return;
+    }
+    
     setLoading(true);
     setError('');
+    setRouteData(null); // Сбрасываем старые данные перед загрузкой новых
+    
     try {
-      const response = await fetch(
-        `${apiBaseUrl}/vedic-time/planetary-route?date=${selectedDate}&city=${encodeURIComponent(user.city)}`,
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-        }
-      );
-      if (!response.ok) throw new Error('Ошибка загрузки данных');
+      const url = `${apiBaseUrl}/vedic-time/planetary-route?date=${selectedDate}&city=${encodeURIComponent(user.city)}`;
+      console.log('🔄 Загружаем данные дня:', url);
+      
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Ошибка загрузки данных дня: ${response.status} ${errorText}`);
+      }
+      
       const data = await response.json();
-      console.log('📊 Полученные данные:', data);
-      console.log('📊 route:', data.route);
-      console.log('📊 day_analysis:', data.route?.day_analysis);
+      console.log('📅📅📅 ДАННЫЕ ДНЯ ПОЛУЧЕНЫ:', {
+        hasData: !!data,
+        hasDayAnalysis: !!data.day_analysis,
+        date: data.date,
+        city: data.city,
+        keys: Object.keys(data || {}),
+        fullData: data
+      });
+      
+      console.log('📅 Устанавливаем routeData');
       setRouteData(data);
+      console.log('📅 routeData установлен, состояние обновлено');
     } catch (err) {
+      console.error('❌ Ошибка загрузки данных дня:', err);
       setError(err.message);
-      console.error('Ошибка загрузки маршрута:', err);
+      setRouteData(null);
     } finally {
       setLoading(false);
     }
@@ -71,33 +186,169 @@ const PlanetaryDailyRouteNew = () => {
 
   // Загрузка недельных данных
   const loadWeeklyData = async () => {
+    if (!user?.city) {
+      console.warn('⚠️ Не могу загрузить недельные данные: нет города');
+      return;
+    }
+    
     setWeeklyLoading(true);
     setError('');
+    setWeeklyData(null); // Сбрасываем старые данные перед загрузкой новых
+    
     try {
-      const response = await fetch(
-        `${apiBaseUrl}/vedic-time/planetary-route/weekly?date=${selectedDate}&city=${encodeURIComponent(user.city)}`,
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-        }
-      );
-      if (!response.ok) throw new Error('Ошибка загрузки недельных данных');
+      const url = `${apiBaseUrl}/vedic-time/planetary-route/weekly?date=${selectedDate}&city=${encodeURIComponent(user.city)}`;
+      console.log('🔄 Загружаем недельные данные:', url);
+      
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Ошибка загрузки недельных данных: ${response.status} ${errorText}`);
+      }
+      
       const data = await response.json();
-      console.log('📅 Недельные данные:', data);
+      console.log('📅📅📅 НЕДЕЛЬНЫЕ ДАННЫЕ ПОЛУЧЕНЫ:', {
+        hasData: !!data,
+        dailyScheduleLength: data.daily_schedule?.length,
+        period: data.period,
+        startDate: data.start_date,
+        endDate: data.end_date,
+        keys: Object.keys(data || {}),
+        fullData: data
+      });
+      
+      console.log('📅 Устанавливаем weeklyData');
       setWeeklyData(data);
+      console.log('📅 weeklyData установлен, состояние обновлено');
     } catch (err) {
+      console.error('❌ Ошибка загрузки недельного маршрута:', err);
       setError(err.message);
-      console.error('Ошибка загрузки недельного маршрута:', err);
+      setWeeklyData(null);
     } finally {
       setWeeklyLoading(false);
     }
   };
 
-  // Загружаем недельные данные при переключении на вкладку "Неделя"
-  useEffect(() => {
-    if (activeTab === 'week' && user?.city && !weeklyData) {
-      loadWeeklyData();
+  // Загрузка месячных данных
+  const loadMonthlyData = async () => {
+    if (!user?.city) {
+      console.warn('⚠️ Не могу загрузить месячные данные: нет города');
+      return;
     }
-  }, [activeTab, user]);
+    
+    setMonthlyLoading(true);
+    setError('');
+    setMonthlyData(null); // Сбрасываем старые данные перед загрузкой новых
+    
+    try {
+      // Используем selectedMonthDate для загрузки данных выбранного месяца
+      const url = `${apiBaseUrl}/vedic-time/planetary-route/monthly?date=${selectedMonthDate}&city=${encodeURIComponent(user.city)}`;
+      console.log('🔄 Загружаем месячные данные:', url);
+      
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Ошибка загрузки месячных данных: ${response.status} ${errorText}`);
+      }
+      
+      const data = await response.json();
+      console.log('📅📅📅 МЕСЯЧНЫЕ ДАННЫЕ ПОЛУЧЕНЫ:', {
+        hasData: !!data,
+        keys: Object.keys(data || {}),
+        dailyScheduleLength: data.daily_schedule?.length,
+        hasMonthlySummary: !!data.monthly_summary,
+        hasWeeklyAnalysis: !!data.weekly_analysis,
+        hasLifeSpheres: !!data.life_spheres,
+        hasTrends: !!data.trends,
+        hasLunarPhases: !!data.lunar_phases,
+        hasPlanetaryTransits: !!data.planetary_transits,
+        firstDay: data.daily_schedule?.[0],
+        lastDay: data.daily_schedule?.[data.daily_schedule?.length - 1],
+        fullData: data
+      });
+      
+      // Проверяем, что данные валидны
+      if (!data || !data.daily_schedule || data.daily_schedule.length === 0) {
+        console.error('❌❌❌ Месячные данные не содержат daily_schedule или он пуст');
+        setError('Данные не содержат расписание дней');
+        setMonthlyData(null);
+      } else {
+        console.log('📅 Устанавливаем monthlyData');
+        setMonthlyData(data);
+        console.log('📅 monthlyData установлен, состояние обновлено');
+        console.log('📅 Проверка после установки:', {
+          monthlyData: !!monthlyData,
+          newMonthlyData: !!data
+        });
+      }
+    } catch (err) {
+      console.error('❌ Ошибка загрузки месячного маршрута:', err);
+      setError(err.message);
+      setMonthlyData(null);
+    } finally {
+      setMonthlyLoading(false);
+    }
+  };
+
+  // Обработчик переключения вкладок - загружаем данные только при клике
+  const handleTabChange = (newTab) => {
+    console.log('🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄');
+    console.log('🔄 ПЕРЕКЛЮЧЕНИЕ НА ВКЛАДКУ:', newTab);
+    console.log('🔄 Текущая вкладка:', activeTab);
+    console.log('🔄 User:', user?.email);
+    console.log('🔄 City:', user?.city);
+    console.log('🔄 Selected Date:', selectedDate);
+    console.log('🔄 Текущее состояние данных:', {
+      routeData: !!routeData,
+      weeklyData: !!weeklyData,
+      monthlyData: !!monthlyData,
+      loading,
+      weeklyLoading,
+      monthlyLoading
+    });
+    console.log('🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄🔄');
+    
+    // Сначала меняем вкладку
+    console.log('🔄 Устанавливаем activeTab на:', newTab);
+    setActiveTab(newTab);
+    
+    // Затем загружаем данные для выбранной вкладки
+    if (newTab === 'day' && user?.city) {
+      console.log('📅📅📅 ЗАГРУЗКА ДАННЫХ ДНЯ при клике на вкладку "День"');
+      if (!routeData) {
+        console.log('📅 Вызываем loadRouteData() - данных нет');
+        loadRouteData();
+      } else {
+        console.log('✅ Данные дня уже загружены, переиспользуем');
+      }
+    } else if (newTab === 'week' && user?.city) {
+      console.log('📅📅📅 ЗАГРУЗКА НЕДЕЛЬНЫХ ДАННЫХ при клике на вкладку "Неделя"');
+      if (!weeklyData) {
+        console.log('📅 Вызываем loadWeeklyData() - данных нет');
+        loadWeeklyData();
+      } else {
+        console.log('✅ Недельные данные уже загружены, длина:', weeklyData.daily_schedule?.length);
+      }
+    } else if (newTab === 'month' && user?.city) {
+      console.log('📅📅📅 ЗАГРУЗКА МЕСЯЧНЫХ ДАННЫХ при клике на вкладку "Месяц"');
+      console.log('📅 ВСЕГДА загружаем месячные данные при клике');
+      console.log('📅 Вызываем loadMonthlyData()');
+      // Всегда загружаем месячные данные при клике на вкладку "Месяц"
+      loadMonthlyData();
+    } else {
+      console.log('⚠️⚠️⚠️ НЕ ЗАГРУЖАЕМ ДАННЫЕ:', { 
+        newTab, 
+        hasUser: !!user, 
+        hasCity: !!user?.city,
+        reason: !user ? 'нет пользователя' : !user?.city ? 'нет города' : 'неизвестная причина'
+      });
+    }
+  };
 
   // Функция для получения персонализированных советов для часа (клон из VedicTimeCalculations)
   const getPersonalizedAdvice = async (hour) => {
@@ -181,7 +432,8 @@ const PlanetaryDailyRouteNew = () => {
     }
   };
 
-  if (loading) {
+  // Проверяем загрузку и ошибки только для вкладки "День"
+  if (activeTab === 'day' && loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
@@ -190,7 +442,7 @@ const PlanetaryDailyRouteNew = () => {
     );
   }
 
-  if (error) {
+  if (activeTab === 'day' && error) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <AlertTriangle className="h-12 w-12 text-red-500" />
@@ -199,8 +451,16 @@ const PlanetaryDailyRouteNew = () => {
     );
   }
 
-  if (!routeData) {
-    console.log('⚠️ routeData пустой!');
+  // Проверяем routeData только для вкладки "День"
+  if (activeTab === 'day' && !routeData) {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center min-h-screen">
+          <Loader2 className="h-12 w-12 text-blue-500 animate-spin" />
+          <span className="ml-3 text-lg">Загрузка данных...</span>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Info className="h-12 w-12 text-blue-500" />
@@ -209,11 +469,10 @@ const PlanetaryDailyRouteNew = () => {
     );
   }
 
-  // Данные приходят напрямую, а не в route!
-  const route = routeData;
-  const dayAnalysis = routeData.day_analysis || {};
-  
-  console.log('✅ Рендерим с данными:', { route, dayAnalysis });
+  // Данные приходят напрямую, а не в route! (только для вкладки "День")
+  // Используем routeData напрямую, чтобы избежать проблем с null
+  const route = routeData; // Используем routeData для всех случаев, но проверяем внутри компонентов
+  const dayAnalysis = routeData?.day_analysis || {};
 
   return (
     <div className={`min-h-screen ${themeConfig.pageBackground} relative overflow-hidden`}>
@@ -249,7 +508,7 @@ const PlanetaryDailyRouteNew = () => {
         </div>
 
         {/* Табы для разных периодов */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
           <TabsList className={`grid w-full grid-cols-4 ${themeConfig.surface} backdrop-blur-xl p-1 rounded-2xl`}>
             <TabsTrigger 
               value="day" 
@@ -299,18 +558,25 @@ const PlanetaryDailyRouteNew = () => {
 
           {/* Контент для дня */}
           <TabsContent value="day" className="mt-6 space-y-6">
-        {/* Общая оценка дня */}
+            {!routeData ? (
+              <div className={`flex items-center justify-center py-12 ${themeConfig.text}`}>
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500 mr-3" />
+                <span>Загрузка данных дня...</span>
+              </div>
+            ) : routeData ? (
+              <>
+                {/* Общая оценка дня */}
         <div 
           className={`rounded-3xl border p-8 transition-all duration-500 hover:-translate-y-1 ${themeConfig.glass}`}
           style={{
-            borderColor: getPlanetColor(route.schedule?.weekday?.ruling_planet) + '40',
-            boxShadow: `0 0 40px ${getPlanetColor(route.schedule?.weekday?.ruling_planet)}20`
+            borderColor: getPlanetColor(routeData?.schedule?.weekday?.ruling_planet) + '40',
+            boxShadow: `0 0 40px ${getPlanetColor(routeData?.schedule?.weekday?.ruling_planet)}20`
           }}
         >
           <div className="flex items-center gap-3 mb-6">
             <Sparkles 
               className="h-6 w-6 drop-shadow-[0_0_10px_rgba(255,255,255,0.45)]" 
-              style={{ color: getPlanetColor(route.schedule?.weekday?.ruling_planet) }}
+              style={{ color: getPlanetColor(routeData?.schedule?.weekday?.ruling_planet) }}
             />
             <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
               Персональный анализ дня
@@ -323,8 +589,8 @@ const PlanetaryDailyRouteNew = () => {
                 <div 
                   className="text-6xl font-bold drop-shadow-lg"
                   style={{ 
-                    color: getPlanetColor(route.schedule?.weekday?.ruling_planet),
-                    textShadow: `0 0 20px ${getPlanetColor(route.schedule?.weekday?.ruling_planet)}80`
+                    color: getPlanetColor(routeData?.schedule?.weekday?.ruling_planet),
+                    textShadow: `0 0 20px ${getPlanetColor(routeData?.schedule?.weekday?.ruling_planet)}80`
                   }}
                 >
                   {dayAnalysis.overall_score || 0}
@@ -337,7 +603,7 @@ const PlanetaryDailyRouteNew = () => {
                 </div>
                 <div className="text-sm text-gray-500">•</div>
                 <div className={`text-sm ${themeConfig.mutedText}`}>
-                  {route.schedule?.weekday?.name_ru}
+                  {routeData?.schedule?.weekday?.name_ru}
                 </div>
               </div>
             </div>
@@ -346,12 +612,12 @@ const PlanetaryDailyRouteNew = () => {
               <div 
                 className="px-6 py-3 rounded-2xl font-semibold text-center backdrop-blur-xl"
                 style={{
-                  backgroundColor: getPlanetColor(route.schedule?.weekday?.ruling_planet) + '30',
-                  color: getPlanetColor(route.schedule?.weekday?.ruling_planet),
-                  boxShadow: `0 0 20px ${getPlanetColor(route.schedule?.weekday?.ruling_planet)}40`
+                  backgroundColor: getPlanetColor(routeData?.schedule?.weekday?.ruling_planet) + '30',
+                  color: getPlanetColor(routeData?.schedule?.weekday?.ruling_planet),
+                  boxShadow: `0 0 20px ${getPlanetColor(routeData?.schedule?.weekday?.ruling_planet)}40`
                 }}
               >
-                {route.schedule?.weekday?.ruling_planet}
+                {routeData?.schedule?.weekday?.ruling_planet}
               </div>
               <div className={`px-4 py-2 rounded-xl text-sm font-medium text-center ${
                 dayAnalysis.color_class === 'green' ? 'bg-green-500/20 text-green-300 border border-green-500/40' :
@@ -642,7 +908,89 @@ const PlanetaryDailyRouteNew = () => {
           </div>
         )}
 
-        {/* График энергий планет на день */}
+        {/* График планетарных энергий */}
+        {routeData?.planetary_energies && Object.keys(routeData.planetary_energies).length > 0 && (
+          <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+            <div className="flex items-center gap-3 mb-6">
+              <Activity className="h-6 w-6 text-purple-500 drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]" />
+              <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                Энергия планет на день
+              </h2>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {Object.entries(routeData.planetary_energies).map(([planetKey, energy]) => {
+                  const planetNames = {
+                    surya: 'Сурья (Солнце)',
+                    chandra: 'Чандра (Луна)',
+                    mangal: 'Мангал (Марс)',
+                    budha: 'Будха (Меркурий)',
+                    guru: 'Гуру (Юпитер)',
+                    shukra: 'Шукра (Венера)',
+                    shani: 'Шани (Сатурн)',
+                    rahu: 'Раху',
+                    ketu: 'Кету'
+                  };
+                  const planetColor = getPlanetColor(planetKey.charAt(0).toUpperCase() + planetKey.slice(1));
+                  const energyPercent = Math.round(energy);
+                  
+                  return (
+                    <div
+                      key={planetKey}
+                      className="rounded-xl border p-4"
+                      style={{
+                        borderColor: planetColor + '40',
+                        backgroundColor: planetColor + '10'
+                      }}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-semibold" style={{ color: planetColor }}>
+                          {planetNames[planetKey] || planetKey}
+                        </span>
+                        <span className="text-lg font-bold" style={{ color: planetColor }}>
+                          {energyPercent}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${energyPercent}%`,
+                            backgroundColor: planetColor,
+                            boxShadow: `0 0 10px ${planetColor}60`
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {routeData?.total_energy !== undefined && (
+                <div className="mt-4 pt-4 border-t border-white/10">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-purple-200">
+                      Общая энергия дня
+                    </span>
+                    <span className="text-xl font-bold text-purple-300">
+                      {Math.round(routeData.total_energy / 9)}%
+                    </span>
+                  </div>
+                  <div className="mt-2 w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-purple-400 to-purple-600"
+                      style={{
+                        width: `${Math.min(100, Math.round(routeData.total_energy / 9))}%`,
+                        boxShadow: '0 0 15px rgba(168, 85, 247, 0.6)'
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* График энергий планет на день (почасовой) */}
         {route?.hourly_guide_24h && route.hourly_guide_24h.length > 0 && (
           <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
             <div className="flex items-center gap-3 mb-6">
@@ -656,7 +1004,7 @@ const PlanetaryDailyRouteNew = () => {
               <div className="space-y-6">
                 {/* Легенда планет */}
                 <div className="flex flex-wrap gap-3 justify-center mb-4">
-                  {Array.from(new Set(route.hourly_guide_24h.map(h => h.planet))).map(planet => {
+                  {Array.from(new Set(routeData.hourly_guide_24h.map(h => h.planet))).map(planet => {
                     const planetColor = getPlanetColor(planet);
                     return (
                       <div key={planet} className="flex items-center gap-2">
@@ -687,10 +1035,10 @@ const PlanetaryDailyRouteNew = () => {
 
                   {/* Блоки планет */}
                   <div className="absolute top-0 left-0 right-0 bottom-12 flex">
-                    {route.hourly_guide_24h.map((hour, index) => {
+                    {routeData.hourly_guide_24h.map((hour, index) => {
                       const isActive = isCurrentHour(hour);
                       const planetColor = getPlanetColor(hour.planet);
-                      const width = `${100 / route.hourly_guide_24h.length}%`;
+                      const width = `${100 / routeData.hourly_guide_24h.length}%`;
                       
                       return (
                         <div
@@ -791,10 +1139,10 @@ const PlanetaryDailyRouteNew = () => {
               </h2>
             </div>
             <p className={`text-sm ${themeConfig.mutedText} mb-6`}>
-              Показано {route.hourly_guide_24h.length} планетарных часов. Нажмите на час для получения персональных советов.
+              Показано {routeData.hourly_guide_24h.length} планетарных часов. Нажмите на час для получения персональных советов.
             </p>
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {route.hourly_guide_24h?.map((hour, index) => {
+            {routeData.hourly_guide_24h?.map((hour, index) => {
               const isActive = isCurrentHour(hour);
               const planetColor = getPlanetColor(hour.planet);
               return (
@@ -883,6 +1231,8 @@ const PlanetaryDailyRouteNew = () => {
           </div>
           </div>
         )}
+              </>
+            ) : null}
           </TabsContent>
 
           {/* Контент для недели */}
@@ -923,7 +1273,7 @@ const PlanetaryDailyRouteNew = () => {
                     <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
                       <div className="text-center">
                         <div className="text-4xl font-bold text-emerald-500 mb-2">
-                          {weeklyData.weekly_summary.favorable_days_count}
+                          {weeklyData.daily_schedule?.filter(d => d.day_type === 'favorable' || d.day_type === 'highly_favorable').length || weeklyData.weekly_summary?.favorable_days_count || 0}
                         </div>
                         <div className={`text-sm ${themeConfig.mutedText}`}>
                           Благоприятных дней
@@ -935,7 +1285,7 @@ const PlanetaryDailyRouteNew = () => {
                     <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
                       <div className="text-center">
                         <div className="text-4xl font-bold text-red-500 mb-2">
-                          {weeklyData.weekly_summary.challenging_days_count}
+                          {weeklyData.daily_schedule?.filter(d => d.day_type === 'challenging').length || weeklyData.weekly_summary?.challenging_days_count || 0}
                         </div>
                         <div className={`text-sm ${themeConfig.mutedText}`}>
                           Сложных дней
@@ -949,6 +1299,75 @@ const PlanetaryDailyRouteNew = () => {
                   </p>
                 </div>
 
+                {/* График планетарных энергий на неделю */}
+                {weeklyData.daily_schedule && weeklyData.daily_schedule.some(d => d.planetary_energies) && (
+                  <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                    <div className="flex items-center gap-3 mb-6">
+                      <Activity className="h-6 w-6 text-cyan-500 drop-shadow-[0_0_10px_rgba(6,182,212,0.5)]" />
+                      <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                        Динамика энергии планет на неделю
+                      </h2>
+                    </div>
+                    <div className="h-96">
+                      <Line
+                        data={{
+                          labels: weeklyData.daily_schedule.map(d => {
+                            const date = new Date(d.date);
+                            return `${date.getDate()}.${date.getMonth() + 1}`;
+                          }),
+                          datasets: Object.keys(weeklyData.daily_schedule[0]?.planetary_energies || {}).map(planetKey => {
+                            const planetNames = {
+                              surya: 'Сурья',
+                              chandra: 'Чандра',
+                              mangal: 'Мангал',
+                              budha: 'Будха',
+                              guru: 'Гуру',
+                              shukra: 'Шукра',
+                              shani: 'Шани',
+                              rahu: 'Раху',
+                              ketu: 'Кету'
+                            };
+                            const planetColor = getPlanetColor(planetKey.charAt(0).toUpperCase() + planetKey.slice(1));
+                            return {
+                              label: planetNames[planetKey] || planetKey,
+                              data: weeklyData.daily_schedule.map(d => d.planetary_energies?.[planetKey] || 0),
+                              borderColor: planetColor,
+                              backgroundColor: planetColor + '20',
+                              fill: false,
+                              tension: 0.4,
+                              pointRadius: 4,
+                              pointHoverRadius: 6
+                            };
+                          })
+                        }}
+                        options={{
+                          responsive: true,
+                          maintainAspectRatio: false,
+                          plugins: {
+                            legend: {
+                              display: true,
+                              position: 'top'
+                            },
+                            tooltip: {
+                              mode: 'index',
+                              intersect: false
+                            }
+                          },
+                          scales: {
+                            y: {
+                              beginAtZero: true,
+                              max: 100,
+                              ticks: {
+                                stepSize: 20
+                              }
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {/* Календарь недели - 7 дней */}
                 <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
                   <div className="flex items-center gap-3 mb-6">
@@ -959,75 +1378,96 @@ const PlanetaryDailyRouteNew = () => {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
-                    {weeklyData.daily_schedule.map((day, index) => {
-                      const planetColor = getPlanetColor(day.ruling_planet);
-                      const isToday = day.date === new Date().toISOString().split('T')[0];
-                      
-                      return (
-                        <div
-                          key={index}
-                          className={`p-4 rounded-2xl border cursor-pointer transition-all duration-300 hover:scale-105 ${
-                            isToday ? 'ring-2 ring-purple-500' : ''
-                          }`}
-                          style={{
-                            borderColor: day.day_type === 'favorable' ? '#10b98140' :
-                                       day.day_type === 'challenging' ? '#ef444440' : '#3b82f640',
-                            backgroundColor: themeConfig.isDark
-                              ? (day.day_type === 'favorable' ? '#10b98110' :
-                                 day.day_type === 'challenging' ? '#ef444410' : '#3b82f610')
-                              : (day.day_type === 'favorable' ? '#10b98108' :
-                                 day.day_type === 'challenging' ? '#ef444408' : '#3b82f608')
-                          }}
-                          onClick={() => {
-                            setSelectedDay(day);
-                            setIsDayDialogOpen(true);
-                          }}
-                        >
-                          {/* День недели */}
-                          <div className={`text-xs font-semibold mb-2 ${themeConfig.mutedText}`}>
-                            {day.weekday_name}
-                          </div>
-
-                          {/* Дата */}
-                          <div className={`text-lg font-bold mb-2 ${themeConfig.text}`}>
-                            {new Date(day.date).getDate()}
-                          </div>
-
-                          {/* Планета */}
+                    {weeklyData.daily_schedule && weeklyData.daily_schedule.length > 0 ? (
+                      weeklyData.daily_schedule.map((day, index) => {
+                        const planetColor = getPlanetColor(day.ruling_planet);
+                        const isToday = day.date === new Date().toISOString().split('T')[0];
+                        
+                        return (
                           <div
-                            className="w-12 h-12 mx-auto rounded-full flex items-center justify-center font-bold text-white text-sm mb-2"
+                            key={index}
+                            className={`p-4 rounded-2xl border cursor-pointer transition-all duration-300 hover:scale-105 ${
+                              isToday ? 'ring-2 ring-purple-500' : ''
+                            }`}
                             style={{
-                              backgroundColor: planetColor,
-                              boxShadow: `0 0 15px ${planetColor}60`
+                              borderColor: day.day_type === 'highly_favorable' ? '#10b98140' :
+                                         day.day_type === 'favorable' ? '#3b82f640' :
+                                         day.day_type === 'challenging' ? '#ef444440' : '#6b728040',
+                              backgroundColor: themeConfig.isDark
+                                ? (day.day_type === 'highly_favorable' ? '#10b98110' :
+                                   day.day_type === 'favorable' ? '#3b82f610' :
+                                   day.day_type === 'challenging' ? '#ef444410' : '#6b728010')
+                                : (day.day_type === 'highly_favorable' ? '#10b98108' :
+                                   day.day_type === 'favorable' ? '#3b82f608' :
+                                   day.day_type === 'challenging' ? '#ef444408' : '#6b728008')
+                            }}
+                            onClick={() => {
+                              setSelectedDay(day);
+                              setIsDayDialogOpen(true);
                             }}
                           >
-                            {day.planet_sanskrit?.slice(0, 2) || day.ruling_planet.slice(0, 2)}
-                          </div>
+                            {/* День недели */}
+                            <div className={`text-xs font-semibold mb-2 ${themeConfig.mutedText}`}>
+                              {day.weekday_name}
+                            </div>
 
-                          {/* Оценка */}
-                          <div className="text-center">
-                            <div className="text-2xl font-bold" style={{
-                              color: day.compatibility_score >= 70 ? '#10b981' :
-                                     day.compatibility_score >= 50 ? '#3b82f6' : '#ef4444'
-                            }}>
-                              {day.compatibility_score}
+                            {/* Дата */}
+                            <div className={`text-lg font-bold mb-2 ${themeConfig.text}`}>
+                              {new Date(day.date).getDate()}
                             </div>
-                            <div className={`text-xs ${themeConfig.mutedText}`}>
-                              баллов
-                            </div>
-                          </div>
 
-                          {/* Индикатор */}
-                          {isToday && (
-                            <div className="mt-2 text-center">
-                              <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/40 text-xs">
-                                Сегодня
-                              </Badge>
+                            {/* Планета */}
+                            <div
+                              className="w-12 h-12 mx-auto rounded-full flex items-center justify-center font-bold text-white text-sm mb-2"
+                              style={{
+                                backgroundColor: planetColor,
+                                boxShadow: `0 0 15px ${planetColor}60`
+                              }}
+                            >
+                              {day.planet_sanskrit?.slice(0, 2) || day.ruling_planet.slice(0, 2)}
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
+
+                            {/* Оценка и тип дня */}
+                            <div className="text-center">
+                              {day.total_energy !== undefined && (
+                                <div className="text-lg font-bold mb-1" style={{
+                                  color: day.day_type === 'highly_favorable' ? '#10b981' :
+                                         day.day_type === 'favorable' ? '#3b82f6' :
+                                         day.day_type === 'challenging' ? '#ef4444' : '#6b7280'
+                                }}>
+                                  {Math.round(day.total_energy / 9)}%
+                                </div>
+                              )}
+                              <div className={`text-xs font-semibold mb-1 ${
+                                day.day_type === 'highly_favorable' ? 'text-green-500' :
+                                day.day_type === 'favorable' ? 'text-blue-500' :
+                                day.day_type === 'challenging' ? 'text-red-500' : 'text-gray-500'
+                              }`}>
+                                {day.day_type_ru || 'Нейтральный'}
+                              </div>
+                              {day.compatibility_score !== undefined && (
+                                <div className={`text-xs ${themeConfig.mutedText}`}>
+                                  {day.compatibility_score} баллов
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Индикатор */}
+                            {isToday && (
+                              <div className="mt-2 text-center">
+                                <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/40 text-xs">
+                                  Сегодня
+                                </Badge>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="col-span-7 text-center py-8 text-gray-500">
+                        Нет данных для отображения. Загрузите недельные данные.
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1185,64 +1625,633 @@ const PlanetaryDailyRouteNew = () => {
 
           {/* Контент для месяца */}
           <TabsContent value="month" className="mt-6">
-            <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
-              <div className="text-center py-12">
-                <CalendarRange className={`h-16 w-16 mx-auto mb-4 ${themeConfig.mutedText}`} />
-                <h3 className={`text-2xl font-bold mb-2 ${themeConfig.text}`}>
-                  Планетарный маршрут на месяц
-                </h3>
-                <p className={`${themeConfig.mutedText} mb-6`}>
-                  Полный анализ месяца с недельными и дневными прогнозами
-                </p>
+            {(() => {
+              console.log('🎨 РЕНДЕРИМ ВКЛАДКУ "МЕСЯЦ":', {
+                monthlyLoading,
+                hasMonthlyData: !!monthlyData,
+                monthlyDataKeys: monthlyData ? Object.keys(monthlyData) : [],
+                dailyScheduleLength: monthlyData?.daily_schedule?.length
+              });
+              return null;
+            })()}
+            {monthlyLoading ? (
+              <div className={`flex items-center justify-center py-12 ${themeConfig.text}`}>
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500 mr-3" />
+                <span>Загрузка месячного маршрута...</span>
+                <div className="ml-4 text-xs text-gray-500">
+                  (monthlyLoading: {String(monthlyLoading)})
+                </div>
+              </div>
+            ) : monthlyData ? (
+              <>
+                {console.log('✅✅✅ РЕНДЕРИМ МЕСЯЧНЫЕ ДАННЫЕ:', {
+                  hasData: !!monthlyData,
+                  dailyScheduleLength: monthlyData.daily_schedule?.length,
+                  hasMonthlySummary: !!monthlyData.monthly_summary,
+                  hasWeeklyAnalysis: !!monthlyData.weekly_analysis,
+                  hasLifeSpheres: !!monthlyData.life_spheres,
+                  hasTrends: !!monthlyData.trends,
+                  fullMonthlyData: monthlyData
+                }) || null}
                 
-                {/* Предварительная структура */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8 text-left">
-                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
-                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>🌙 Обзор месяца</h4>
-                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
-                      <li>• Общая тематика месяца</li>
-                      <li>• Ключевые планетарные периоды</li>
-                      <li>• Благоприятные недели</li>
-                      <li>• Критические точки</li>
-                    </ul>
+                {/* Селектор месяца */}
+                <div className={`mb-6 rounded-2xl border p-6 ${themeConfig.glass}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-4">
+                    <div className="flex items-center gap-3">
+                      <CalendarRange className="h-5 w-5 text-blue-500" />
+                      <h3 className={`text-lg font-semibold ${themeConfig.text}`}>
+                        Выберите месяц для просмотра
+                      </h3>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Input
+                        type="month"
+                        value={selectedMonthDate.substring(0, 7)} // Формат YYYY-MM для input type="month"
+                        onChange={(e) => {
+                          const newMonth = e.target.value + '-01'; // Добавляем день для полной даты
+                          setSelectedMonthDate(newMonth);
+                          console.log('📅 Выбран новый месяц:', newMonth);
+                        }}
+                        className={`w-48 ${themeConfig.surface} backdrop-blur-xl`}
+                      />
+                      <Button 
+                        onClick={loadMonthlyData}
+                        disabled={monthlyLoading}
+                        className="bg-blue-500 hover:bg-blue-600"
+                      >
+                        {monthlyLoading ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Загрузка...
+                          </>
+                        ) : (
+                          <>
+                            <CalendarRange className="h-4 w-4 mr-2" />
+                            Загрузить
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
-                  
-                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
-                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>📆 Календарь месяца</h4>
-                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
-                      <li>• 4-5 недель с анализом</li>
-                      <li>• Важные даты и события</li>
-                      <li>• Лунные фазы и влияния</li>
-                      <li>• Планетарные транзиты</li>
-                    </ul>
+                  <p className={`text-sm mt-2 ${themeConfig.mutedText}`}>
+                    Текущий месяц: {new Date(selectedMonthDate).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}
+                  </p>
+                </div>
+
+                <div className="space-y-6">
+                {/* Обзор месяца */}
+                <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                  <div className="flex items-center gap-3 mb-6">
+                    <CalendarDays className="h-6 w-6 text-blue-500 drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]" />
+                    <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                      Планетарный обзор месяца
+                    </h2>
                   </div>
-                  
-                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
-                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>💼 Сферы жизни</h4>
-                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
-                      <li>• Карьера и финансы</li>
-                      <li>• Отношения и семья</li>
-                      <li>• Здоровье и энергия</li>
-                      <li>• Духовное развитие</li>
-                    </ul>
-                  </div>
-                  
-                  <div className={`p-6 rounded-2xl border ${themeConfig.surface}`}>
-                    <h4 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>📈 Тренды и прогнозы</h4>
-                    <ul className={`space-y-2 text-sm ${themeConfig.mutedText}`}>
-                      <li>• Графики энергий месяца</li>
-                      <li>• Оптимальное время для начинаний</li>
-                      <li>• Периоды завершения проектов</li>
-                      <li>• Рекомендации по планированию</li>
-                    </ul>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div className={`text-center p-3 rounded-lg ${themeConfig.isDark ? 'bg-blue-500/20' : 'bg-blue-50'}`}>
+                      <div className={`text-lg font-semibold ${themeConfig.isDark ? 'text-blue-300' : 'text-blue-700'}`}>
+                        {monthlyData.total_days || 30}
+                      </div>
+                      <div className={`text-sm ${themeConfig.mutedText}`}>Дней в периоде</div>
+                    </div>
+                    <div className={`text-center p-3 rounded-lg ${themeConfig.isDark ? 'bg-green-500/20' : 'bg-green-50'}`}>
+                      <div className={`text-lg font-semibold ${themeConfig.isDark ? 'text-green-300' : 'text-green-700'}`}>
+                        {monthlyData.monthly_summary?.total_favorable_days || 0}
+                      </div>
+                      <div className={`text-sm ${themeConfig.mutedText}`}>Благоприятных дней</div>
+                    </div>
+                    <div className={`text-center p-3 rounded-lg ${themeConfig.isDark ? 'bg-red-500/20' : 'bg-red-50'}`}>
+                      <div className={`text-lg font-semibold ${themeConfig.isDark ? 'text-red-300' : 'text-red-700'}`}>
+                        {monthlyData.monthly_summary?.total_challenging_days || 0}
+                      </div>
+                      <div className={`text-sm ${themeConfig.mutedText}`}>Сложных дней</div>
+                    </div>
+                    <div className={`text-center p-3 rounded-lg ${themeConfig.isDark ? 'bg-purple-500/20' : 'bg-purple-50'}`}>
+                      <div className={`text-lg font-semibold ${themeConfig.isDark ? 'text-purple-300' : 'text-purple-700'}`}>
+                        {monthlyData.monthly_summary?.recommendations?.most_active_planet || 'Солнце'}
+                      </div>
+                      <div className={`text-sm ${themeConfig.mutedText}`}>Активная планета</div>
+                    </div>
                   </div>
                 </div>
-                
-                <Badge className="mt-6 bg-cyan-500/20 text-cyan-400 border-cyan-500/40">
-                  В разработке
-                </Badge>
-              </div>
-            </div>
+
+                {/* Обзор месяца - Общая тематика и ключевые периоды */}
+                <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                  <div className="flex items-center gap-3 mb-6">
+                    <Target className="h-6 w-6 text-indigo-500 drop-shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
+                    <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                      🌙 Обзор месяца
+                    </h2>
+                  </div>
+                  <div className="space-y-4">
+                    <div className={`p-4 rounded-lg border-2 ${themeConfig.isDark ? 'bg-blue-500/10 border-blue-400/30' : 'bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200'}`}>
+                      <h3 className={`font-semibold text-lg mb-2 ${themeConfig.text}`}>Общая тематика месяца</h3>
+                      <p className={themeConfig.mutedText}>
+                        {monthlyData.weekly_analysis?.overall_theme || monthlyData.monthly_summary?.recommendations?.advice || 'Гармония и баланс'}
+                      </p>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-green-500/10' : 'bg-green-50'}`}>
+                        <h4 className={`font-semibold mb-2 ${themeConfig.isDark ? 'text-green-300' : 'text-green-800'}`}>Благоприятные недели</h4>
+                        <div className="space-y-2">
+                          {monthlyData.weekly_analysis?.favorable_weeks?.length > 0 ? (
+                            monthlyData.weekly_analysis.favorable_weeks.map((week, idx) => (
+                              <div key={idx} className={`text-sm ${themeConfig.mutedText}`}>
+                                <span className="font-semibold">Неделя {week.week_number}:</span> {formatDateRu(week.start_date)} - {formatDateRu(week.end_date)}
+                                <span className={`ml-2 ${themeConfig.isDark ? 'text-green-400' : 'text-green-600'}`}>({week.avg_energy}% энергии)</span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className={`text-sm ${themeConfig.mutedText}`}>Нет благоприятных недель</div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className={`p-4 rounded-lg ${themeConfig.isDark ? 'bg-red-500/10' : 'bg-red-50'}`}>
+                        <h4 className={`font-semibold mb-2 ${themeConfig.isDark ? 'text-red-300' : 'text-red-800'}`}>Критические точки</h4>
+                        <div className="space-y-3">
+                          {monthlyData.weekly_analysis?.challenging_weeks?.length > 0 ? (
+                            monthlyData.weekly_analysis.challenging_weeks.map((week, idx) => (
+                              <div key={idx} className={`p-3 rounded-lg border-2 ${themeConfig.isDark ? 'bg-red-500/20 border-red-400/50' : 'bg-red-100 border-red-400'}`}>
+                                <div className={`text-sm font-semibold mb-2 ${themeConfig.isDark ? 'text-red-300' : 'text-red-800'}`}>
+                                  Неделя {week.week_number}: {formatDateRu(week.start_date)} - {formatDateRu(week.end_date)}
+                                </div>
+                                <div className={`text-xs mb-2 ${themeConfig.isDark ? 'text-red-400' : 'text-red-600'}`}>
+                                  Средняя энергия: {week.avg_energy}%
+                                </div>
+                                {/* Показываем самые неблагоприятные дни недели */}
+                                {monthlyData.daily_schedule && (
+                                  <div className="mt-2 space-y-1">
+                                    <div className={`text-xs font-semibold ${themeConfig.isDark ? 'text-red-300' : 'text-red-700'}`}>
+                                      Самые неблагоприятные дни:
+                                    </div>
+                                    {monthlyData.daily_schedule
+                                      .filter(day => {
+                                        const dayDate = new Date(day.date);
+                                        const weekStart = new Date(week.start_date);
+                                        const weekEnd = new Date(week.end_date);
+                                        return dayDate >= weekStart && dayDate <= weekEnd && day.day_type === 'challenging';
+                                      })
+                                      .sort((a, b) => (a.avg_energy_per_planet || 0) - (b.avg_energy_per_planet || 0))
+                                      .slice(0, 3)
+                                      .map((day, dayIdx) => (
+                                        <div key={dayIdx} className={`text-xs ${themeConfig.isDark ? 'text-red-400' : 'text-red-700'}`}>
+                                          • {formatDateRu(day.date)} - {day.avg_energy_per_planet?.toFixed(1) || 0}% энергии
+                                        </div>
+                                      ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <div className={`text-sm ${themeConfig.mutedText}`}>Нет критических недель</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Календарь месяца с планетарными влияниями */}
+                <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                  <div className="flex items-center gap-3 mb-6">
+                    <CalendarDays className="h-6 w-6 text-purple-500 drop-shadow-[0_0_10px_rgba(168,85,247,0.5)]" />
+                    <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                      📅 Календарь планетарных влияний
+                    </h2>
+                  </div>
+                  
+                  <div className="grid grid-cols-7 gap-2 mb-4">
+                    {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(day => (
+                      <div key={day} className={`text-center text-sm font-semibold p-2 ${themeConfig.mutedText}`}>
+                        {day}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div className="grid grid-cols-7 gap-2">
+                    {monthlyData.daily_schedule && monthlyData.daily_schedule.length > 0 ? (
+                      monthlyData.daily_schedule.map((day, index) => {
+                      const dayType = day.day_type || 'neutral';
+                      const avgEnergy = (day.avg_energy_per_planet !== null && day.avg_energy_per_planet !== undefined) ? day.avg_energy_per_planet : 0;
+                      const isFavorable = dayType === 'favorable' || dayType === 'highly_favorable';
+                      const isChallenging = dayType === 'challenging';
+                      const planetColor = getPlanetColor(day.ruling_planet);
+                      const isToday = day.date === new Date().toISOString().split('T')[0];
+                      
+                      return (
+                        <div 
+                          key={index} 
+                          className={`p-2 text-center border-2 rounded-lg hover:scale-105 min-h-[80px] flex flex-col justify-between cursor-pointer transition-all ${
+                            isFavorable 
+                              ? (themeConfig.isDark ? 'bg-green-500/20 border-green-400/50' : 'bg-green-50 border-green-400') 
+                              : isChallenging 
+                                ? (themeConfig.isDark ? 'bg-red-500/30 border-red-500/70' : 'bg-red-100 border-red-500')
+                                : (themeConfig.isDark ? 'bg-gray-500/10 border-gray-400/30' : 'bg-gray-50 border-gray-300')
+                          } ${isToday ? 'ring-2 ring-purple-500' : ''}`}
+                          title={`${day.date} - ${day.day_type_ru || 'Нейтральный'}${day.day_score !== undefined && day.day_score !== null ? ` (${day.day_score.toFixed(0)} баллов)` : ''}${avgEnergy ? ` - ${avgEnergy.toFixed(1)}% энергии` : ''}`}
+                          onClick={() => {
+                            setSelectedDay(day);
+                            setIsDayDialogOpen(true);
+                          }}
+                        >
+                          <div className={`text-sm font-semibold ${
+                            isChallenging ? 'text-red-700' : 
+                            isFavorable ? 'text-green-700' : 
+                            themeConfig.text
+                          }`}>
+                            {new Date(day.date).getDate()}
+                          </div>
+                          <div className={`text-[10px] font-semibold leading-tight break-words ${
+                            isChallenging 
+                              ? (themeConfig.isDark ? 'text-red-400' : 'text-red-700')
+                              : isFavorable
+                                ? (themeConfig.isDark ? 'text-green-400' : 'text-green-700')
+                                : themeConfig.mutedText
+                          }`}>
+                            {day.ruling_planet?.split('(')[0]?.trim() || ''}
+                          </div>
+                          <div className="flex flex-col items-center gap-1 mt-1">
+                            {day.day_score !== undefined && day.day_score !== null && (
+                              <div 
+                                className="text-[9px] font-bold"
+                                style={{ 
+                                  color: isFavorable 
+                                    ? (themeConfig.isDark ? '#10b981' : '#059669') 
+                                    : isChallenging 
+                                      ? (themeConfig.isDark ? '#ef4444' : '#dc2626') 
+                                      : themeConfig.isDark ? '#9ca3af' : '#6b7280'
+                                }}
+                              >
+                                {day.day_score.toFixed(0)} балл
+                              </div>
+                            )}
+                            {avgEnergy && avgEnergy > 0 && (
+                              <div className={`text-[8px] font-semibold ${
+                                isFavorable 
+                                  ? (themeConfig.isDark ? 'text-green-400' : 'text-green-600') 
+                                  : isChallenging 
+                                    ? (themeConfig.isDark ? 'text-red-400' : 'text-red-600') 
+                                    : themeConfig.mutedText
+                              }`}>
+                                {avgEnergy.toFixed(0)}%
+                              </div>
+                            )}
+                            {isToday && (
+                              <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/40 text-[8px] px-1 py-0">
+                                Сегодня
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                    ) : (
+                      <div className="col-span-7 text-center py-8 text-gray-500">
+                        Нет данных для отображения
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Анализ по неделям */}
+                {monthlyData.weekly_analysis?.weeks && monthlyData.weekly_analysis.weeks.length > 0 && (
+                  <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                    <div className="flex items-center gap-3 mb-6">
+                      <CalendarDays className="h-6 w-6 text-cyan-500 drop-shadow-[0_0_10px_rgba(6,182,212,0.5)]" />
+                      <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                        📆 Анализ по неделям
+                      </h2>
+                    </div>
+                    <div className="space-y-6">
+                      {monthlyData.weekly_analysis.weeks.map((week, idx) => (
+                        <div key={idx} className={`p-4 border-2 rounded-lg ${themeConfig.isDark ? 'bg-gray-800/50 border-gray-700' : 'bg-gradient-to-r from-gray-50 to-blue-50 border-blue-200'}`}>
+                          <div className="flex justify-between items-start mb-3">
+                            <div>
+                              <h3 className={`font-bold text-lg ${themeConfig.text}`}>Неделя {week.week_number}</h3>
+                              <p className={`text-sm ${themeConfig.mutedText}`}>{formatDateRu(week.start_date)} - {formatDateRu(week.end_date)}</p>
+                              <p className={`text-sm font-semibold mt-1 ${themeConfig.isDark ? 'text-blue-400' : 'text-blue-700'}`}>{week.theme}</p>
+                            </div>
+                            <div className="text-right">
+                              <div className={`text-lg font-bold ${themeConfig.isDark ? 'text-purple-300' : 'text-purple-700'}`}>{week.avg_energy}%</div>
+                              <div className={`text-xs ${themeConfig.mutedText}`}>Средняя энергия</div>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
+                            <div className={`text-sm ${themeConfig.mutedText}`}>
+                              <span className="font-semibold">Доминирующая планета:</span> {week.dominant_planet}
+                            </div>
+                            <div className={`text-sm ${themeConfig.mutedText}`}>
+                              <span className="font-semibold">Благоприятных дней:</span> {week.favorable_days_count}
+                            </div>
+                            <div className={`text-sm ${themeConfig.mutedText}`}>
+                              <span className="font-semibold">Сложных дней:</span> {week.challenging_days_count}
+                            </div>
+                          </div>
+                          
+                          {week.recommendations && week.recommendations.length > 0 && (
+                            <div>
+                              <h4 className={`font-semibold text-sm mb-2 ${themeConfig.text}`}>Рекомендации:</h4>
+                              <ul className={`list-disc list-inside text-sm space-y-1 ${themeConfig.mutedText}`}>
+                                {week.recommendations.map((rec, rIdx) => (
+                                  <li key={rIdx}>{rec}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Сферы жизни */}
+                <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                  <div className="flex items-center gap-3 mb-6">
+                    <Target className="h-6 w-6 text-amber-500 drop-shadow-[0_0_10px_rgba(245,158,11,0.5)]" />
+                    <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                      💼 Сферы жизни
+                    </h2>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Карьера и финансы */}
+                    <div className={`p-4 border-2 rounded-lg ${themeConfig.isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-gradient-to-br from-yellow-50 to-orange-50 border-yellow-200'}`}>
+                      <h3 className={`font-bold text-lg mb-3 flex items-center ${themeConfig.text}`}>
+                        💼 Карьера и финансы
+                        <span className={`ml-auto text-sm px-2 py-1 rounded ${
+                          monthlyData.life_spheres?.career_finance?.rating === 'Отлично' ? 'bg-green-200 text-green-800' :
+                          monthlyData.life_spheres?.career_finance?.rating === 'Хорошо' ? 'bg-blue-200 text-blue-800' :
+                          monthlyData.life_spheres?.career_finance?.rating === 'Удовлетворительно' ? 'bg-yellow-200 text-yellow-800' :
+                          'bg-red-200 text-red-800'
+                        }`}>
+                          {monthlyData.life_spheres?.career_finance?.rating || 'Нет данных'}
+                        </span>
+                      </h3>
+                      <div className={`text-sm mb-3 ${themeConfig.mutedText}`}>
+                        <span className="font-semibold">Средняя энергия:</span> {monthlyData.life_spheres?.career_finance?.avg_energy || 0}%
+                      </div>
+                      {monthlyData.life_spheres?.career_finance?.recommendations && monthlyData.life_spheres.career_finance.recommendations.length > 0 && (
+                        <ul className={`list-disc list-inside text-sm space-y-1 ${themeConfig.mutedText}`}>
+                          {monthlyData.life_spheres.career_finance.recommendations.map((rec, idx) => (
+                            <li key={idx}>{rec}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    {/* Отношения и семья */}
+                    <div className={`p-4 border-2 rounded-lg ${themeConfig.isDark ? 'bg-pink-500/10 border-pink-500/30' : 'bg-gradient-to-br from-pink-50 to-rose-50 border-pink-200'}`}>
+                      <h3 className={`font-bold text-lg mb-3 flex items-center ${themeConfig.text}`}>
+                        ❤️ Отношения и семья
+                        <span className={`ml-auto text-sm px-2 py-1 rounded ${
+                          monthlyData.life_spheres?.relationships_family?.rating === 'Отлично' ? 'bg-green-200 text-green-800' :
+                          monthlyData.life_spheres?.relationships_family?.rating === 'Хорошо' ? 'bg-blue-200 text-blue-800' :
+                          monthlyData.life_spheres?.relationships_family?.rating === 'Удовлетворительно' ? 'bg-yellow-200 text-yellow-800' :
+                          'bg-red-200 text-red-800'
+                        }`}>
+                          {monthlyData.life_spheres?.relationships_family?.rating || 'Нет данных'}
+                        </span>
+                      </h3>
+                      <div className={`text-sm mb-3 ${themeConfig.mutedText}`}>
+                        <span className="font-semibold">Средняя энергия:</span> {monthlyData.life_spheres?.relationships_family?.avg_energy || 0}%
+                      </div>
+                      {monthlyData.life_spheres?.relationships_family?.recommendations && monthlyData.life_spheres.relationships_family.recommendations.length > 0 && (
+                        <ul className={`list-disc list-inside text-sm space-y-1 ${themeConfig.mutedText}`}>
+                          {monthlyData.life_spheres.relationships_family.recommendations.map((rec, idx) => (
+                            <li key={idx}>{rec}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    {/* Здоровье и энергия */}
+                    <div className={`p-4 border-2 rounded-lg ${themeConfig.isDark ? 'bg-green-500/10 border-green-500/30' : 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-200'}`}>
+                      <h3 className={`font-bold text-lg mb-3 flex items-center ${themeConfig.text}`}>
+                        💚 Здоровье и энергия
+                        <span className={`ml-auto text-sm px-2 py-1 rounded ${
+                          monthlyData.life_spheres?.health_energy?.rating === 'Отлично' ? 'bg-green-200 text-green-800' :
+                          monthlyData.life_spheres?.health_energy?.rating === 'Хорошо' ? 'bg-blue-200 text-blue-800' :
+                          monthlyData.life_spheres?.health_energy?.rating === 'Удовлетворительно' ? 'bg-yellow-200 text-yellow-800' :
+                          'bg-red-200 text-red-800'
+                        }`}>
+                          {monthlyData.life_spheres?.health_energy?.rating || 'Нет данных'}
+                        </span>
+                      </h3>
+                      <div className={`text-sm mb-3 ${themeConfig.mutedText}`}>
+                        <span className="font-semibold">Средняя энергия:</span> {monthlyData.life_spheres?.health_energy?.avg_energy || 0}%
+                      </div>
+                      {monthlyData.life_spheres?.health_energy?.recommendations && monthlyData.life_spheres.health_energy.recommendations.length > 0 && (
+                        <ul className={`list-disc list-inside text-sm space-y-1 ${themeConfig.mutedText}`}>
+                          {monthlyData.life_spheres.health_energy.recommendations.map((rec, idx) => (
+                            <li key={idx}>{rec}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    {/* Духовное развитие */}
+                    <div className={`p-4 border-2 rounded-lg ${themeConfig.isDark ? 'bg-purple-500/10 border-purple-500/30' : 'bg-gradient-to-br from-purple-50 to-indigo-50 border-purple-200'}`}>
+                      <h3 className={`font-bold text-lg mb-3 flex items-center ${themeConfig.text}`}>
+                        🕉️ Духовное развитие
+                        <span className={`ml-auto text-sm px-2 py-1 rounded ${
+                          monthlyData.life_spheres?.spiritual_growth?.rating === 'Отлично' ? 'bg-green-200 text-green-800' :
+                          monthlyData.life_spheres?.spiritual_growth?.rating === 'Хорошо' ? 'bg-blue-200 text-blue-800' :
+                          monthlyData.life_spheres?.spiritual_growth?.rating === 'Удовлетворительно' ? 'bg-yellow-200 text-yellow-800' :
+                          'bg-red-200 text-red-800'
+                        }`}>
+                          {monthlyData.life_spheres?.spiritual_growth?.rating || 'Нет данных'}
+                        </span>
+                      </h3>
+                      <div className={`text-sm mb-3 ${themeConfig.mutedText}`}>
+                        <span className="font-semibold">Средняя энергия:</span> {monthlyData.life_spheres?.spiritual_growth?.avg_energy || 0}%
+                      </div>
+                      {monthlyData.life_spheres?.spiritual_growth?.recommendations && monthlyData.life_spheres.spiritual_growth.recommendations.length > 0 && (
+                        <ul className={`list-disc list-inside text-sm space-y-1 ${themeConfig.mutedText}`}>
+                          {monthlyData.life_spheres.spiritual_growth.recommendations.map((rec, idx) => (
+                            <li key={idx}>{rec}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Тренды и прогнозы */}
+                <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                  <div className="flex items-center gap-3 mb-6">
+                    <TrendingUp className="h-6 w-6 text-emerald-500 drop-shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+                    <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                      📈 Тренды и прогнозы
+                    </h2>
+                  </div>
+                  <div className="space-y-6">
+                    <div className={`p-4 rounded-lg border-2 ${themeConfig.isDark ? 'bg-blue-500/10 border-blue-400/30' : 'bg-gradient-to-r from-blue-50 to-cyan-50 border-blue-200'}`}>
+                      <h3 className={`font-bold text-lg mb-2 ${themeConfig.text}`}>Тренд энергии месяца</h3>
+                      <p className={themeConfig.mutedText}>
+                        {monthlyData.trends?.trend_description || 'Стабильный уровень энергии в течение месяца'}
+                      </p>
+                    </div>
+
+                    {monthlyData.trends?.optimal_start_periods && monthlyData.trends.optimal_start_periods.length > 0 && (
+                      <div>
+                        <h3 className={`font-bold text-lg mb-3 ${themeConfig.isDark ? 'text-green-400' : 'text-green-700'}`}>Оптимальное время для начинаний</h3>
+                        <div className="space-y-3">
+                          {monthlyData.trends.optimal_start_periods.map((period, idx) => (
+                            <div key={idx} className={`p-3 rounded-lg border-2 ${themeConfig.isDark ? 'bg-green-500/10 border-green-400/30' : 'bg-green-50 border-green-300'}`}>
+                              <div className="flex justify-between items-center mb-2">
+                                <span className={`font-semibold ${themeConfig.isDark ? 'text-green-300' : 'text-green-800'}`}>
+                                  {formatDateRu(period.start_date)} - {formatDateRu(period.end_date)}
+                                </span>
+                                <span className={`text-sm ${themeConfig.isDark ? 'text-green-400' : 'text-green-600'}`}>
+                                  {period.days_count} дней · {period.avg_energy}% энергии
+                                </span>
+                              </div>
+                              <p className={`text-sm ${themeConfig.isDark ? 'text-green-300' : 'text-green-700'}`}>{period.description}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {monthlyData.trends?.completion_periods && monthlyData.trends.completion_periods.length > 0 && (
+                      <div>
+                        <h3 className={`font-bold text-lg mb-3 ${themeConfig.isDark ? 'text-blue-400' : 'text-blue-700'}`}>Периоды завершения проектов</h3>
+                        <div className="space-y-3">
+                          {monthlyData.trends.completion_periods.map((period, idx) => (
+                            <div key={idx} className={`p-3 rounded-lg border-2 ${themeConfig.isDark ? 'bg-blue-500/10 border-blue-400/30' : 'bg-blue-50 border-blue-300'}`}>
+                              <div className="flex justify-between items-center mb-2">
+                                <span className={`font-semibold ${themeConfig.isDark ? 'text-blue-300' : 'text-blue-800'}`}>
+                                  {formatDateRu(period.start_date)} - {formatDateRu(period.end_date)}
+                                </span>
+                                <span className={`text-sm ${themeConfig.isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                                  {period.days_count} дней
+                                </span>
+                              </div>
+                              <p className={`text-sm ${themeConfig.isDark ? 'text-blue-300' : 'text-blue-700'}`}>{period.description}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {monthlyData.trends?.planning_recommendations && monthlyData.trends.planning_recommendations.length > 0 && (
+                      <div>
+                        <h3 className={`font-bold text-lg mb-3 ${themeConfig.text}`}>Рекомендации по планированию</h3>
+                        <ul className={`list-disc list-inside space-y-2 ${themeConfig.mutedText}`}>
+                          {monthlyData.trends.planning_recommendations.map((rec, idx) => (
+                            <li key={idx}>{rec}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Лунные фазы */}
+                {monthlyData.lunar_phases && monthlyData.lunar_phases.length > 0 && (
+                  <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                    <div className="flex items-center gap-3 mb-6">
+                      <Star className="h-6 w-6 text-indigo-500 drop-shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
+                      <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                        🌙 Лунные фазы и влияния
+                      </h2>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {monthlyData.lunar_phases.map((phase, idx) => (
+                        <div key={idx} className={`p-4 rounded-lg border-2 ${themeConfig.isDark ? 'bg-indigo-500/10 border-indigo-400/30' : 'bg-gradient-to-br from-indigo-50 to-purple-50 border-indigo-200'}`}>
+                          <div className="text-3xl mb-2">{phase.phase_emoji}</div>
+                          <div className={`font-semibold mb-1 ${themeConfig.isDark ? 'text-indigo-300' : 'text-indigo-800'}`}>{phase.phase}</div>
+                          <div className={`text-sm mb-2 ${themeConfig.mutedText}`}>{formatDateRu(phase.date)}</div>
+                          <div className={`text-xs ${themeConfig.isDark ? 'text-indigo-300' : 'text-indigo-700'}`}>{phase.influence}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Планетарные транзиты */}
+                {monthlyData.planetary_transits && monthlyData.planetary_transits.length > 0 && (
+                  <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                    <div className="flex items-center gap-3 mb-6">
+                      <Zap className="h-6 w-6 text-yellow-500 drop-shadow-[0_0_10px_rgba(234,179,8,0.5)]" />
+                      <h2 className={`text-2xl font-bold ${themeConfig.text}`}>
+                        ⭐ Планетарные транзиты
+                      </h2>
+                    </div>
+                    <div className="space-y-3">
+                      {monthlyData.planetary_transits.map((transit, idx) => {
+                        const planetColor = getPlanetColor(transit.planet);
+                        const isPeak = transit.type === 'peak';
+                        return (
+                          <div 
+                            key={idx} 
+                            className={`p-3 rounded-lg border-2`}
+                            style={{
+                              backgroundColor: themeConfig.isDark 
+                                ? `${planetColor}20` 
+                                : `${planetColor}15`,
+                              borderColor: themeConfig.isDark 
+                                ? `${planetColor}50` 
+                                : `${planetColor}40`
+                            }}
+                          >
+                            <div className="flex justify-between items-center mb-1">
+                              <span 
+                                className="font-semibold"
+                                style={{ color: planetColor }}
+                              >
+                                {formatDateRu(transit.date)} · {transit.planet}
+                              </span>
+                              <span 
+                                className="text-sm font-semibold"
+                                style={{ color: planetColor }}
+                              >
+                                {transit.energy}% энергии
+                              </span>
+                            </div>
+                            <p 
+                              className="text-sm"
+                              style={{ 
+                                color: themeConfig.isDark 
+                                  ? `${planetColor}CC` 
+                                  : `${planetColor}DD`
+                              }}
+                            >
+                              {transit.description}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                </div>
+              </>
+            ) : (
+              <>
+                {console.log('⚠️⚠️⚠️ НЕТ МЕСЯЧНЫХ ДАННЫХ, показываем заглушку:', {
+                  monthlyLoading,
+                  hasMonthlyData: !!monthlyData,
+                  activeTab
+                }) || null}
+                <div className={`rounded-3xl border p-8 ${themeConfig.glass}`}>
+                  <div className="text-center py-12">
+                    <CalendarRange className={`h-16 w-16 mx-auto mb-4 ${themeConfig.mutedText}`} />
+                    <h3 className={`text-2xl font-bold mb-2 ${themeConfig.text}`}>
+                      Планетарный маршрут на месяц
+                    </h3>
+                    <p className={`${themeConfig.mutedText} mb-6`}>
+                      Нажмите кнопку для загрузки месячного маршрута
+                    </p>
+                    <Button onClick={loadMonthlyData} className="bg-blue-500 hover:bg-blue-600">
+                      Загрузить месячный маршрут
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
           </TabsContent>
 
           {/* Контент для квартала */}
@@ -1353,13 +2362,21 @@ const PlanetaryDailyRouteNew = () => {
                   {selectedDay.weekday_name}, {new Date(selectedDay.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
                 </DialogTitle>
                 <DialogDescription className={themeConfig.mutedText}>
-                  Планета дня: {selectedDay.planet_sanskrit || selectedDay.ruling_planet}
-                  <span className="ml-3">
-                    Оценка: <span style={{
-                      color: selectedDay.compatibility_score >= 70 ? '#10b981' :
-                             selectedDay.compatibility_score >= 50 ? '#3b82f6' : '#ef4444'
-                    }}>{selectedDay.compatibility_score}/100</span>
-                  </span>
+                  {selectedDay.planet_sanskrit || selectedDay.ruling_planet ? (
+                    <>
+                      Планета дня: {selectedDay.planet_sanskrit || selectedDay.ruling_planet}
+                      {selectedDay.compatibility_score !== undefined && (
+                        <span className="ml-3">
+                          Оценка: <span style={{
+                            color: selectedDay.compatibility_score >= 70 ? '#10b981' :
+                                   selectedDay.compatibility_score >= 50 ? '#3b82f6' : '#ef4444'
+                          }}>{selectedDay.compatibility_score}/100</span>
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    'Детальная информация о планетарном дне'
+                  )}
                 </DialogDescription>
               </DialogHeader>
 

@@ -12,6 +12,8 @@ const PersonalDataForm = () => {
   const { user, updateUser } = useAuth();
   const [formData, setFormData] = useState({
     full_name: '',
+    name: '',
+    surname: '',
     birth_date: '',
     phone_number: '',
     city: '',
@@ -31,6 +33,8 @@ const PersonalDataForm = () => {
     if (user) {
       setFormData({
         full_name: user.full_name || '',
+        name: user.name || '',
+        surname: user.surname || '',
         birth_date: user.birth_date || '',
         phone_number: user.phone_number || '',
         city: user.city || '',
@@ -103,7 +107,7 @@ const PersonalDataForm = () => {
     }
 
     try {
-      const response = await fetch(`${backendUrl}/api/user/profile`, {
+      const response = await fetch(`${backendUrl}/api/user/profile-v2`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -159,6 +163,22 @@ const PersonalDataForm = () => {
                 <div>
                   <p className="text-sm text-muted-foreground">Полное имя</p>
                   <p className="font-medium">{user?.full_name || 'Не указано'}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <User className="w-4 h-4 text-green-600" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Имя</p>
+                  <p className="font-medium">{user?.name || 'Не указано'}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <User className="w-4 h-4 text-purple-600" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Фамилия</p>
+                  <p className="font-medium">{user?.surname || 'Не указана'}</p>
                 </div>
               </div>
 
@@ -248,6 +268,36 @@ const PersonalDataForm = () => {
                 onChange={handleChange}
                 placeholder="Ваше полное имя"
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="name">Имя (латиницей)</Label>
+              <Input
+                id="name"
+                name="name"
+                type="text"
+                value={formData.name}
+                onChange={handleChange}
+                placeholder="Например: DMITRI"
+              />
+              <p className="text-xs text-muted-foreground">
+                Для нумерологических расчётов укажите имя латиницей (DMITRI, ANDREY и т.д.).
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="surname">Фамилия (латиницей)</Label>
+              <Input
+                id="surname"
+                name="surname"
+                type="text"
+                value={formData.surname}
+                onChange={handleChange}
+                placeholder="Например: MALAHOV"
+              />
+              <p className="text-xs text-muted-foreground">
+                Фамилию тоже вводите латиницей — алгоритмы имени работают только с латинскими буквами.
+              </p>
             </div>
 
             <div className="space-y-2">

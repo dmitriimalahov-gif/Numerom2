@@ -11,6 +11,7 @@ services:
     #  - "27017:27017"
     volumes:
       - mongodb_data:/data/db
+      - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
     environment:
       - MONGO_INITDB_DATABASE=numerom
     networks:
@@ -23,8 +24,9 @@ services:
     container_name: numerom_backend
     restart: always
     ports:
-      - "8001:8000"
+      - "0.0.0.0:8000:8000"
     volumes:
+      - ./backend:/app
       - ./backend/uploads:/app/uploads
       - ./backend/.env:/app/.env
       # .env.vapid генерируется внутри контейнера, не нужен volume mount
@@ -40,8 +42,8 @@ services:
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://192.168.110.178:3000,http://192.168.110.178:5128}
-      - CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-http://192\.168\.110\.178(:\d+)?}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://192.168.110.178:3000}
+      - CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-.*}
       - BACKEND_URL=http://localhost:8000
 
   frontend:
@@ -51,7 +53,7 @@ services:
     container_name: numerom_frontend
     restart: always
     ports:
-      - "5128:80"
+      - "0.0.0.0:3000:80"
     depends_on:
       - backend
     networks:
