@@ -1005,9 +1005,9 @@ def get_monthly_summary(monthly_schedule: List[Dict], monthly_route_config: Dict
     planet_energy_totals = {}
     planet_energy_counts = {}
     
-    # Используем favorable_day_threshold из modifiers_config (как в get_monthly_planetary_route)
-    # Это обеспечивает согласованность с недельным маршрутом
-    favorable_threshold = modifiers_config.get('favorable_day_threshold', 60.0) if modifiers_config else 60.0
+    # Используем favorable_day_score_threshold из modifiers_config (как в determine_day_type_advanced)
+    # Это обеспечивает согласованность с алгоритмом определения типа дня
+    favorable_score_threshold = modifiers_config.get('favorable_day_score_threshold', 50.0) if modifiers_config else 50.0
     
     for day in monthly_schedule:
         # Подсчет дней по правящим планетам
@@ -1015,30 +1015,46 @@ def get_monthly_summary(monthly_schedule: List[Dict], monthly_route_config: Dict
         if planet:
             planet_days[planet] = planet_days.get(planet, 0) + 1
         
-        # Определение лучших и сложных дней на основе day_type и avg_energy_per_planet
-        day_type = day.get('day_type', 'neutral')
-        avg_energy = day.get('avg_energy_per_planet', 0) or 0  # Обрабатываем None
+        # Определение лучших и сложных дней на основе day_score (как в determine_day_type_advanced)
+        # Используем day_score для определения типа дня, чтобы совпадало с расчетом для каждого дня
+        day_score = day.get('day_score')
+        if day_score is None:
+            # Если day_score отсутствует, используем day_type как fallback
+            day_type = day.get('day_type', 'neutral')
+            if day_type == 'favorable' or day_type == 'highly_favorable':
+                day_score = 60.0  # Примерное значение для благоприятного дня
+            elif day_type == 'challenging':
+                day_score = 40.0  # Примерное значение для сложного дня
+            else:
+                day_score = 50.0  # Нейтральный день
+        else:
+            day_score = float(day_score) or 50.0
+        
+        avg_energy = day.get('avg_energy_per_planet', 0) or 0  # Для отображения
         
         # Используем пороги из конфигурации или значения по умолчанию
-        # favorable_threshold уже установлен выше из modifiers_config
-        best_threshold = (monthly_route_config or {}).get('best_day_threshold', 70.0)
-        challenging_threshold = (monthly_route_config or {}).get('challenging_day_threshold', 40.0)
+        best_score_threshold = (monthly_route_config or {}).get('best_day_threshold', 70.0)  # Порог для лучших дней в баллах
         
-        if day_type == 'favorable' or day_type == 'highly_favorable' or avg_energy >= favorable_threshold:
+        # Определяем тип дня на основе day_score (точно так же, как в determine_day_type_advanced)
+        # Используем тот же порог favorable_score_threshold
+        if day_score >= favorable_score_threshold:
             total_favorable += 1
-            # Лучшие дни - это дни с высокой энергией
-            if avg_energy >= best_threshold:
+            # Лучшие дни - это дни с высоким баллом
+            if day_score >= best_score_threshold:
                 best_days.append({
                     'date': day['date'],
                     'energy': round(avg_energy, 1),
+                    'score': round(day_score, 1),
                     'ruling_planet': planet,
                     'day_type': day.get('day_type_ru', 'Благоприятный')
                 })
-        elif day_type == 'challenging' or (avg_energy and avg_energy < challenging_threshold):
+        else:
+            # day_score < favorable_score_threshold - неблагоприятный день
             total_challenging += 1
             challenging_days.append({
                 'date': day['date'],
                 'energy': round(avg_energy, 1),
+                'score': round(day_score, 1),
                 'ruling_planet': planet,
                 'day_type': day.get('day_type_ru', 'Неблагоприятный')
             })
@@ -1079,11 +1095,11 @@ def get_monthly_summary(monthly_schedule: List[Dict], monthly_route_config: Dict
     
     most_active_planet_ru = planet_names_ru.get(most_active_planet_key, 'Солнце')
     
-    # Сортируем лучшие дни по энергии (от большего к меньшему)
-    best_days_sorted = sorted(best_days, key=lambda x: x.get('energy', 0), reverse=True)[:10]
+    # Сортируем лучшие дни по баллам (от большего к меньшему)
+    best_days_sorted = sorted(best_days, key=lambda x: x.get('score', 0), reverse=True)[:10]
     
-    # Сортируем сложные дни по энергии (от меньшего к большему)
-    challenging_days_sorted = sorted(challenging_days, key=lambda x: x.get('energy', 100), reverse=False)[:10]
+    # Сортируем сложные дни по баллам (от меньшего к большему)
+    challenging_days_sorted = sorted(challenging_days, key=lambda x: x.get('score', 100), reverse=False)[:10]
     
     # Генерируем рекомендации на основе статистики
     advice_parts = []
@@ -1857,9 +1873,9 @@ def determine_day_type_advanced(
         favorable_score_threshold = modifiers_config.get('favorable_day_score_threshold', 50.0)
         
         if score >= favorable_score_threshold:
-            return 'favorable', 'Благоприятный'
+            return 'favorable', 'Благоприятный', round(score, 1)
         else:
-            return 'challenging', 'Неблагоприятный'
+            return 'challenging', 'Неблагоприятный', round(score, 1)
             
     except Exception as e:
         print(f"Error in determine_day_type_advanced: {e}")

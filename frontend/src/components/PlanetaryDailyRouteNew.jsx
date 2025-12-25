@@ -1380,6 +1380,9 @@ const PlanetaryDailyRouteNew = () => {
                   <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
                     {weeklyData.daily_schedule && weeklyData.daily_schedule.length > 0 ? (
                       weeklyData.daily_schedule.map((day, index) => {
+                        const dayType = day.day_type || 'neutral';
+                        const isFavorable = dayType === 'favorable' || dayType === 'highly_favorable';
+                        const isChallenging = dayType === 'challenging';
                         const planetColor = getPlanetColor(day.ruling_planet);
                         const isToday = day.date === new Date().toISOString().split('T')[0];
                         
@@ -1429,13 +1432,30 @@ const PlanetaryDailyRouteNew = () => {
 
                             {/* Оценка и тип дня */}
                             <div className="text-center">
-                              {day.total_energy !== undefined && (
-                                <div className="text-lg font-bold mb-1" style={{
+                              {(day.compatibility_score !== undefined && day.compatibility_score !== null) ? (
+                                <div className="text-xl font-bold mb-1" style={{
                                   color: day.day_type === 'highly_favorable' ? '#10b981' :
                                          day.day_type === 'favorable' ? '#3b82f6' :
                                          day.day_type === 'challenging' ? '#ef4444' : '#6b7280'
                                 }}>
-                                  {Math.round(day.total_energy / 9)}%
+                                  {Math.round(day.compatibility_score)} балл
+                                </div>
+                              ) : (day.day_score !== undefined && day.day_score !== null) ? (
+                                <div className="text-xl font-bold mb-1" style={{
+                                  color: day.day_type === 'highly_favorable' ? '#10b981' :
+                                         day.day_type === 'favorable' ? '#3b82f6' :
+                                         day.day_type === 'challenging' ? '#ef4444' : '#6b7280'
+                                }}>
+                                  {Math.round(day.day_score)} балл
+                                </div>
+                              ) : null}
+                              {day.avg_energy_per_planet !== undefined && day.avg_energy_per_planet !== null && (
+                                <div className="text-sm font-semibold mb-1" style={{
+                                  color: day.day_type === 'highly_favorable' ? '#10b981' :
+                                         day.day_type === 'favorable' ? '#3b82f6' :
+                                         day.day_type === 'challenging' ? '#ef4444' : '#6b7280'
+                                }}>
+                                  {Math.round(day.avg_energy_per_planet)}%
                                 </div>
                               )}
                               <div className={`text-xs font-semibold mb-1 ${
@@ -1445,11 +1465,6 @@ const PlanetaryDailyRouteNew = () => {
                               }`}>
                                 {day.day_type_ru || 'Нейтральный'}
                               </div>
-                              {day.compatibility_score !== undefined && (
-                                <div className={`text-xs ${themeConfig.mutedText}`}>
-                                  {day.compatibility_score} баллов
-                                </div>
-                              )}
                             </div>
 
                             {/* Индикатор */}
@@ -1835,6 +1850,10 @@ const PlanetaryDailyRouteNew = () => {
                       monthlyData.daily_schedule.map((day, index) => {
                       const dayType = day.day_type || 'neutral';
                       const avgEnergy = (day.avg_energy_per_planet !== null && day.avg_energy_per_planet !== undefined) ? day.avg_energy_per_planet : 0;
+                      // Используем compatibility_score если есть, иначе day_score
+                      const dayScore = (day.compatibility_score !== null && day.compatibility_score !== undefined) 
+                        ? day.compatibility_score 
+                        : ((day.day_score !== null && day.day_score !== undefined) ? day.day_score : null);
                       const isFavorable = dayType === 'favorable' || dayType === 'highly_favorable';
                       const isChallenging = dayType === 'challenging';
                       const planetColor = getPlanetColor(day.ruling_planet);
@@ -1850,7 +1869,7 @@ const PlanetaryDailyRouteNew = () => {
                                 ? (themeConfig.isDark ? 'bg-red-500/30 border-red-500/70' : 'bg-red-100 border-red-500')
                                 : (themeConfig.isDark ? 'bg-gray-500/10 border-gray-400/30' : 'bg-gray-50 border-gray-300')
                           } ${isToday ? 'ring-2 ring-purple-500' : ''}`}
-                          title={`${day.date} - ${day.day_type_ru || 'Нейтральный'}${day.day_score !== undefined && day.day_score !== null ? ` (${day.day_score.toFixed(0)} баллов)` : ''}${avgEnergy ? ` - ${avgEnergy.toFixed(1)}% энергии` : ''}`}
+                          title={`${day.date} - ${day.day_type_ru || 'Нейтральный'}${dayScore !== null && dayScore !== undefined ? ` (${Math.round(dayScore)} баллов)` : ''}${avgEnergy ? ` - ${avgEnergy.toFixed(1)}% энергии` : ''}`}
                           onClick={() => {
                             setSelectedDay(day);
                             setIsDayDialogOpen(true);
@@ -1863,19 +1882,22 @@ const PlanetaryDailyRouteNew = () => {
                           }`}>
                             {new Date(day.date).getDate()}
                           </div>
-                          <div className={`text-[10px] font-semibold leading-tight break-words ${
-                            isChallenging 
-                              ? (themeConfig.isDark ? 'text-red-400' : 'text-red-700')
-                              : isFavorable
-                                ? (themeConfig.isDark ? 'text-green-400' : 'text-green-700')
-                                : themeConfig.mutedText
-                          }`}>
+                          <div 
+                            className="text-[10px] font-semibold leading-tight break-words"
+                            style={{
+                              color: isChallenging 
+                                ? (themeConfig.isDark ? '#ef4444' : '#dc2626')
+                                : isFavorable
+                                  ? (themeConfig.isDark ? '#10b981' : '#059669')
+                                  : planetColor
+                            }}
+                          >
                             {day.ruling_planet?.split('(')[0]?.trim() || ''}
                           </div>
                           <div className="flex flex-col items-center gap-1 mt-1">
-                            {day.day_score !== undefined && day.day_score !== null && (
+                            {dayScore !== null && dayScore !== undefined && (
                               <div 
-                                className="text-[9px] font-bold"
+                                className="text-lg font-bold mb-0.5"
                                 style={{ 
                                   color: isFavorable 
                                     ? (themeConfig.isDark ? '#10b981' : '#059669') 
@@ -1884,11 +1906,11 @@ const PlanetaryDailyRouteNew = () => {
                                       : themeConfig.isDark ? '#9ca3af' : '#6b7280'
                                 }}
                               >
-                                {day.day_score.toFixed(0)} балл
+                                {Math.round(dayScore)}
                               </div>
                             )}
                             {avgEnergy && avgEnergy > 0 && (
-                              <div className={`text-[8px] font-semibold ${
+                              <div className={`text-[10px] font-semibold ${
                                 isFavorable 
                                   ? (themeConfig.isDark ? 'text-green-400' : 'text-green-600') 
                                   : isChallenging 
@@ -2365,12 +2387,13 @@ const PlanetaryDailyRouteNew = () => {
                   {selectedDay.planet_sanskrit || selectedDay.ruling_planet ? (
                     <>
                       Планета дня: {selectedDay.planet_sanskrit || selectedDay.ruling_planet}
-                      {selectedDay.compatibility_score !== undefined && (
+                      {((selectedDay.day_score !== undefined && selectedDay.day_score !== null) || 
+                        (selectedDay.compatibility_score !== undefined && selectedDay.compatibility_score !== null)) && (
                         <span className="ml-3">
                           Оценка: <span style={{
-                            color: selectedDay.compatibility_score >= 70 ? '#10b981' :
-                                   selectedDay.compatibility_score >= 50 ? '#3b82f6' : '#ef4444'
-                          }}>{selectedDay.compatibility_score}/100</span>
+                            color: ((selectedDay.day_score !== undefined && selectedDay.day_score !== null ? selectedDay.day_score : selectedDay.compatibility_score) >= 70) ? '#10b981' :
+                                   ((selectedDay.day_score !== undefined && selectedDay.day_score !== null ? selectedDay.day_score : selectedDay.compatibility_score) >= 50) ? '#3b82f6' : '#ef4444'
+                          }}>{(selectedDay.day_score !== undefined && selectedDay.day_score !== null) ? Math.round(selectedDay.day_score) : Math.round(selectedDay.compatibility_score)}/100</span>
                         </span>
                       )}
                     </>
