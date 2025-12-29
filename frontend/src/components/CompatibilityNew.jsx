@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -19,11 +19,19 @@ import { getBackendUrl } from '../utils/backendUrl';
 import { useOutletContext } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
 
+// Функция для склонения слова "балл"
+const formatCredits = (num) => {
+  if (num === 1) return `${num} балл`;
+  if (num >= 2 && num <= 4) return `${num} балла`;
+  return `${num} баллов`;
+};
+
 const CompatibilityNew = () => {
   const { user } = useAuth();
   const { theme } = useOutletContext();
   const themeConfig = useTheme(theme);
   const [activeTab, setActiveTab] = useState('pair');
+  const [costs, setCosts] = useState({ compatibility_pair: 7, group_compatibility: 17 });
   
   // Парная совместимость
   const [formData, setFormData] = useState({
@@ -50,6 +58,25 @@ const CompatibilityNew = () => {
   const [showFormula, setShowFormula] = useState(null);
 
   const backendUrl = getBackendUrl();
+
+  // Загружаем стоимости из API
+  useEffect(() => {
+    const fetchCosts = async () => {
+      try {
+        const response = await fetch(`${backendUrl}/api/credits/costs`);
+        if (response.ok) {
+          const data = await response.json();
+          setCosts({
+            compatibility_pair: data.compatibility_pair || 7,
+            group_compatibility: data.group_compatibility || 17
+          });
+        }
+      } catch (e) {
+        console.warn('Не удалось загрузить стоимости:', e);
+      }
+    };
+    fetchCosts();
+  }, [backendUrl]);
 
   const handleChange = (e) => {
     setFormData({
@@ -342,6 +369,24 @@ const CompatibilityNew = () => {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {/* Информация о стоимости */}
+              <div className={`mb-6 p-4 rounded-xl border-2 border-dashed ${themeConfig.isDark ? 'border-pink-500/40 bg-pink-500/10' : 'border-pink-300 bg-pink-50'}`}>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">💰</span>
+                    <span className={`font-semibold ${themeConfig.text}`}>Стоимость расчёта:</span>
+                    <span className={`text-xl font-bold ${themeConfig.isDark ? 'text-pink-400' : 'text-pink-600'}`}>
+                      {formatCredits(costs.compatibility_pair)}
+                    </span>
+                  </div>
+                  {user && (
+                    <span className={`text-sm ${themeConfig.mutedText}`}>
+                      Ваш баланс: <span className="font-bold">{user.credits_remaining ?? 0}</span> баллов
+                    </span>
+                  )}
+                </div>
+              </div>
+
               <form onSubmit={handleSubmit} className="space-y-4">
                 {error && (
                   <Alert variant="destructive">
@@ -423,7 +468,7 @@ const CompatibilityNew = () => {
                   ) : (
                     <>
                       <Heart className="w-4 h-4 mr-2" />
-                      Рассчитать совместимость
+                      Рассчитать совместимость ({formatCredits(costs.compatibility_pair)})
                     </>
                   )}
                 </Button>
@@ -619,6 +664,24 @@ const CompatibilityNew = () => {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {/* Информация о стоимости */}
+              <div className={`mb-6 p-4 rounded-xl border-2 border-dashed ${themeConfig.isDark ? 'border-teal-500/40 bg-teal-500/10' : 'border-teal-300 bg-teal-50'}`}>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">💰</span>
+                    <span className={`font-semibold ${themeConfig.text}`}>Стоимость расчёта:</span>
+                    <span className={`text-xl font-bold ${themeConfig.isDark ? 'text-teal-400' : 'text-teal-600'}`}>
+                      {formatCredits(costs.group_compatibility)}
+                    </span>
+                  </div>
+                  {user && (
+                    <span className={`text-sm ${themeConfig.mutedText}`}>
+                      Ваш баланс: <span className="font-bold">{user.credits_remaining ?? 0}</span> баллов
+                    </span>
+                  )}
+                </div>
+              </div>
+
               <form onSubmit={handleGroupSubmit} className="space-y-4">
                 {groupError && (
                   <Alert variant="destructive">
@@ -723,7 +786,7 @@ const CompatibilityNew = () => {
                   ) : (
                     <>
                       <PieChart className="w-4 h-4 mr-2" />
-                      Рассчитать групповую совместимость
+                      Рассчитать групповую совместимость ({formatCredits(costs.group_compatibility)})
                     </>
                   )}
                 </Button>

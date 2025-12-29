@@ -7,6 +7,16 @@ import { Calculator, Compass, Heart, Star, Grid3X3, Clock, BarChart3, FileText, 
 import { useAuth } from './AuthContext';
 import AuthModal from './AuthModal';
 
+let buildVersion = '1.0.0';
+let buildDate = new Date().toISOString();
+try {
+  const { getBuildVersion, getBuildDate } = require('../utils/buildInfo');
+  buildVersion = getBuildVersion();
+  buildDate = getBuildDate();
+} catch (e) {
+  console.warn('Build info not available');
+}
+
 const MainDashboard = () => {
   const { user, loading, isInitialized } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -273,7 +283,7 @@ const MainDashboard = () => {
       </section>
 
       {/* Footer */}
-      <footer className="bg-gray-900 text-white py-12 px-4">
+      <footer className="bg-gray-900 text-white py-12 px-4 border-t border-gray-800">
         <div className="container mx-auto text-center">
           <div className="flex items-center justify-center space-x-3 mb-6">
             <div className="w-8 h-8 rounded-full numerology-gradient flex items-center justify-center">
@@ -284,8 +294,21 @@ const MainDashboard = () => {
           <p className="text-gray-400 mb-4">
             Инструмент самопознания на основе древних знаний
           </p>
-          <div className="text-sm text-gray-500">
-            © 2024 NUMEROM. Все права защищены.
+          <div className="space-y-2">
+            <div className="text-xs text-gray-500 font-mono">
+              📦 Build: <span className="text-purple-400 font-semibold">{buildVersion}</span>
+              {' · '}
+              🕐 {new Date(buildDate).toLocaleString('ru-RU', { 
+                day: '2-digit', 
+                month: '2-digit', 
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}
+            </div>
+            <div className="text-sm text-gray-500">
+              © 2025 NUMEROM. Все права защищены.
+            </div>
           </div>
         </div>
       </footer>

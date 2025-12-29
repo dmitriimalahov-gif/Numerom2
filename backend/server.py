@@ -335,6 +335,49 @@ async def award_credits_for_learning(user_id: str, amount: int, description: str
     logger.info(f"Начислено {amount} кредитов пользователю {user_id} за {description}")
 
 # ----------------- CREDIT HISTORY -----------------
+@api_router.get('/credits/costs')
+async def get_credit_costs():
+    """Получить актуальные стоимости всех операций из конфигурации"""
+    try:
+        # Получаем конфигурацию из БД
+        config = await get_credits_deduction_config()
+        
+        # Возвращаем стоимости с fallback на дефолтные значения
+        return {
+            # Нумерология
+            'personal_numbers': config.get('personal_numbers', CREDIT_COSTS.get('personal_numbers', 1)),
+            'pythagorean_square': config.get('pythagorean_square', CREDIT_COSTS.get('pythagorean_square', 1)),
+            'compatibility_pair': config.get('compatibility_pair', CREDIT_COSTS.get('compatibility_pair', 1)),
+            'group_compatibility': config.get('group_compatibility', CREDIT_COSTS.get('group_compatibility', 5)),
+            'name_numerology': config.get('name_numerology', CREDIT_COSTS.get('name_numerology', 1)),
+            'address_numerology': config.get('address_numerology', CREDIT_COSTS.get('address_numerology', 1)),
+            'car_numerology': config.get('car_numerology', CREDIT_COSTS.get('car_numerology', 1)),
+            
+            # Ведическое время
+            'vedic_daily': config.get('vedic_daily', CREDIT_COSTS.get('vedic_daily', 1)),
+            'vedic_weekly': config.get('vedic_weekly', CREDIT_COSTS.get('vedic_weekly', 2)),
+            'vedic_monthly': config.get('vedic_monthly', CREDIT_COSTS.get('vedic_monthly', 5)),
+            'vedic_quarterly': config.get('vedic_quarterly', CREDIT_COSTS.get('vedic_quarterly', 10)),
+            
+            # Планетарный маршрут
+            'planetary_daily': config.get('planetary_daily', CREDIT_COSTS.get('planetary_daily', 1)),
+            'planetary_weekly': config.get('planetary_weekly', CREDIT_COSTS.get('planetary_weekly', 2)),
+            'planetary_monthly': config.get('planetary_monthly', CREDIT_COSTS.get('planetary_monthly', 5)),
+            'planetary_quarterly': config.get('planetary_quarterly', CREDIT_COSTS.get('planetary_quarterly', 10)),
+            
+            # Отчеты
+            'comprehensive_report': config.get('comprehensive_report', CREDIT_COSTS.get('comprehensive_report', 10)),
+            'pdf_report': config.get('pdf_report', CREDIT_COSTS.get('pdf_report', 5)),
+            'html_report': config.get('html_report', CREDIT_COSTS.get('html_report', 3)),
+            
+            # Прочее
+            'personality_test': config.get('personality_test', CREDIT_COSTS.get('personality_test', 1)),
+        }
+    except Exception as e:
+        logger.error(f"Error getting credit costs: {e}")
+        # В случае ошибки возвращаем дефолтные значения
+        return CREDIT_COSTS
+
 @api_router.get('/user/credit-history')
 async def get_credit_history(limit: int = 50, offset: int = 0, current_user: dict = Depends(get_current_user)):
     """Получить историю транзакций баллов пользователя"""

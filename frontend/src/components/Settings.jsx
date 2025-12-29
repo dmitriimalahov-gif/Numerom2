@@ -1,9 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Moon, Sun, Bell, Calendar, Globe, Lock, User, Database, Smartphone, Mail } from 'lucide-react';
 import { Card } from './ui/card';
 import { Label } from './ui/label';
 import { useTheme } from '../hooks/useTheme';
+
+let buildVersion = '1.0.0';
+let buildDate = new Date().toISOString();
+try {
+  const { getBuildVersion, getBuildDate } = require('../utils/buildInfo');
+  buildVersion = getBuildVersion();
+  buildDate = getBuildDate();
+} catch (e) {
+  console.warn('Build info not available');
+}
 
 const Settings = () => {
   const { theme, setTheme } = useOutletContext();
@@ -258,11 +268,20 @@ const Settings = () => {
         </div>
 
         {/* Информация о версии */}
-        <div className={`mt-8 p-4 rounded-lg border ${themeConfig.card} text-center`}>
-          <p className={`text-sm ${themeConfig.mutedText}`}>
-            Версия приложения: <span className="font-semibold">1.0.0</span>
+        <div className={`mt-8 p-6 rounded-2xl border ${themeConfig.isDark ? 'bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border-indigo-500/20' : 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-200'} text-center`}>
+          <p className={`text-sm ${themeConfig.mutedText} mb-2`}>
+            📦 Версия сборки: <span className={`font-bold ${themeConfig.isDark ? 'text-indigo-300' : 'text-indigo-700'}`}>{buildVersion}</span>
           </p>
-          <p className={`text-xs ${themeConfig.mutedText} mt-1`}>
+          <p className={`text-xs ${themeConfig.mutedText}`}>
+            🕐 Собрано: {new Date(buildDate).toLocaleString('ru-RU', { 
+              day: '2-digit', 
+              month: '2-digit', 
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}
+          </p>
+          <p className={`text-xs ${themeConfig.mutedText} mt-3`}>
             © 2025 NumerOM. Все права защищены.
           </p>
         </div>

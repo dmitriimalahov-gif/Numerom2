@@ -19,6 +19,7 @@ import {
   Feather
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
+import { getTitleGlow, getTextGlow, getNumberGlow } from '../utils/textGlow';
 
 const LETTER_VALUES = {
   А: 1,
@@ -360,12 +361,20 @@ const buildNumberPalette = (number) => NUMBER_PALETTE[number] || NUMBER_PALETTE.
 
 const formatList = (items) => items.join(', ');
 
+// Функция для склонения слова "балл"
+const formatCredits = (num) => {
+  if (num === 1) return `${num} балл`;
+  if (num >= 2 && num <= 4) return `${num} балла`;
+  return `${num} баллов`;
+};
+
 const NameNumerology = () => {
   const { user } = useAuth();
   const [firstName, setFirstName] = useState(user?.name?.split(' ')[0] || '');
   const [lastName, setLastName] = useState(user?.name?.split(' ')[1] || '');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [cost, setCost] = useState(7); // Стоимость расчёта
   const [activeSection, setActiveSection] = useState('calculator');
   const [theme, setTheme] = useState(() => {
     if (typeof window === 'undefined') return 'dark';
@@ -376,6 +385,23 @@ const NameNumerology = () => {
     if (typeof window === 'undefined') return;
     localStorage.setItem('name-numerology-theme', theme);
   }, [theme]);
+
+  // Загружаем стоимость из API
+  useEffect(() => {
+    const fetchCost = async () => {
+      try {
+        const backendUrl = typeof window !== 'undefined' ? window.location.origin.replace(':3000', ':8000') : 'http://localhost:8000';
+        const response = await fetch(`${backendUrl}/api/credits/costs`);
+        if (response.ok) {
+          const data = await response.json();
+          setCost(data.name_numerology || 7);
+        }
+      } catch (e) {
+        console.warn('Не удалось загрузить стоимость:', e);
+      }
+    };
+    fetchCost();
+  }, []);
 
   const themeConfig = THEME_CONFIG[theme];
   const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
@@ -529,17 +555,35 @@ const NameNumerology = () => {
         />
         <div className="relative z-10 flex flex-col gap-3 p-5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-[0.35em] opacity-80">
+            <span 
+              className="text-xs font-semibold uppercase tracking-[0.35em] opacity-80"
+              style={getTextGlow(theme === 'dark')}
+            >
               {item.label}
             </span>
             <Sparkles className="h-4 w-4 opacity-60" />
             </div>
-          <div className="text-4xl font-semibold leading-none">{displayValue}</div>
+          <div 
+            className="text-5xl font-bold leading-none"
+            style={getNumberGlow(theme === 'dark', palette.text)}
+          >
+            {displayValue}
+          </div>
           {item.subtitle && (
-            <p className="text-sm font-medium opacity-80">{item.subtitle}</p>
+            <p 
+              className="text-sm font-medium opacity-90"
+              style={getTextGlow(theme === 'dark')}
+            >
+              {item.subtitle}
+            </p>
           )}
           {item.description && (
-            <p className="text-xs opacity-80 leading-relaxed">{item.description}</p>
+            <p 
+              className="text-xs opacity-90 leading-relaxed"
+              style={getTextGlow(theme === 'dark')}
+            >
+              {item.description}
+            </p>
           )}
           {meaning && (
             <div className="flex flex-wrap gap-2 pt-2 text-[11px] uppercase tracking-[0.2em] opacity-80">
@@ -588,13 +632,22 @@ const NameNumerology = () => {
           />
           <div className="relative z-10 flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
             <div className="space-y-6">
-              <p className={`text-xs font-semibold uppercase tracking-[0.4em] ${themeConfig.subtleText}`}>
+              <p 
+                className={`text-xs font-semibold uppercase tracking-[0.4em] ${themeConfig.subtleText}`}
+                style={getTextGlow(theme === 'dark')}
+              >
                 Личная вибрация имени
               </p>
-              <h2 className="text-3xl md:text-4xl font-semibold leading-tight">
+              <h2 
+                className="text-3xl md:text-4xl font-semibold leading-tight"
+                style={getTitleGlow(theme === 'dark', '#ffffff')}
+              >
                 {results.fullName || '—'}
               </h2>
-              <p className={`max-w-2xl text-sm md:text-base leading-relaxed ${themeConfig.mutedText}`}>
+              <p 
+                className={`max-w-2xl text-sm md:text-base leading-relaxed ${themeConfig.mutedText}`}
+                style={getTextGlow(theme === 'dark')}
+              >
                 {fullNameMeaning
                   ? `${fullNameMeaning.meaning} Это основная частота вашего имени. Совмещая её с датой рождения, вы выстраиваете уникальную траекторию роста.`
                   : 'Это основная частота вашего имени. Совмещая её с датой рождения, вы выстраиваете уникальную траекторию роста.'}
@@ -608,18 +661,48 @@ const NameNumerology = () => {
                 </div>
               </div>
             <div className="flex w-full max-w-sm flex-col gap-4">
-              <div className="rounded-2xl bg-white/5 p-4 text-center shadow-inner shadow-black/20">
-                <p className="text-xs uppercase tracking-[0.35em] opacity-70">Число полного имени</p>
-                <p className="mt-3 text-5xl font-semibold">{results.fullNameNumber}</p>
-                </div>
+              <div className={`rounded-2xl p-5 text-center shadow-lg ${theme === 'dark' ? 'bg-white/10 border border-white/20' : 'bg-white/80 shadow-inner'}`}>
+                <p 
+                  className="text-xs uppercase tracking-[0.35em] opacity-70"
+                  style={getTextGlow(theme === 'dark')}
+                >
+                  Число полного имени
+                </p>
+                <p 
+                  className="mt-3 text-6xl font-bold"
+                  style={getNumberGlow(theme === 'dark')}
+                >
+                  {results.fullNameNumber}
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="rounded-xl bg-white/5 p-4 text-center">
-                  <p className="text-xs uppercase tracking-[0.35em] opacity-70">Число души</p>
-                  <p className="mt-2 text-2xl font-semibold">{results.soulNumber}</p>
+                <div className={`rounded-xl p-4 text-center ${theme === 'dark' ? 'bg-white/10 border border-white/20' : 'bg-white/80'}`}>
+                  <p 
+                    className="text-xs uppercase tracking-[0.35em] opacity-70"
+                    style={getTextGlow(theme === 'dark')}
+                  >
+                    Число души
+                  </p>
+                  <p 
+                    className="mt-2 text-3xl font-bold"
+                    style={getNumberGlow(theme === 'dark')}
+                  >
+                    {results.soulNumber}
+                  </p>
                 </div>
-                <div className="rounded-xl bg-white/5 p-4 text-center">
-                  <p className="text-xs uppercase tracking-[0.35em] opacity-70">Число личности</p>
-                  <p className="mt-2 text-2xl font-semibold">{results.personalityNumber}</p>
+                <div className={`rounded-xl p-4 text-center ${theme === 'dark' ? 'bg-white/10 border border-white/20' : 'bg-white/80'}`}>
+                  <p 
+                    className="text-xs uppercase tracking-[0.35em] opacity-70"
+                    style={getTextGlow(theme === 'dark')}
+                  >
+                    Число личности
+                  </p>
+                  <p 
+                    className="mt-2 text-3xl font-bold"
+                    style={getNumberGlow(theme === 'dark')}
+                  >
+                    {results.personalityNumber}
+                  </p>
                 </div>
               </div>
               <div className="rounded-2xl bg-gradient-to-br from-emerald-400/15 to-sky-400/10 p-4 text-sm leading-relaxed">
@@ -635,8 +718,16 @@ const NameNumerology = () => {
         <div className="space-y-5">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
-              <h3 className="text-2xl font-semibold">Основные коды имени</h3>
-              <p className={`text-sm ${themeConfig.helperText}`}>
+              <h3 
+                className="text-2xl font-semibold"
+                style={getTitleGlow(theme === 'dark', '#a78bfa')}
+              >
+                Основные коды имени
+              </h3>
+              <p 
+                className={`text-sm ${themeConfig.helperText}`}
+                style={getTextGlow(theme === 'dark')}
+              >
                 Каждый блок раскрывает конкретную грань вашей личной матрицы имени.
               </p>
                 </div>
@@ -647,8 +738,16 @@ const NameNumerology = () => {
         <div className="space-y-5">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
-              <h3 className="text-2xl font-semibold">Глубинные вибрации</h3>
-              <p className={`text-sm ${themeConfig.helperText}`}>
+              <h3 
+                className="text-2xl font-semibold"
+                style={getTitleGlow(theme === 'dark', '#a78bfa')}
+              >
+                Глубинные вибрации
+              </h3>
+              <p 
+                className={`text-sm ${themeConfig.helperText}`}
+                style={getTextGlow(theme === 'dark')}
+              >
                 Эти числа показывают эмоциональную матрицу, зрелость и баланс имени.
                     </p>
                   </div>
@@ -661,12 +760,27 @@ const NameNumerology = () => {
               >
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className={`text-xs uppercase tracking-[0.4em] ${themeConfig.subtleText}`}>{item.label}</p>
-                    <p className="mt-3 text-4xl font-semibold">{item.value || '—'}</p>
+                    <p 
+                      className={`text-xs uppercase tracking-[0.4em] ${themeConfig.subtleText}`}
+                      style={getTextGlow(theme === 'dark')}
+                    >
+                      {item.label}
+                    </p>
+                    <p 
+                      className="mt-3 text-5xl font-bold"
+                      style={getNumberGlow(theme === 'dark')}
+                    >
+                      {item.value || '—'}
+                    </p>
                   </div>
                   <Crown className="h-5 w-5 opacity-60" />
                 </div>
-                <p className={`mt-4 text-sm leading-relaxed ${themeConfig.mutedText}`}>{item.subtitle}</p>
+                <p 
+                  className={`mt-4 text-sm leading-relaxed ${themeConfig.mutedText}`}
+                  style={getTextGlow(theme === 'dark')}
+                >
+                  {item.subtitle}
+                </p>
                 {NUMBER_MEANINGS[item.value] && (
                   <div className="mt-4 flex flex-wrap gap-2 text-xs">
                     {NUMBER_MEANINGS[item.value].traits.map((trait) => (
@@ -1053,11 +1167,27 @@ const NameNumerology = () => {
       <div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-4 py-12 md:py-16">
         <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
           <div className="space-y-4">
-            <p className={`text-xs uppercase tracking-[0.4em] ${themeConfig.subtleText}`}>Личный код</p>
-            <h1 className="text-3xl md:text-4xl font-semibold leading-tight">
-              Нумерология имени <span className="text-emerald-400">Numerom</span>
+            <p 
+              className={`text-xs uppercase tracking-[0.4em] ${themeConfig.subtleText}`}
+              style={getTextGlow(theme === 'dark')}
+            >
+              Личный код
+            </p>
+            <h1 
+              className="text-3xl md:text-4xl font-semibold leading-tight"
+              style={getTitleGlow(theme === 'dark', '#ffffff')}
+            >
+              Нумерология имени <span 
+                className="text-emerald-400"
+                style={getTitleGlow(theme === 'dark', '#34d399')}
+              >
+                Numerom
+              </span>
             </h1>
-            <p className={`max-w-2xl text-sm md:text-base leading-relaxed ${themeConfig.mutedText}`}>
+            <p 
+              className={`max-w-2xl text-sm md:text-base leading-relaxed ${themeConfig.mutedText}`}
+              style={getTextGlow(theme === 'dark')}
+            >
               Изучите скрытую архитектуру своего имени: от базовых чисел до энергетической совместимости. Все расчёты строятся на вашей персональной вибрации.
             </p>
                 </div>
@@ -1112,14 +1242,37 @@ const NameNumerology = () => {
                 </div>
               </div>
 
+          {/* Блок со стоимостью */}
+          <div className={`mt-4 mb-4 p-4 rounded-xl border-2 border-dashed ${themeConfig.isDark ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-emerald-300 bg-emerald-50'}`}>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">💰</span>
+                <span className={`font-semibold ${themeConfig.text}`}>Стоимость расчёта:</span>
+                <span className={`text-xl font-bold ${themeConfig.isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                  {formatCredits(cost)}
+                </span>
+              </div>
+              {user && (
+                <span className={`text-sm ${themeConfig.mutedText}`}>
+                  Ваш баланс: <span className="font-bold">{user.credits_remaining ?? 0}</span> баллов
+                </span>
+              )}
+            </div>
+          </div>
+
           <Button
             onClick={handleCalculate}
-            disabled={loading || (!firstName && !lastName)}
-            className="mt-6 w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-sky-500 py-5 text-base font-semibold shadow-[0_18px_38px_rgba(16,185,129,0.35)] transition-all duration-200 hover:brightness-110"
+            disabled={loading || (!firstName && !lastName) || ((user?.credits_remaining ?? 0) < cost)}
+            className="mt-2 w-full rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-sky-500 py-5 text-base font-semibold shadow-[0_18px_38px_rgba(16,185,129,0.35)] transition-all duration-200 hover:brightness-110 disabled:opacity-50"
           >
             <Calculator className="mr-2 h-4 w-4" />
-            {loading ? 'Рассчитываем...' : 'Рассчитать нумерологию имени'}
+            {loading ? 'Рассчитываем...' : `Рассчитать нумерологию имени (${formatCredits(cost)})`}
           </Button>
+          {(user?.credits_remaining ?? 0) < cost && (
+            <p className={`text-sm mt-2 text-center ${themeConfig.isDark ? 'text-red-400' : 'text-red-600'}`}>
+              ⚠️ Недостаточно баллов для расчёта
+            </p>
+          )}
             </div>
 
         <SectionSwitcher />

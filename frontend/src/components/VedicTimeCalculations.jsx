@@ -212,11 +212,19 @@ const getLocalISODate = () => {
   return local.toISOString().split('T')[0];
 };
 
+// Функция для склонения слова "балл"
+const formatCredits = (num) => {
+  if (num === 1) return `${num} балл`;
+  if (num >= 2 && num <= 4) return `${num} балла`;
+  return `${num} баллов`;
+};
+
 const VedicTimeCalculations = () => {
   const [schedule, setSchedule] = useState(null);
   const [yesterdaySchedule, setYesterdaySchedule] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [cost, setCost] = useState(7); // Стоимость расчёта
   const [selectedDate, setSelectedDate] = useState(() => getLocalISODate());
   const [selectedCity, setSelectedCity] = useState('');
   const [theme, setTheme] = useState(() => {
@@ -228,6 +236,22 @@ const VedicTimeCalculations = () => {
   const { user } = useAuth();
 
   const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
+
+  // Загружаем стоимость из API
+  useEffect(() => {
+    const fetchCost = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/credits/costs`);
+        if (response.ok) {
+          const data = await response.json();
+          setCost(data.vedic_daily || 7);
+        }
+      } catch (e) {
+        console.warn('Не удалось загрузить стоимость:', e);
+      }
+    };
+    fetchCost();
+  }, [apiBaseUrl]);
 
   // Функция для загрузки персонализированных советов через API
   const getPersonalizedAdvice = useCallback(async (hour) => {
@@ -794,11 +818,30 @@ const VedicTimeCalculations = () => {
                   />
                 </div>
               </div>
+              
+              {/* Блок со стоимостью */}
+              <div className={`p-4 rounded-xl border-2 border-dashed ${themeConfig.isDark ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-emerald-300 bg-emerald-50'}`}>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">💰</span>
+                    <span className={`text-sm font-semibold ${themeConfig.text}`}>Стоимость расчёта:</span>
+                    <span className={`text-lg font-bold ${themeConfig.isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                      {formatCredits(cost)}
+                    </span>
+                  </div>
+                  {user && (
+                    <span className={`text-xs ${themeConfig.mutedText}`}>
+                      Баланс: <span className="font-bold">{user.credits_remaining ?? 0}</span> баллов
+                    </span>
+                  )}
+                </div>
+              </div>
+
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Button
                   onClick={() => fetchVedicSchedule(selectedDate, selectedCity)}
-                  disabled={loading}
-                  className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-400 via-cyan-400 to-sky-400 px-6 py-3 text-sm font-semibold shadow-lg shadow-emerald-200/30 transition-all hover:brightness-110"
+                  disabled={loading || ((user?.credits_remaining ?? 0) < cost)}
+                  className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-400 via-cyan-400 to-sky-400 px-6 py-3 text-sm font-semibold shadow-lg shadow-emerald-200/30 transition-all hover:brightness-110 disabled:opacity-50"
                 >
                   {loading ? (
                     <>
@@ -808,15 +851,20 @@ const VedicTimeCalculations = () => {
                   ) : (
                     <>
                       <RefreshCcw className="h-4 w-4" />
-                      Обновить расчёт
+                      Обновить расчёт ({formatCredits(cost)})
                     </>
                   )}
                 </Button>
+                {(user?.credits_remaining ?? 0) < cost && (
+                  <p className={`text-xs ${themeConfig.isDark ? 'text-red-400' : 'text-red-600'}`}>
+                    ⚠️ Недостаточно баллов
+                  </p>
+                )}
                 <p className={`text-xs ${themeConfig.subtleText}`}>
                   Расчёт учитывает широту, долготу и часовой пояс выбранного города.
                 </p>
-                      </div>
-                    </div>
+              </div>
+            </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
               <div className="flex items-center gap-3">
                 <Sparkles className="h-5 w-5 text-emerald-300" />

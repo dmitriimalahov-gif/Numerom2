@@ -61,6 +61,7 @@
   },
   "scripts": {
     "start": "craco start",
+    "prebuild": "node scripts/generateBuildInfo.js",
     "build": "craco build",
     "build:learning-v2": "cp src/App.learning-v2.jsx src/App.jsx && craco build && cp src/App.js.backup src/App.jsx 2>/dev/null || true",
     "test": "craco test"

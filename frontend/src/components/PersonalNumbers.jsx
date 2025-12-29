@@ -8,12 +8,15 @@ import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { PLANET_COLORS } from './constants/colors';
 import { getBackendUrl } from '../utils/backendUrl';
+import { useTheme } from '../hooks/useTheme';
+import { getTitleGlow, getTextGlow } from '../utils/textGlow';
 
-const PersonalNumbers = ({ fullScreen = false, onBack }) => {
+const PersonalNumbers = ({ fullScreen = false, onBack, theme = 'dark' }) => {
   const { user } = useAuth();
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [cost, setCost] = useState(7); // Стоимость расчёта
   
   // Detail modal state
   const [detailOpen, setDetailOpen] = useState(false);
@@ -22,10 +25,28 @@ const PersonalNumbers = ({ fullScreen = false, onBack }) => {
   const [showFormula, setShowFormula] = useState(null);
 
   const backendUrl = getBackendUrl();
+  const themeConfig = useTheme(theme);
 
+  // Загружаем стоимость из API
   useEffect(() => {
-    if (user?.birth_date) calculate();
-  }, [user?.birth_date]);
+    const fetchCost = async () => {
+      try {
+        const response = await fetch(`${backendUrl}/api/credits/costs`);
+        if (response.ok) {
+          const data = await response.json();
+          setCost(data.personal_numbers || 7);
+        }
+      } catch (e) {
+        console.warn('Не удалось загрузить стоимость:', e);
+      }
+    };
+    fetchCost();
+  }, [backendUrl]);
+
+  // УБРАНА автозагрузка - пользователь должен сам нажать кнопку и увидеть стоимость
+  // useEffect(() => {
+  //   if (user?.birth_date) calculate();
+  // }, [user?.birth_date]);
 
   const calculate = async () => {
     setLoading(true);
@@ -105,34 +126,68 @@ const PersonalNumbers = ({ fullScreen = false, onBack }) => {
   };
 
   const FormulaModal = ({ formula, onClose }) => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b p-4 flex justify-between items-center">
-          <h3 className="text-xl font-bold flex items-center">
-            <Calculator className="w-6 h-6 mr-2 text-blue-500" />
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+      <div className={`rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl ${themeConfig.isDark ? 'bg-slate-900 text-slate-100 border border-slate-700' : 'bg-white text-slate-900'}`}>
+        <div className={`sticky top-0 border-b p-6 flex justify-between items-center ${themeConfig.isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}>
+          <h3 
+            className={`text-2xl font-bold flex items-center ${themeConfig.text}`}
+            style={getTitleGlow(themeConfig.isDark, '#60a5fa')}
+          >
+            <Calculator className="w-7 h-7 mr-3 text-blue-500" />
             {formula.title}
           </h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+          <button 
+            onClick={onClose} 
+            className={`p-2 rounded-lg transition-colors ${themeConfig.isDark ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-800' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
+          >
             <X className="w-6 h-6" />
           </button>
         </div>
         
-        <div className="p-6 space-y-4">
-          <div className="bg-blue-50 p-4 rounded-lg">
-            <h4 className="font-semibold text-blue-800 mb-2">🧮 Формула расчёта:</h4>
-            <div className="font-mono text-sm">
+        <div className="p-6 space-y-5">
+          <div className={`p-5 rounded-xl ${themeConfig.isDark ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-blue-50'}`}>
+            <h4 
+              className={`font-semibold mb-3 text-lg ${themeConfig.isDark ? 'text-blue-300' : 'text-blue-800'}`}
+              style={getTitleGlow(themeConfig.isDark, '#60a5fa')}
+            >
+              🧮 Формула расчёта:
+            </h4>
+            <div 
+              className={`font-mono text-base ${themeConfig.isDark ? 'text-blue-100' : 'text-blue-900'}`}
+              style={getTextGlow(themeConfig.isDark, '#93c5fd')}
+            >
               {formula.calculation}
             </div>
           </div>
           
-          <div className="bg-green-50 p-4 rounded-lg">
-            <h4 className="font-semibold text-green-800 mb-2">📖 Метод вычисления:</h4>
-            <p className="text-sm">{formula.method}</p>
+          <div className={`p-5 rounded-xl ${themeConfig.isDark ? 'bg-green-500/20 border border-green-500/30' : 'bg-green-50'}`}>
+            <h4 
+              className={`font-semibold mb-3 text-lg ${themeConfig.isDark ? 'text-green-300' : 'text-green-800'}`}
+              style={getTitleGlow(themeConfig.isDark, '#34d399')}
+            >
+              📖 Метод вычисления:
+            </h4>
+            <p 
+              className={`text-base leading-relaxed ${themeConfig.isDark ? 'text-green-100' : 'text-green-900'}`}
+              style={getTextGlow(themeConfig.isDark, '#86efac')}
+            >
+              {formula.method}
+            </p>
           </div>
           
-          <div className="bg-purple-50 p-4 rounded-lg">
-            <h4 className="font-semibold text-purple-800 mb-2">💫 Значение числа:</h4>
-            <p className="text-sm">{formula.explanation}</p>
+          <div className={`p-5 rounded-xl ${themeConfig.isDark ? 'bg-purple-500/20 border border-purple-500/30' : 'bg-purple-50'}`}>
+            <h4 
+              className={`font-semibold mb-3 text-lg ${themeConfig.isDark ? 'text-purple-300' : 'text-purple-800'}`}
+              style={getTitleGlow(themeConfig.isDark, '#c084fc')}
+            >
+              💫 Значение числа:
+            </h4>
+            <p 
+              className={`text-base leading-relaxed ${themeConfig.isDark ? 'text-purple-100' : 'text-purple-900'}`}
+              style={getTextGlow(themeConfig.isDark, '#d8b4fe')}
+            >
+              {formula.explanation}
+            </p>
           </div>
         </div>
       </div>
@@ -293,15 +348,43 @@ ${typeInfo.details[number] || 'Интерпретация не найдена'}`
 
   if (!results) {
     return (
-      <Card>
-        <CardContent className="py-12 text-center">
-          <Calculator className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-          <p className="text-muted-foreground">
-            Нажмите кнопку для расчёта персональных чисел
-          </p>
-          <Button onClick={calculate} className="mt-4 numerology-gradient">
-            Рассчитать числа
+      <Card className={themeConfig.card}>
+        <CardHeader className="text-center">
+          <CardTitle className={`text-2xl ${themeConfig.text}`}>
+            <Calculator className="w-8 h-8 mx-auto mb-2 text-purple-500" />
+            Персональные числа
+          </CardTitle>
+          <CardDescription className={themeConfig.mutedText}>
+            Расчёт ваших нумерологических чисел на основе даты рождения
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="py-8 text-center space-y-6">
+          <div className={`p-4 rounded-xl border-2 border-dashed ${themeConfig.isDark ? 'border-purple-500/40 bg-purple-500/10' : 'border-purple-300 bg-purple-50'}`}>
+            <p className={`text-lg font-semibold ${themeConfig.text}`}>
+              💰 Стоимость расчёта
+            </p>
+            <p className={`text-3xl font-bold mt-2 ${themeConfig.isDark ? 'text-purple-400' : 'text-purple-600'}`}>
+              {cost} {cost === 1 ? 'балл' : cost >= 2 && cost <= 4 ? 'балла' : 'баллов'}
+            </p>
+            {user && (
+              <p className={`text-sm mt-2 ${themeConfig.mutedText}`}>
+                Ваш баланс: <span className="font-bold">{user.credits_remaining ?? 0}</span> баллов
+              </p>
+            )}
+          </div>
+          <Button 
+            onClick={calculate} 
+            className="numerology-gradient text-lg py-6 px-8"
+            disabled={(user?.credits_remaining ?? 0) < cost}
+          >
+            <Calculator className="w-5 h-5 mr-2" />
+            Рассчитать числа ({cost} {cost === 1 ? 'балл' : cost >= 2 && cost <= 4 ? 'балла' : 'баллов'})
           </Button>
+          {(user?.credits_remaining ?? 0) < cost && (
+            <p className="text-red-500 text-sm">
+              ⚠️ Недостаточно баллов для расчёта
+            </p>
+          )}
         </CardContent>
       </Card>
     );
@@ -327,8 +410,8 @@ ${typeInfo.details[number] || 'Интерпретация не найдена'}`
   );
 
   const PersonalNumberCard = ({ title, value, type, shortDescription }) => (
-    <div className="p-4 rounded-xl bg-white shadow border text-center hover:bg-slate-50 transition-colors">
-      <div className="text-xs text-gray-500 mb-1">{title}</div>
+    <div className={`p-4 rounded-xl shadow border text-center transition-colors ${themeConfig.isDark ? 'bg-slate-800/50 border-slate-700 hover:bg-slate-700/50' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+      <div className={`text-xs mb-1 ${themeConfig.isDark ? 'text-slate-400' : 'text-gray-500'}`}>{title}</div>
       <div 
         className="text-3xl font-bold mb-2 cursor-pointer hover:scale-110 transition-transform" 
         style={{ color: planetLabelColor(value) }}
@@ -336,12 +419,12 @@ ${typeInfo.details[number] || 'Интерпретация не найдена'}`
       >
         {value}
       </div>
-      <div className="text-xs text-gray-600 leading-tight mb-2">{shortDescription}</div>
+      <div className={`text-xs leading-tight mb-2 ${themeConfig.isDark ? 'text-slate-300' : 'text-gray-600'}`}>{shortDescription}</div>
       <Button
         variant="ghost"
         size="sm"
         onClick={() => setShowFormula(getNumberFormula(type + '_number', value, user?.birth_date))}
-        className="text-xs text-blue-600 hover:text-blue-800 p-1 h-auto"
+        className={`text-xs p-1 h-auto ${themeConfig.isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-800'}`}
       >
         <Calculator className="w-3 h-3 mr-1" />
         Формула
@@ -380,13 +463,13 @@ ${typeInfo.details[number] || 'Интерпретация не найдена'}`
 
     return (
       <div className="mt-6">
-        <h4 className="text-lg font-semibold mb-4 text-center">Сила Планет по Дням Недели</h4>
-        <div className="text-xs text-gray-600 mb-4 text-center">
+        <h4 className={`text-lg font-semibold mb-4 text-center ${themeConfig.text}`}>Сила Планет по Дням Недели</h4>
+        <div className={`text-xs mb-4 text-center ${themeConfig.isDark ? 'text-slate-400' : 'text-gray-600'}`}>
           День недели рождения: {results.birth_weekday}
         </div>
         
         {/* График с сеткой */}
-        <div className="bg-gray-900 rounded-lg p-4 relative overflow-hidden">
+        <div className={`rounded-lg p-4 relative overflow-hidden ${themeConfig.isDark ? 'bg-slate-900' : 'bg-gray-100'}`}>
           <svg 
             viewBox="0 0 700 400" 
             className="w-full h-64"
@@ -490,15 +573,15 @@ ${typeInfo.details[number] || 'Интерпретация не найдена'}`
         {/* Легенда планет */}
         <div className="mt-4 grid grid-cols-4 md:grid-cols-7 gap-2">
           {chartData.map((point, index) => (
-            <div key={point.planet} className="text-center p-2 rounded-lg bg-gray-50 border">
+            <div key={point.planet} className={`text-center p-2 rounded-lg border ${themeConfig.isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-gray-50 border-slate-200'}`}>
               <div 
                 className="text-sm font-semibold mb-1"
                 style={{ color: point.color }}
               >
                 {point.planet}
               </div>
-              <div className="text-xs text-gray-500">{point.day}</div>
-              <div className="text-lg font-bold text-gray-800">
+              <div className={`text-xs ${themeConfig.isDark ? 'text-slate-400' : 'text-gray-500'}`}>{point.day}</div>
+              <div className={`text-lg font-bold ${themeConfig.isDark ? 'text-slate-200' : 'text-gray-800'}`}>
                 {point.strength}
               </div>
             </div>
@@ -582,11 +665,19 @@ ${typeInfo.details[number] || 'Интерпретация не найдена'}`
 
       {/* Detail Modal */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className={`max-w-2xl shadow-2xl ${themeConfig.isDark ? 'bg-slate-900 text-slate-100 border-slate-700' : 'bg-white text-slate-900'}`}>
           <DialogHeader>
-            <DialogTitle>{detailTitle}</DialogTitle>
+            <DialogTitle 
+              className={`text-2xl ${themeConfig.text}`}
+              style={getTitleGlow(themeConfig.isDark, '#a78bfa')}
+            >
+              {detailTitle}
+            </DialogTitle>
           </DialogHeader>
-          <div className="text-sm whitespace-pre-line leading-relaxed max-h-96 overflow-y-auto">
+          <div 
+            className={`text-base whitespace-pre-line leading-relaxed max-h-96 overflow-y-auto p-2 ${themeConfig.isDark ? 'text-slate-200' : 'text-slate-700'}`}
+            style={getTextGlow(themeConfig.isDark)}
+          >
             {detailText}
           </div>
         </DialogContent>

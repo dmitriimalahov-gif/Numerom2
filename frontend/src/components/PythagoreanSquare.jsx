@@ -9,13 +9,17 @@ import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { PLANET_COLORS, NUMBER_COLORS, withAlpha } from './constants/colors';
 import { getBackendUrl } from '../utils/backendUrl';
+import { useTheme } from '../hooks/useTheme';
+import { getTitleGlow, getTextGlow } from '../utils/textGlow';
 
-const PythagoreanSquare = ({ fullScreen = false }) => {
+const PythagoreanSquare = ({ fullScreen = false, theme = 'dark' }) => {
   const { user } = useAuth();
+  const themeConfig = useTheme(theme);
   const [results, setResults] = useState(null);
   const [planetaryEnergies, setPlanetaryEnergies] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [cost, setCost] = useState(7); // Стоимость расчёта
   const BUILD_VERSION = '2025-11-09-10-30'; // Force rebuild
 
   // Detail modal state
@@ -25,7 +29,24 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
 
   const backendUrl = getBackendUrl();
 
-  useEffect(() => { if (user?.birth_date) calculateSquare(); }, [user?.birth_date]);
+  // Загружаем стоимость из API
+  useEffect(() => {
+    const fetchCost = async () => {
+      try {
+        const response = await fetch(`${backendUrl}/api/credits/costs`);
+        if (response.ok) {
+          const data = await response.json();
+          setCost(data.pythagorean_square || 7);
+        }
+      } catch (e) {
+        console.warn('Не удалось загрузить стоимость:', e);
+      }
+    };
+    fetchCost();
+  }, [backendUrl]);
+
+  // УБРАНА автозагрузка - пользователь должен сам нажать кнопку и увидеть стоимость
+  // useEffect(() => { if (user?.birth_date) calculateSquare(); }, [user?.birth_date]);
 
   const calculateSquare = async () => {
     setLoading(true); setError('');
@@ -663,30 +684,70 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
 
   if (loading) return (<Card><CardContent className="flex items-center justify-center py-12"><Loader className="w-6 h-6 animate-spin mr-2" /><span>Строим ваш квадрат Пифагора...</span></CardContent></Card>);
   if (error) return (<Card><CardContent className="py-12"><Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert><Button onClick={calculateSquare} className="mt-4 w-full">Попробовать снова</Button></CardContent></Card>);
-  if (!results) return (<Card><CardContent className="py-12 text-center"><Grid3X3 className="w-12 h-12 text-muted-foreground mx-auto mb-4" /><p className="text-muted-foreground">Нажмите кнопку для построения квадрата Пифагора</p><Button onClick={calculateSquare} className="mt-4 numerology-gradient">Построить квадрат</Button></CardContent></Card>);
+  if (!results) return (
+    <Card className={themeConfig.card}>
+      <CardHeader className="text-center">
+        <CardTitle className={`text-2xl ${themeConfig.text}`}>
+          <Grid3X3 className="w-8 h-8 mx-auto mb-2 text-indigo-500" />
+          Квадрат Пифагора
+        </CardTitle>
+        <CardDescription className={themeConfig.mutedText}>
+          Построение нумерологического квадрата на основе даты рождения
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="py-8 text-center space-y-6">
+        <div className={`p-4 rounded-xl border-2 border-dashed ${themeConfig.isDark ? 'border-indigo-500/40 bg-indigo-500/10' : 'border-indigo-300 bg-indigo-50'}`}>
+          <p className={`text-lg font-semibold ${themeConfig.text}`}>
+            💰 Стоимость расчёта
+          </p>
+          <p className={`text-3xl font-bold mt-2 ${themeConfig.isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>
+            {cost} {cost === 1 ? 'балл' : cost >= 2 && cost <= 4 ? 'балла' : 'баллов'}
+          </p>
+          {user && (
+            <p className={`text-sm mt-2 ${themeConfig.mutedText}`}>
+              Ваш баланс: <span className="font-bold">{user.credits_remaining ?? 0}</span> баллов
+            </p>
+          )}
+        </div>
+        <Button 
+          onClick={calculateSquare} 
+          className="numerology-gradient text-lg py-6 px-8"
+          disabled={(user?.credits_remaining ?? 0) < cost}
+        >
+          <Grid3X3 className="w-5 h-5 mr-2" />
+          Построить квадрат ({cost} {cost === 1 ? 'балл' : cost >= 2 && cost <= 4 ? 'балла' : 'баллов'})
+        </Button>
+        {(user?.credits_remaining ?? 0) < cost && (
+          <p className="text-red-500 text-sm">
+            ⚠️ Недостаточно баллов для расчёта
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
 
   const LeftStats = () => (
     <div className="w-full md:w-52 flex md:flex-col gap-2 md:mr-3">
       {/* Основные числа */}
-      <div className="p-3 rounded-xl bg-white shadow border text-center cursor-pointer hover:bg-slate-50" 
+      <div className={`p-3 rounded-xl shadow border text-center cursor-pointer transition-colors ${themeConfig.isDark ? 'bg-slate-800/50 border-slate-700 hover:bg-slate-700/50' : 'bg-white border-slate-200 hover:bg-slate-50'}`} 
            onClick={() => openDetail('Число Души', getNumberInterpretation('soul', soulMindRulingFate?.soul))}>
-        <div className="text-xs text-gray-500 mb-1">Число Души</div>
-        <div className="text-2xl font-bold">{soulMindRulingFate?.soul ?? '-'}</div>
+        <div className={`text-xs mb-1 ${themeConfig.isDark ? 'text-slate-400' : 'text-gray-500'}`}>Число Души</div>
+        <div className={`text-2xl font-bold ${themeConfig.text}`}>{soulMindRulingFate?.soul ?? '-'}</div>
       </div>
-      <div className="p-3 rounded-xl bg-white shadow border text-center cursor-pointer hover:bg-slate-50"
+      <div className={`p-3 rounded-xl shadow border text-center cursor-pointer transition-colors ${themeConfig.isDark ? 'bg-slate-800/50 border-slate-700 hover:bg-slate-700/50' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
            onClick={() => openDetail('Число Ума', getNumberInterpretation('mind', soulMindRulingFate?.mind))}>
-        <div className="text-xs text-gray-500 mb-1">Число Ума</div>
-        <div className="text-2xl font-bold">{soulMindRulingFate?.mind ?? '-'}</div>
+        <div className={`text-xs mb-1 ${themeConfig.isDark ? 'text-slate-400' : 'text-gray-500'}`}>Число Ума</div>
+        <div className={`text-2xl font-bold ${themeConfig.text}`}>{soulMindRulingFate?.mind ?? '-'}</div>
       </div>
-      <div className="p-3 rounded-xl bg-white shadow border text-center cursor-pointer hover:bg-slate-50"
+      <div className={`p-3 rounded-xl shadow border text-center cursor-pointer transition-colors ${themeConfig.isDark ? 'bg-slate-800/50 border-slate-700 hover:bg-slate-700/50' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
            onClick={() => openDetail('Правящее Число', getNumberInterpretation('ruling', soulMindRulingFate?.ruling))}>
-        <div className="text-xs text-gray-500 mb-1">Правящее Число</div>
-        <div className="text-2xl font-bold">{soulMindRulingFate?.ruling ?? '-'}</div>
+        <div className={`text-xs mb-1 ${themeConfig.isDark ? 'text-slate-400' : 'text-gray-500'}`}>Правящее Число</div>
+        <div className={`text-2xl font-bold ${themeConfig.text}`}>{soulMindRulingFate?.ruling ?? '-'}</div>
       </div>
-      <div className="p-3 rounded-xl bg-white shadow border text-center cursor-pointer hover:bg-slate-50"
+      <div className={`p-3 rounded-xl shadow border text-center cursor-pointer transition-colors ${themeConfig.isDark ? 'bg-slate-800/50 border-slate-700 hover:bg-slate-700/50' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
            onClick={() => openDetail('Число Судьбы', getNumberInterpretation('fate', soulMindRulingFate?.fate))}>
-        <div className="text-xs text-gray-500 mb-1">Число Судьбы</div>
-        <div className="text-2xl font-bold">{soulMindRulingFate?.fate ?? '-'}</div>
+        <div className={`text-xs mb-1 ${themeConfig.isDark ? 'text-slate-400' : 'text-gray-500'}`}>Число Судьбы</div>
+        <div className={`text-2xl font-bold ${themeConfig.text}`}>{soulMindRulingFate?.fate ?? '-'}</div>
       </div>
       
       {/* Разделитель */}
@@ -784,10 +845,23 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
   const VerticalSums = () => (
     <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2">
       {results.vertical_sums.map((v, i) => (
-        <div key={i} className="text-center bg-white rounded-lg shadow p-2 border cursor-pointer hover:bg-slate-50" onClick={() => openDetail(V_LABELS[i], V_DESC[i])}>
-          <div className="text-xs text-gray-500">{V_LABELS[i]}</div>
-          <div className="text-sm font-semibold">{v}</div>
-          <div className="text-[10px] text-gray-500 line-clamp-2">{V_DESC[i]}</div>
+        <div 
+          key={i} 
+          className={`text-center rounded-lg shadow p-2 border cursor-pointer transition-all duration-200 ${
+            themeConfig.isDark 
+              ? 'bg-indigo-900/40 border-indigo-500/40 hover:bg-indigo-800/50 hover:border-indigo-400/60' 
+              : 'bg-white border-slate-200 hover:bg-slate-50'
+          }`} 
+          onClick={() => openDetail(V_LABELS[i], V_DESC[i])}
+        >
+          <div 
+            className={`text-xs font-semibold ${themeConfig.isDark ? 'text-indigo-300' : 'text-gray-500'}`}
+            style={themeConfig.isDark ? { textShadow: '0 0 8px rgba(129, 140, 248, 0.5)' } : {}}
+          >
+            {V_LABELS[i]}
+          </div>
+          <div className={`text-sm font-bold ${themeConfig.isDark ? 'text-white' : 'text-gray-800'}`}>{v}</div>
+          <div className={`text-[10px] line-clamp-2 ${themeConfig.isDark ? 'text-indigo-200/80' : 'text-gray-500'}`}>{V_DESC[i]}</div>
         </div>
       ))}
     </div>
@@ -796,10 +870,23 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
   const HorizontalSums = () => (
     <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
       {results.horizontal_sums.map((v, i) => (
-        <div key={i} className="text-center bg-white rounded-lg shadow p-2 border cursor-pointer hover:bg-slate-50" onClick={() => openDetail(H_LABELS[i], H_DESC[i])}>
-          <div className="text-xs text-gray-500">{H_LABELS[i]}</div>
-          <div className="text-sm font-semibold">{v}</div>
-          <div className="text-[10px] text-gray-500 line-clamp-2">{H_DESC[i]}</div>
+        <div 
+          key={i} 
+          className={`text-center rounded-lg shadow p-2 border cursor-pointer transition-all duration-200 ${
+            themeConfig.isDark 
+              ? 'bg-amber-900/40 border-amber-500/40 hover:bg-amber-800/50 hover:border-amber-400/60' 
+              : 'bg-white border-slate-200 hover:bg-slate-50'
+          }`} 
+          onClick={() => openDetail(H_LABELS[i], H_DESC[i])}
+        >
+          <div 
+            className={`text-xs font-semibold ${themeConfig.isDark ? 'text-amber-300' : 'text-gray-500'}`}
+            style={themeConfig.isDark ? { textShadow: '0 0 8px rgba(251, 191, 36, 0.5)' } : {}}
+          >
+            {H_LABELS[i]}
+          </div>
+          <div className={`text-sm font-bold ${themeConfig.isDark ? 'text-white' : 'text-gray-800'}`}>{v}</div>
+          <div className={`text-[10px] line-clamp-2 ${themeConfig.isDark ? 'text-amber-200/80' : 'text-gray-500'}`}>{H_DESC[i]}</div>
         </div>
       ))}
     </div>
@@ -807,13 +894,40 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
 
   const DiagonalSums = () => (
     <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-      {[0,1].map((i) => (
-        <div key={i} className="text-center p-3 rounded-xl bg-white shadow border cursor-pointer hover:bg-slate-50" onClick={() => openDetail(D_LABELS[i], D_DESC[i])}>
-          <div className="text-sm text-gray-600 mb-1">{D_LABELS[i]}</div>
-          <div className="text-xl font-bold text-primary mb-1">{results.diagonal_sums?.[i]}</div>
-          <div className="text-[12px] text-gray-600">{D_DESC[i]}</div>
-        </div>
-      ))}
+      {[0,1].map((i) => {
+        // Разные цвета для разных диагоналей
+        const diagColors = [
+          { bg: 'bg-purple-900/40', border: 'border-purple-500/40', hover: 'hover:bg-purple-800/50 hover:border-purple-400/60', title: 'text-purple-300', text: 'text-purple-200/80', shadow: 'rgba(168, 85, 247, 0.5)' },
+          { bg: 'bg-rose-900/40', border: 'border-rose-500/40', hover: 'hover:bg-rose-800/50 hover:border-rose-400/60', title: 'text-rose-300', text: 'text-rose-200/80', shadow: 'rgba(251, 113, 133, 0.5)' }
+        ];
+        const dc = diagColors[i];
+        
+        return (
+          <div 
+            key={i} 
+            className={`text-center p-3 rounded-xl shadow border cursor-pointer transition-all duration-200 ${
+              themeConfig.isDark 
+                ? `${dc.bg} ${dc.border} ${dc.hover}` 
+                : 'bg-white border-slate-200 hover:bg-slate-50'
+            }`} 
+            onClick={() => openDetail(D_LABELS[i], D_DESC[i])}
+          >
+            <div 
+              className={`text-sm font-semibold mb-1 ${themeConfig.isDark ? dc.title : 'text-gray-600'}`}
+              style={themeConfig.isDark ? { textShadow: `0 0 10px ${dc.shadow}` } : {}}
+            >
+              {D_LABELS[i]}
+            </div>
+            <div 
+              className={`text-xl font-bold mb-1 ${themeConfig.isDark ? 'text-white' : 'text-primary'}`}
+              style={themeConfig.isDark ? { textShadow: '0 0 12px rgba(255, 255, 255, 0.4)' } : {}}
+            >
+              {results.diagonal_sums?.[i]}
+            </div>
+            <div className={`text-[12px] ${themeConfig.isDark ? dc.text : 'text-gray-600'}`}>{D_DESC[i]}</div>
+          </div>
+        );
+      })}
     </div>
   );
 
@@ -1105,14 +1219,24 @@ const PythagoreanSquare = ({ fullScreen = false }) => {
       </Card>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-h-[90vh] flex flex-col">
+        <DialogContent className={`max-h-[90vh] flex flex-col shadow-2xl ${themeConfig.isDark ? 'bg-slate-900 text-slate-100 border-slate-700' : 'bg-white text-slate-900'}`}>
           <DialogHeader>
-            <DialogTitle className="text-xl">{detailTitle}</DialogTitle>
+            <DialogTitle 
+              className={`text-2xl ${themeConfig.text}`}
+              style={getTitleGlow(themeConfig.isDark, '#a78bfa')}
+            >
+              {detailTitle}
+            </DialogTitle>
             <DialogDescription className="sr-only">
               Подробная информация о нумерологическом значении
             </DialogDescription>
           </DialogHeader>
-          <div className="text-base whitespace-pre-line leading-relaxed mt-2 font-medium text-gray-900 overflow-y-auto flex-1">{detailText}</div>
+          <div 
+            className={`text-base whitespace-pre-line leading-relaxed mt-4 font-medium overflow-y-auto flex-1 p-2 ${themeConfig.isDark ? 'text-slate-200' : 'text-gray-900'}`}
+            style={getTextGlow(themeConfig.isDark)}
+          >
+            {detailText}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

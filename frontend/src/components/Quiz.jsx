@@ -9,6 +9,13 @@ import { useAuth } from './AuthContext';
 import axios from 'axios';
 import { getBackendUrl } from '../utils/backendUrl';
 
+// Функция для склонения слова "балл"
+const formatCredits = (num) => {
+  if (num === 1) return `${num} балл`;
+  if (num >= 2 && num <= 4) return `${num} балла`;
+  return `${num} баллов`;
+};
+
 const Quiz = () => {
   const { user } = useAuth();
   const [quizData, setQuizData] = useState(null);
@@ -18,8 +25,25 @@ const Quiz = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [quizStarted, setQuizStarted] = useState(false);
+  const [cost, setCost] = useState(7); // Стоимость прохождения теста
 
   const backendUrl = getBackendUrl();
+
+  // Загружаем стоимость из API
+  useEffect(() => {
+    const fetchCost = async () => {
+      try {
+        const response = await fetch(`${backendUrl}/api/credits/costs`);
+        if (response.ok) {
+          const data = await response.json();
+          setCost(data.personality_test || 7);
+        }
+      } catch (e) {
+        console.warn('Не удалось загрузить стоимость:', e);
+      }
+    };
+    fetchCost();
+  }, [backendUrl]);
 
   useEffect(() => {
     loadRandomizedQuiz();
@@ -198,10 +222,38 @@ const Quiz = () => {
                 который приходит в голову. Нет правильных или неправильных ответов.
               </p>
 
-              <Button onClick={startQuiz} className="w-full numerology-gradient" size="lg">
+              {/* Блок со стоимостью */}
+              <div className="mb-4 p-4 rounded-xl border-2 border-dashed border-purple-300 bg-purple-50 dark:border-purple-500/40 dark:bg-purple-500/10">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">💰</span>
+                    <span className="text-sm font-semibold">Стоимость прохождения:</span>
+                    <span className="text-lg font-bold text-purple-600 dark:text-purple-400">
+                      {formatCredits(cost)}
+                    </span>
+                  </div>
+                  {user && (
+                    <span className="text-xs text-muted-foreground">
+                      Ваш баланс: <span className="font-bold">{user.credits_remaining ?? 0}</span> баллов
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <Button 
+                onClick={startQuiz} 
+                className="w-full numerology-gradient" 
+                size="lg"
+                disabled={(user?.credits_remaining ?? 0) < cost}
+              >
                 <HelpCircle className="w-5 h-5 mr-2" />
-                Начать тест самопознания
+                Начать тест самопознания ({formatCredits(cost)})
               </Button>
+              {(user?.credits_remaining ?? 0) < cost && (
+                <p className="text-sm text-red-500 mt-2 text-center">
+                  ⚠️ Недостаточно баллов для прохождения теста
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>

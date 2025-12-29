@@ -44,7 +44,13 @@ import {
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
 // Build stamp for cache-busting verification
-const BUILD_STAMP = 'Build: 2025-11-24 09:00 - WEEKLY_ROUTE_MODAL';
+let BUILD_STAMP = 'Build: generating...';
+try {
+  const { getBuildVersion, getBuildDate } = require('../utils/buildInfo');
+  BUILD_STAMP = `Build: ${getBuildVersion()} | ${getBuildDate()}`;
+} catch (e) {
+  BUILD_STAMP = `Build: ${new Date().toISOString().split('T')[0]} ${new Date().toTimeString().split(' ')[0]}`;
+}
 
 // Attach badge to document body and set title so we can verify fresh bundle
 (function attachBuildStampOnce(){
