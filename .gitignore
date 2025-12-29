@@ -101,3 +101,11 @@ frontend/.env.local
 *.env
 .env
 .env.*
+
+# Большие файлы и архивы
+*.MP4
+*.mp4
+numerom-v0/
+numerom-v2/
+numerom-0копия.zip
+learning-v2-data/
