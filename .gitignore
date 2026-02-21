@@ -109,3 +109,13 @@ numerom-v0/
 numerom-v2/
 numerom-0копия.zip
 learning-v2-data/
+
+# Файлы курса (большие файлы)
+файлы для запуска/
+
+# Cursor IDE
+.cursor/
+
+# Token files
+.admin_token
+.user_token

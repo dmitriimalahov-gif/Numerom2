@@ -42,9 +42,9 @@ services:
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://192.168.110.178:3000}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://192.168.1.135:3000}
       - CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-.*}
-      - BACKEND_URL=http://localhost:8000
+      - BACKEND_URL=http://192.168.1.135:8000
 
   frontend:
     build:

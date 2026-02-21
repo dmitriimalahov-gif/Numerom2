@@ -229,3 +229,4 @@ if completion_percentage >= 100 and not progress.get("is_completed"):
 - Единая система баллов для всего проекта
 
 
+

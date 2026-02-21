@@ -342,3 +342,4 @@ def generate_pdf_car_tab(user_data: Dict[str, Any], all_data: Dict[str, Any],
     
     return story
 
+
