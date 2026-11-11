@@ -1,0 +1,17 @@
+export type ReportChart={type:'bars'|'matrix'|'series';items:{label:string;value:number}[]};
+export type PositionReading={ref:string;value_index:number;definition:string;boundary:string;horizon:string;insight:string;attention:string;practice:string};
+export type ReportSection={id:string;title:string;paragraphs:string[];method:string;steps:string[];values:{label:string;value:string|number|null;meaning:string}[];chart?:ReportChart;position_readings?:PositionReading[]};
+export type FullReport={version:1;birth_date:string;as_of_date:string;title:string;summary:string[];highlights?:{id:string;title:string;items:{text:string;basis:string}[]}[];sections:ReportSection[];excluded:{title:string;reason:string}[];notice?:string;narration:{id:string;section:string;title:string;text:string;hash:string}[]};
+export type FullReportOrder={revision?:number;is_archived?:boolean;use_profile?:boolean;profile_fingerprint?:string|null;profile_snapshot?:{version:1;fields:Record<string,string|null>;issues?:{field:string;reason:string}[];current_location?:Record<string,unknown>|null;birth_location?:Record<string,unknown>|null;planetary_modifiers?:Record<string,number|boolean|null>};previous_revisions?:{revision:number;created_at?:string;profile_fingerprint?:string|null}[];order_id:string;status:'creating'|'pending'|'processing'|'paid'|'expired'|'failed';mode:'test'|'live';birth_date:string;as_of_date:string;amount_total:number;currency:'eur'|'XTR';payment_provider?:'telegram';session_id?:string;url?:string;report?:FullReport;report_status?:'ready'|'preparing';analysis_status?:'preparing'|'review'|'ready';created_at?:string;message?:string;person?:string};
+export type FullReportCatalog={title:string;amount_total:number;currency:'eur'|'XTR';payment_provider?:'telegram';enabled:boolean;mode:'test'|'live';clients:('mobile'|'web'|'telegram')[];includes:string[];message?:string};
+export function validBirthDate(value:string,now?:Date):boolean;
+export function checkoutUrl(value:unknown):string|null;
+export function starsCheckoutUrl(value:unknown):string|null;
+export function fullReportCatalog(value:unknown):FullReportCatalog;
+export function fullReportOrder(value:unknown):FullReportOrder;
+export function fullReportStatus(status:string,reportStatus?:string):string;
+export function fullReportFileName(order:Pick<FullReportOrder,'birth_date'|'person'>,kind?:'full'|'schemes'):string;
+export function chartValues(chart?:ReportChart):{label:string;value:number}[];
+export function fullReportHtml(order:FullReportOrder):string;
+export function positionParagraphs(section:ReportSection,index:number):string[];
+export function fullReportSchemesHtml(order:FullReportOrder):string;
