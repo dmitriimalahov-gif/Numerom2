@@ -28,6 +28,7 @@ services:
     volumes:
       - ./backend:/app
       - ./backend/uploads:/app/uploads
+      - ./packages/project-knowledge:/packages/project-knowledge:ro
       - ./backend/.env:/app/.env
       # .env.vapid генерируется внутри контейнера, не нужен volume mount
       - ./файлы для запуска:/app/lesson_files:ro
@@ -35,10 +36,11 @@ services:
       - mongodb
     networks:
       - numerom_network
+    env_file:
+      - ./backend/.env
     environment:
       - MONGO_URL=mongodb://mongodb:27017
       - MONGODB_DATABASE=${MONGODB_DATABASE:-numerom}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
@@ -48,8 +50,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
     container_name: numerom_frontend
     restart: always
     ports:

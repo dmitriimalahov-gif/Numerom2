@@ -1,0 +1,19 @@
+{
+  "name": "numerom-report-video",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {"node": ">=22 <23"},
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "prepare-browser": "node prepare-browser.mjs",
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.538",
+    "@remotion/renderer": "4.0.538",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.538"
+  }
+}
