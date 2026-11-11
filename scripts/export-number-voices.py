@@ -9,10 +9,20 @@ from numerom_services import service_root
 SOURCE = Path(__file__).resolve().parents[1]
 RUNTIME = service_root()
 sys.path.insert(0, str(RUNTIME/'backend'))
-from domain.consultation import VOICE, VOICE_IDENTITY
 from domain.narration import clip
 from domain.report_audio import ready_audio
-from domain.pronunciation import VERSION as PRONUNCIATION
+
+# Identity of the personal non-commercial OmniVoice (VoiceStudio) batch.
+# Matches noncommercial-voice/<batch>/config.json and MONITOR.md. The export
+# accepts only clips published by that verified queue, so the manifest labels
+# the actual local engine and profile rather than the retired Qwen3 voice.
+OMNI_ENGINE = 'omnivoice'
+OMNI_VOICE = 'dima golos'
+OMNI_PROFILE = 'af750ff3'
+OMNI_REFERENCE_SHA256 = '682c59cc1ea07f5323b15ce7bae34a35a8821598f8a1d127a2bc989eaac43849'
+OMNI_MODEL_REVISION = 'c5fdb5ccb189668d56333f77ba2629f4cd7535f4'
+OMNI_TEMPO = 1.0
+OMNI_MAX_WORD_DIFFERENCE = 0.04
 
 
 def main():
@@ -25,8 +35,19 @@ def main():
         current = clip(e['id'], e['section'], e['title'], e['text'])
         folder = RUNTIME/'backend/private/narration/clips'/current['hash']
         meta = ready_audio(folder, current['hash'])
-        if (not meta or meta.get('profile') != VOICE_IDENTITY or meta.get('tempo') != 1.2 or meta.get('pronunciation')!=PRONUNCIATION
-                or not meta.get('segments') or any(c['difference'] > .07 for c in meta['segments'])):
+        segments = (meta.get('segments') or []) if meta else []
+        if (not meta
+                or meta.get('engine') != OMNI_ENGINE
+                or meta.get('profile') != OMNI_PROFILE
+                or meta.get('voice_reference_sha256') != OMNI_REFERENCE_SHA256
+                or meta.get('model_revision') != OMNI_MODEL_REVISION
+                or meta.get('automatic_checks_passed') is not True
+                or meta.get('tempo') != OMNI_TEMPO
+                or not segments
+                or any(part.get('critical_ok') is not True
+                       or not isinstance(part.get('difference'), (int, float))
+                       or not (0 <= part['difference'] <= OMNI_MAX_WORD_DIFFERENCE)
+                       for part in segments)):
             raise ValueError(f'Current selected-voice audio is not verified: {e["id"]}')
         relative = f'audio/ru/number-{item["digit"]}.m4a'
         files.append((folder/'audio.m4a', package/relative))
@@ -40,12 +61,14 @@ def main():
     for src, dest in files:
         dest.parent.mkdir(parents=True, exist_ok=True)
         temporary = dest.with_suffix('.pending.m4a'); shutil.copy2(src, temporary); temporary.replace(dest)
-    manifest = {'schema_version': 2, 'locale': 'ru-RU', 'voice': VOICE, 'profile': VOICE_IDENTITY,
-        'provider': 'qwen3-tts-local', 'tempo': 1.2, 'pronunciation':PRONUNCIATION, 'items': records}
+    manifest = {'schema_version': 2, 'locale': 'ru-RU', 'voice': OMNI_VOICE, 'profile': OMNI_PROFILE,
+        'provider': OMNI_ENGINE, 'tempo': OMNI_TEMPO,
+        'voice_reference_sha256': OMNI_REFERENCE_SHA256, 'model_revision': OMNI_MODEL_REVISION, 'items': records}
     pending = package/'audio-manifest.pending.json'
     pending.write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+'\n')
     pending.replace(package/'audio-manifest.json')
-    print(json.dumps({'ready': len(records), 'voice': VOICE, 'seconds': round(sum(r['seconds'] for r in records), 2)}))
+    print(json.dumps({'ready': len(records), 'voice': OMNI_VOICE, 'profile': OMNI_PROFILE,
+                      'seconds': round(sum(r['seconds'] for r in records), 2)}))
 
 
 if __name__ == '__main__': main()
