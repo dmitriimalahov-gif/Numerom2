@@ -2,10 +2,11 @@
 Ведические временные расчеты с привязкой к городу и часовому поясу
 """
 import pytz
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as datetime_timezone
 import math
 from typing import Dict, Any, Tuple, List
 from geopy.geocoders import Nominatim
+from domain.vedic_location import current_coordinates
 
 # Глобальный кеш для координат городов
 _city_cache = {}
@@ -14,6 +15,9 @@ def get_city_coordinates(city: str) -> Tuple[float, float, str]:
     """
     Получает координаты и часовой пояс для города с кешированием
     """
+    scoped = current_coordinates(city)
+    if scoped is not None:
+        return scoped
     if city in _city_cache:
         return _city_cache[city]
     
@@ -187,12 +191,31 @@ def calculate_abhijit_muhurta(sunrise: datetime, sunset: datetime) -> Tuple[date
     return abhijit_start, abhijit_end
 
 
+def _solar_interval_boundaries(start: datetime, end: datetime) -> List[datetime]:
+    """Divide actual elapsed time, then display each boundary in the city zone.
+
+    Adding directly to a pytz-localized datetime keeps its original UTC offset
+    after a DST transition; ZoneInfo subtraction instead uses wall-clock time
+    when both endpoints share a tzinfo. UTC arithmetic avoids both errors.
+    Legacy naive helper calls remain naive rather than acquiring a guessed zone.
+    """
+    aware = start.utcoffset() is not None and end.utcoffset() is not None
+    origin = start.astimezone(datetime_timezone.utc) if aware else start
+    finish = end.astimezone(datetime_timezone.utc) if aware else end
+    duration = finish - origin
+    boundaries = []
+    for index in range(13):
+        instant = origin + duration * index / 12
+        local = instant.astimezone(start.tzinfo) if aware else instant
+        boundaries.append(local.replace(microsecond=0))
+    return boundaries
+
+
 def calculate_planetary_hours(sunrise: datetime, sunset: datetime, weekday: int) -> List[Dict[str, Any]]:
     """
     Рассчитывает планетарные часы дня (12 дневных часов)
     """
-    day_duration = sunset - sunrise
-    hour_duration = day_duration / 12  # День делится на 12 планетарных часов
+    boundaries = _solar_interval_boundaries(sunrise, sunset)
     
     # Планеты в порядке по дням недели (понедельник -> Луна, вторник -> Марс, ..., воскресенье -> Солнце)
     planets_order = ['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya']
@@ -210,16 +233,12 @@ def calculate_planetary_hours(sunrise: datetime, sunset: datetime, weekday: int)
     
     planetary_hours = []
     for i, planet in enumerate(planet_sequence):
-        hour_start = sunrise + (i * hour_duration)
-        hour_end = hour_start + hour_duration
-        
-        # Убираем микросекунды перед форматированием
-        hour_start = hour_start.replace(microsecond=0)
-        hour_end = hour_end.replace(microsecond=0)
-        
-        # Форматируем время без миллисекунд и timezone
-        start_time_str = hour_start.strftime("%Y-%m-%dT%H:%M:%S")
-        end_time_str = hour_end.strftime("%Y-%m-%dT%H:%M:%S")
+        hour_start, hour_end = boundaries[i:i + 2]
+
+        # Keep the city's UTC offset so repeated/skipped clock hours remain
+        # unambiguous to the mobile SVG and saved report.
+        start_time_str = hour_start.isoformat()
+        end_time_str = hour_end.isoformat()
         
         planetary_hours.append({
             "hour": i + 1,
@@ -238,8 +257,7 @@ def calculate_night_planetary_hours(sunset: datetime, next_sunrise: datetime, we
     """
     Рассчитывает планетарные часы ночи (12 ночных часов)
     """
-    night_duration = next_sunrise - sunset
-    hour_duration = night_duration / 12  # Ночь делится на 12 планетарных часов
+    boundaries = _solar_interval_boundaries(sunset, next_sunrise)
     
     # Планеты в порядке по дням недели
     planets_order = ['Chandra', 'Mangal', 'Budh', 'Guru', 'Shukra', 'Shani', 'Surya']
@@ -256,16 +274,10 @@ def calculate_night_planetary_hours(sunset: datetime, next_sunrise: datetime, we
     
     night_hours = []
     for i, planet in enumerate(planet_sequence):
-        hour_start = sunset + (i * hour_duration)
-        hour_end = hour_start + hour_duration
-        
-        # Убираем микросекунды перед форматированием
-        hour_start = hour_start.replace(microsecond=0)
-        hour_end = hour_end.replace(microsecond=0)
-        
-        # Форматируем время без миллисекунд и timezone
-        start_time_str = hour_start.strftime("%Y-%m-%dT%H:%M:%S")
-        end_time_str = hour_end.strftime("%Y-%m-%dT%H:%M:%S")
+        hour_start, hour_end = boundaries[i:i + 2]
+
+        start_time_str = hour_start.isoformat()
+        end_time_str = hour_end.isoformat()
         
         night_hours.append({
             "hour": i + 13,  # Нумерация с 13 до 24
@@ -369,6 +381,7 @@ def get_vedic_day_schedule(city: str, date: datetime, birth_date: str = None) ->
             "sun_times": {
                 "sunrise": sunrise.strftime("%H:%M"),
                 "sunset": sunset.strftime("%H:%M"),
+                "next_sunrise": next_sunrise.replace(microsecond=0).isoformat(),
                 "day_duration_hours": str(sunset - sunrise)
             },
             "inauspicious_periods": {

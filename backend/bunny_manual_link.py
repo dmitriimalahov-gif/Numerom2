@@ -4,6 +4,8 @@ Endpoint для ручной привязки video_id из Bunny.net к уро�
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from bunny_auth import require_bunny_admin
+from video_platforms.bunny_stream import get_bunny_service, BunnyStreamService
 from datetime import datetime
 import logging
 
@@ -22,7 +24,8 @@ class ManualVideoLink(BaseModel):
 @manual_link_router.post('/lessons/link-bunny-video')
 async def link_existing_bunny_video(
     data: ManualVideoLink,
-    current_user: dict = Depends(lambda: None)  # Placeholder для auth
+    current_user: dict = Depends(require_bunny_admin),
+    bunny_service: BunnyStreamService = Depends(get_bunny_service)
 ):
     """
     Привязать существующее видео из Bunny.net к уроку
@@ -45,15 +48,9 @@ async def link_existing_bunny_video(
         }
     """
     try:
-        # TODO: Раскомментировать после интеграции auth
-        # from server import check_admin_rights
-        # admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
         from server import db
-        from video_platforms.bunny_stream import get_bunny_service
 
         # Проверяем существует ли видео на Bunny
-        bunny_service = get_bunny_service()
         try:
             video_info = await bunny_service.get_video_info(data.video_id)
         except Exception as e:
@@ -133,7 +130,7 @@ async def link_existing_bunny_video(
 @manual_link_router.get('/lessons/{lesson_id}/bunny-video-id')
 async def get_lesson_bunny_video_id(
     lesson_id: str,
-    current_user: dict = Depends(lambda: None)
+    current_user: dict = Depends(require_bunny_admin)
 ):
     """
     Получить video_id привязанный к уроку

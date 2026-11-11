@@ -1,4 +1,4 @@
-from fastapi import HTTPException, Depends, status
+from fastapi import HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from passlib.context import CryptContext
 from jose import JWTError, jwt
@@ -9,7 +9,11 @@ from models import User, UserResponse
 
 # Security configuration
 # Поддерживаем оба варианта для совместимости
-SECRET_KEY = os.environ.get("SECRET_KEY") or os.environ.get("JWT_SECRET_KEY") or "your-secret-key-change-in-production"
+def signing_key():
+    key = os.environ.get("SECRET_KEY") or os.environ.get("JWT_SECRET_KEY") or ""
+    if len(key) < 32 or key in {"your-secret-key-change-in-production", "your-super-secret-jwt-key-change-this-in-production"}:
+        raise HTTPException(status_code=503, detail="Вход временно недоступен: требуется настройка сервера")
+    return key
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 часа
 
@@ -29,81 +33,34 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)  # Используем настройку из константы
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, signing_key(), algorithm=ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    
-    if not credentials:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error("No credentials provided in request")
-        raise credentials_exception
-    
+async def get_current_user(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    failure = HTTPException(status_code=401, detail="Could not validate credentials", headers={"WWW-Authenticate":"Bearer"})
+    if not credentials or not credentials.credentials: raise failure
+    key = signing_key()
     try:
-        token = credentials.credentials
-        if not token:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error("Token is empty")
-            raise credentials_exception
-            
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"Attempting to decode token, SECRET_KEY length: {len(SECRET_KEY) if SECRET_KEY else 0}")
-        
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        role: str = payload.get("role", "user")  # По умолчанию "user"
-        
-        if user_id is None:
-            logger.error("user_id is None in token payload")
-            raise credentials_exception
-            
-        logger.info(f"Token decoded successfully, user_id: {user_id}, role: {role}")
-        return {"user_id": user_id, "role": role}
-        
-    except JWTError as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"JWT decode error: {str(e)}, SECRET_KEY length: {len(SECRET_KEY) if SECRET_KEY else 0}, token preview: {token[:20] if token else 'None'}...")
-        raise credentials_exception
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Unexpected error in get_current_user: {str(e)}")
-        raise credentials_exception
-
-
-async def get_current_user_full(credentials: HTTPAuthorizationCredentials = Depends(security), db=None):
-    """Get full user object from database"""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        token = credentials.credentials
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
+        payload = jwt.decode(credentials.credentials, key, algorithms=[ALGORITHM])
     except JWTError:
-        raise credentials_exception
-    
-    # Fetch user from database if provided
-    if db:
-        user_dict = await db.users.find_one({"id": user_id})
-        if not user_dict:
-            raise HTTPException(status_code=404, detail="User not found")
-        return User(**user_dict)
-    
-    return {"user_id": user_id}
+        raise failure
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str) or not user_id: raise failure
+    db = getattr(request.app.state, 'auth_db', None)
+    if db is None: raise HTTPException(503, "Account service unavailable")
+    user = await db.users.find_one({'id':user_id})
+    if not user or user.get('is_disabled') or payload.get('auth_version',0) != user.get('auth_version',0):
+        raise failure
+    role = 'admin' if user.get('is_admin') or user.get('is_super_admin') else 'user'
+    return {'user_id':user_id,'role':role}
+
+
+async def get_current_user_full(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), db=None):
+    current = await get_current_user(request, credentials)
+    repository = db if db is not None else request.app.state.auth_db
+    document = await repository.users.find_one({'id':current['user_id']})
+    return User(**document)
+
 
 def create_user_response(user: User) -> UserResponse:
     return UserResponse(
@@ -114,6 +71,8 @@ def create_user_response(user: User) -> UserResponse:
         surname=user.surname,
         birth_date=user.birth_date,
         city=user.city,
+        birth_city=user.birth_city,
+        birth_city_id=user.birth_city_id,
         phone_number=user.phone_number,
         car_number=user.car_number,
         street=user.street,
@@ -125,57 +84,23 @@ def create_user_response(user: User) -> UserResponse:
         is_admin=user.is_admin,
         subscription_type=user.subscription_type,
         credits_remaining=user.credits_remaining,
+        level=user.level,
         created_at=user.created_at
     )
 
 async def ensure_super_admin_exists(db):
-    """Создаем суперадминистратора при первом запуске"""
-    SUPER_ADMIN_EMAIL = "dmitrii.malahov@gmail.com"
-    SUPER_ADMIN_PASSWORD = "756bvy67H"
-    
-    # Проверяем, существует ли уже суперадминистратор
-    existing_admin = await db.users.find_one({"email": SUPER_ADMIN_EMAIL})
-    
-    if not existing_admin:
-        # Создаем суперадминистратора
-        super_admin = User(
-            email=SUPER_ADMIN_EMAIL,
-            password_hash=get_password_hash(SUPER_ADMIN_PASSWORD),
-            full_name="Дмитрий Малахов (Суперадминистратор)",
-            birth_date="01.01.1980",
-            city="Москва",
-            is_premium=True,
-            is_super_admin=True,
-            credits_remaining=1000000  # Безлимитные кредиты
-        )
-        
-        await db.users.insert_one(super_admin.dict())
-        print(f"✅ Создан суперадминистратор: {SUPER_ADMIN_EMAIL}")
-    else:
-        # Обновляем существующего пользователя до суперадминистратора и сбрасываем пароль
-        await db.users.update_one(
-            {"email": SUPER_ADMIN_EMAIL},
-            {"$set": {
-                "is_super_admin": True,
-                "is_premium": True,
-                "credits_remaining": 1000000,
-                "password_hash": get_password_hash(SUPER_ADMIN_PASSWORD),
-                "updated_at": datetime.utcnow()
-            }}
-        )
-        # Гарантируем доступ к административным эндпоинтам (создаем запись admin_users)
-        existing_admin_user = await db.users.find_one({"email": SUPER_ADMIN_EMAIL})
-        if existing_admin_user:
-            await db.admin_users.update_one(
-                {"user_id": existing_admin_user.get("id")},
-                {"$set": {
-                    "user_id": existing_admin_user.get("id"),
-                    "role": "super_admin",
-                    "permissions": ["video_management", "user_management", "content_management"]
-                }},
-                upsert=True
-            )
-        print(f"✅ Обновлен статус суперадминистратора и пароль: {SUPER_ADMIN_EMAIL}")
+    """Opt-in initial bootstrap only. Never overwrite a person's existing password."""
+    email = os.environ.get('SUPER_ADMIN_EMAIL','').strip()
+    password = os.environ.get('SUPER_ADMIN_PASSWORD','')
+    if not email or not password: return
+    # Existing accounts are never promoted or reset implicitly on process restart.
+    if await db.users.find_one({'email':email}): return
+    if len(password) < 12 or len(password.encode('utf-8')) > 72 or password == 'change-this-secure-password':
+        raise RuntimeError('Configure a strong initial administrator password')
+    user = User(email=email,password_hash=get_password_hash(password),full_name='Администратор NumerOM',
+                birth_date='01.01.1980',is_super_admin=True,is_admin=True)
+    await db.users.update_one({'email':email}, {'$setOnInsert':user.model_dump()}, upsert=True)
+
 
 def require_super_admin(current_user: dict, db):
     """Декоратор для проверки прав суперадминистратора"""

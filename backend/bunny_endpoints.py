@@ -10,6 +10,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Request
 from video_platforms.bunny_stream import get_bunny_service, BunnyStreamService
+from auth import get_current_user
+from bunny_auth import require_bunny_admin
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ TMP_DIR.mkdir(parents=True, exist_ok=True)
 async def upload_video_to_bunny(
     lesson_id: str,
     file: UploadFile = File(...),
-    current_user: dict = Depends(lambda: None),  # Placeholder, заменить на get_current_user
+    current_user: dict = Depends(require_bunny_admin),
     bunny_service: BunnyStreamService = Depends(get_bunny_service)
 ):
     """
@@ -51,10 +53,6 @@ async def upload_video_to_bunny(
         }
     """
     try:
-        # TODO: Раскомментировать после интеграции auth
-        # from server import check_admin_rights
-        # admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
         # Валидация типа файла
         allowed_types = ['video/mp4', 'video/avi', 'video/mov', 'video/webm', 'video/quicktime']
         if file.content_type not in allowed_types:
@@ -168,7 +166,7 @@ async def upload_video_to_bunny(
 @bunny_router.delete('/admin/lessons/{lesson_id}/video-bunny')
 async def delete_lesson_video_from_bunny(
     lesson_id: str,
-    current_user: dict = Depends(lambda: None),  # Placeholder
+    current_user: dict = Depends(require_bunny_admin),
     bunny_service: BunnyStreamService = Depends(get_bunny_service)
 ):
     """
@@ -183,10 +181,6 @@ async def delete_lesson_video_from_bunny(
         {'success': True, 'message': '...'}
     """
     try:
-        # TODO: Раскомментировать после интеграции auth
-        # from server import check_admin_rights
-        # admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
         from server import db
 
         # Получаем информацию о видео из БД
@@ -258,7 +252,7 @@ async def delete_lesson_video_from_bunny(
 async def get_lesson_video_url(
     lesson_id: str,
     request: Request,
-    current_user: dict = Depends(lambda: None),  # Placeholder
+    current_user: dict = Depends(get_current_user),
     bunny_service: BunnyStreamService = Depends(get_bunny_service)
 ):
     """
@@ -284,10 +278,6 @@ async def get_lesson_video_url(
         }
     """
     try:
-        # TODO: Раскомментировать после интеграции auth
-        # if not current_user:
-        #     raise HTTPException(status_code=401, detail="Требуется авторизация")
-
         from server import db
 
         # Получаем урок
@@ -354,7 +344,7 @@ async def get_lesson_video_url(
 @bunny_router.get('/admin/lessons/{lesson_id}/video-info')
 async def get_lesson_video_info(
     lesson_id: str,
-    current_user: dict = Depends(lambda: None),  # Placeholder
+    current_user: dict = Depends(require_bunny_admin),
     bunny_service: BunnyStreamService = Depends(get_bunny_service)
 ):
     """
@@ -369,10 +359,6 @@ async def get_lesson_video_info(
         Информация о видео с Bunny.net
     """
     try:
-        # TODO: Раскомментировать после интеграции auth
-        # from server import check_admin_rights
-        # admin_user = await check_admin_rights(current_user, require_super_admin=False)
-
         from server import db
 
         lesson = await db.custom_lessons.find_one({'id': lesson_id})

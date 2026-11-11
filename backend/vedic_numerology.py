@@ -111,13 +111,12 @@ def create_vedic_yantra(day: int, month: int, year: int) -> Dict[str, Any]:
             row, col = graha_positions[i]
             yantra[row][col] = str(i) * count
     
-    # Calculate directional sums (Vedic interpretation)
-    horizontal_sums = [sum(int(d) for cell in row for d in cell if d.isdigit()) for row in yantra]
-    vertical_sums = [sum(int(d) for row in yantra for d in row[i] if d.isdigit()) for i in range(3)]
-    
-    # Diagonal sums for spiritual analysis
-    main_diagonal = sum(int(d) for i in range(3) for d in yantra[i][i] if d.isdigit())
-    anti_diagonal = sum(int(d) for i in range(3) for d in yantra[i][2-i] if d.isdigit())
+    # A line counts the planets in its three cells — how often each digit occurs, as in the
+    # Pythagorean square. «88» is two Saturns, not 16 (the author's correction, 25.10.2026).
+    horizontal_sums = [sum(len(cell) for cell in row) for row in yantra]
+    vertical_sums = [sum(len(row[i]) for row in yantra) for i in range(3)]
+    main_diagonal = sum(len(yantra[i][i]) for i in range(3))
+    anti_diagonal = sum(len(yantra[i][2 - i]) for i in range(3))
     
     return {
         "yantra_matrix": yantra,

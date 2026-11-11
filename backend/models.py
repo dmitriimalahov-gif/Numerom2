@@ -20,6 +20,8 @@ class UserProfileUpdate(BaseModel):
     surname: Optional[str] = None  # Фамилия
     phone_number: Optional[str] = None  # +37369183398 format
     city: Optional[str] = None
+    birth_city: Optional[str] = Field(default=None, max_length=300)
+    birth_city_id: Optional[str] = Field(default=None, pattern=r'^\d{1,12}$|^$')
     car_number: Optional[str] = None  # До 13 символов, любая раскладка
     street: Optional[str] = None
     house_number: Optional[str] = None
@@ -49,6 +51,8 @@ class UserResponse(BaseModel):
     surname: Optional[str] = None  # Фамилия
     birth_date: str
     city: str = "Москва"
+    birth_city: Optional[str] = None
+    birth_city_id: Optional[str] = None
     phone_number: Optional[str] = None
     car_number: Optional[str] = None
     street: Optional[str] = None
@@ -60,6 +64,7 @@ class UserResponse(BaseModel):
     is_admin: bool = False  # Обычный администратор
     subscription_type: Optional[str] = None
     credits_remaining: int = 0
+    level: int = 1
     created_at: datetime
 
 class User(BaseModel):
@@ -71,6 +76,8 @@ class User(BaseModel):
     surname: Optional[str] = None  # Фамилия
     birth_date: str  # DD.MM.YYYY format
     city: str = "Москва"  # Город пользователя для временных расчетов
+    birth_city: Optional[str] = None
+    birth_city_id: Optional[str] = None
     phone_number: Optional[str] = None  # Номер телефона с кодом страны (+37369183398)
     car_number: Optional[str] = None  # Номер автомобиля (до 13 символов)
     street: Optional[str] = None  # Улица проживания
@@ -83,6 +90,7 @@ class User(BaseModel):
     subscription_type: Optional[str] = None  # "monthly", "annual", None
     subscription_expires_at: Optional[datetime] = None
     credits_remaining: int = 0
+    level: int = 1
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -115,6 +123,8 @@ class PaymentRequest(BaseModel):
 
 # Numerology request models
 class CompatibilityRequest(BaseModel):
+    request_id: Optional[uuid.UUID] = None
+    expected_cost: Optional[int] = Field(default=None, strict=True, ge=0, le=1000000)
     person1_birth_date: str  # DD.MM.YYYY
     person2_birth_date: str  # DD.MM.YYYY
     person1_name: Optional[str] = "Человек 1"
@@ -125,6 +135,8 @@ class GroupCompatibilityPerson(BaseModel):
     birth_date: str  # DD.MM.YYYY
 
 class GroupCompatibilityRequest(BaseModel):
+    request_id: Optional[uuid.UUID] = None
+    expected_cost: Optional[int] = Field(default=None, strict=True, ge=0, le=1000000)
     main_person_birth_date: str  # DD.MM.YYYY основного пользователя
     main_person_name: str = "Вы"
     people: List[GroupCompatibilityPerson]  # До 5 человек
@@ -269,6 +281,8 @@ class CreditTransaction(BaseModel):
 # Credit costs configuration
 CREDIT_COSTS = {
     'name_numerology': 1,           # Нумерология имени
+    'address_numerology': 1,        # Нумерология адреса
+    'car_numerology': 1,            # Нумерология автомобиля
     'personal_numbers': 1,          # Персональные числа
     'pythagorean_square': 1,        # Квадрат Пифагора
     'vedic_daily': 1,              # Ведическое время на день
@@ -919,6 +933,8 @@ class CreditsDeductionConfig(BaseModel):
     
     # === НУМЕРОЛОГИЯ ===
     name_numerology: int = 1                    # Нумерология имени
+    address_numerology: int = 1                 # Нумерология адреса
+    car_numerology: int = 1                     # Нумерология автомобиля
     personal_numbers: int = 1                   # Расчёт персональных чисел
     pythagorean_square: int = 1                 # Квадрат Пифагора
     compatibility_pair: int = 1                 # Совместимость пары
@@ -961,6 +977,8 @@ class CreditsDeductionConfigUpdate(BaseModel):
     """Модель для обновления конфигурации списания баллов"""
     # Нумерология
     name_numerology: Optional[int] = None
+    address_numerology: Optional[int] = None
+    car_numerology: Optional[int] = None
     personal_numbers: Optional[int] = None
     pythagorean_square: Optional[int] = None
     compatibility_pair: Optional[int] = None

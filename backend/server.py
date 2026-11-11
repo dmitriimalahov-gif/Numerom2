@@ -64,26 +64,24 @@ from pdf_generator import create_numerology_report_pdf, create_compatibility_pdf
 from planetary_advice import init_planetary_advice_collection, get_personalized_planetary_advice
 import stripe
 
-# Helpers: calculate full name number (только латиница)
-def _letters_to_number_sum(text: str) -> int:
-    if not text:
-        return 0
-    norm = [ch for ch in (text or '').upper() if 'A' <= ch <= 'Z']
-    total = 0
-    for ch in norm:
-        total += ord(ch) - ord('A') + 1  # A=1 ... Z=26
-    return total
+from domain.name_numbers import calculate_full_name_number
+from domain.vedic_report import profile_wisdom, profile_name_numbers, wisdom_note
+from services.student_learning import StudentLearningService, QuizSubmission, ExerciseSubmission, TheoryRead
+from services.challenge_diary import ChallengeDiary, LegacyDiaryWrite
 
-def calculate_full_name_number(name: str = '', surname: str = '') -> int:
-    """
-    Число имени: используем ТОЛЬКО латиницу из поля name и фамилии.
-    Полное число имени = reduce( sum(буквы имени+фамилии) ).
-    """
-    base_sum = _letters_to_number_sum((name or '') + (surname or ''))
-    x = abs(int(base_sum))
-    while x > 9:
-        x = sum(int(d) for d in str(x))
-    return x
+
+def route_wisdom_number(user):
+    """Real wisdom (destiny + full name number) for the user's own routes; None without a Latin name and surname."""
+    wisdom = profile_wisdom(user.birth_date, {'name': user.name, 'surname': user.surname})
+    return wisdom['value'] if wisdom else None
+
+
+def route_wisdom(user):
+    """The wisdom number a route used and how it was obtained, for the route shown to the user."""
+    profile = {'name': user.name, 'surname': user.surname}
+    wisdom = profile_wisdom(user.birth_date, profile)
+    return {'wisdom': wisdom, 'wisdom_note': wisdom_note(wisdom, profile)}
+
 
 # Load env
 ROOT_DIR = Path(__file__).parent
@@ -98,27 +96,11 @@ db = client[os.environ.get('MONGODB_DATABASE')]
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Payments
-STRIPE_API_KEY = os.environ.get('STRIPE_SECRET_KEY')
-stripe.api_key = STRIPE_API_KEY
-PAYMENT_DEMO_MODE = not STRIPE_API_KEY or STRIPE_API_KEY == 'sk_test_dummy_key_for_testing'
-
-PAYMENT_PACKAGES = {
-    'one_time': 0.99,    # 0,99€ = 10 баллов + месяц доступа
-    'monthly': 9.99,     # 9,99€ = 150 баллов + месяц доступа  
-    'annual': 66.6,      # 66,6€ = 500 баллов + год доступа
-    'master_consultation': 666.0  # 666€ = 10000 баллов + персональная консультация от мастера
-}
-
-SUBSCRIPTION_CREDITS = {
-    'one_time': 10,      # 10 баллов за 0,99€
-    'monthly': 150,      # 150 баллов за 9,99€
-    'annual': 1000,      # 1000 баллов за 66,6€ (было 500)
-    'master_consultation': 10000  # 10000 баллов за 666€ + персональная консультация
-}
-
 # FastAPI app
 app = FastAPI()
+app.state.auth_db = db
+from routers.health import create_health_router
+app.include_router(create_health_router(db))
 api_router = APIRouter(prefix='/api')
 
 # Mount static files directory
@@ -228,6 +210,7 @@ async def on_startup():
     global push_manager
     try:
         await ensure_super_admin_exists(db)
+        await db.recovery_limits.create_index('expires_at', expireAfterSeconds=0)
         await init_planetary_advice_collection(db)
         MATERIALS_DIR.mkdir(parents=True, exist_ok=True)
         CONSULTATIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -287,20 +270,14 @@ async def get_credits_deduction_config() -> dict:
     default_config = CreditsDeductionConfig()
     return default_config.dict()
 
+@api_router.get('/numerology/costs')
+async def calculation_costs(current_user: dict = Depends(get_current_user)):
+    config = await get_credits_deduction_config()
+    return {'personal_numbers': config.get('personal_numbers', CREDIT_COSTS.get('personal_numbers', 1))}
+
 async def deduct_credits(user_id: str, cost: int, description: str, category: str, details: dict = None):
-    """Списать баллы и записать транзакцию"""
-    user = await db.users.find_one({'id': user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail='Пользователь не найден')
-    
-    if user.get('credits_remaining', 0) < cost:
-        raise HTTPException(status_code=402, detail='Недостаточно баллов для операции. Пополните баланс.')
-    
-    # Списываем баллы
-    await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': -cost}})
-    
-    # Записываем транзакцию
-    await record_credit_transaction(user_id, -cost, description, category, details)
+    from services.credit_debit import debit_credits
+    await debit_credits(db, user_id, cost, description, category, details)
 
 async def get_learning_points_config() -> dict:
     """Получить конфигурацию начисления баллов за обучение"""
@@ -379,9 +356,16 @@ async def get_credit_costs():
         return CREDIT_COSTS
 
 @api_router.get('/user/credit-history')
-async def get_credit_history(limit: int = 50, offset: int = 0, current_user: dict = Depends(get_current_user)):
+async def get_credit_history(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0, le=100000), current_user: dict = Depends(get_current_user)):
     """Получить историю транзакций баллов пользователя"""
     user_id = current_user['user_id']
+    from services.credit_history import flush_pending_credit_transactions
+    from services.credit_debit import flush_pending_calculations
+    try:
+        await flush_pending_calculations(db, user_id)
+    except Exception:
+        logger.warning('Calculation delivery deferred while reading credit history')
+    await flush_pending_credit_transactions(db, user_id)
     
     # Получаем транзакции с пагинацией
     transactions = await db.credit_transactions.find(
@@ -404,6 +388,8 @@ async def get_credit_history(limit: int = 50, offset: int = 0, current_user: dic
 async def get_points_breakdown(current_user: dict = Depends(get_current_user)):
     """Получить разбивку баллов по категориям"""
     user_id = current_user['user_id']
+    from services.credit_history import flush_pending_credit_transactions
+    await flush_pending_credit_transactions(db, user_id)
     
     # Получаем все транзакции пользователя
     transactions = await db.credit_transactions.find(
@@ -466,19 +452,9 @@ async def register(user_data: UserCreate, request: Request):
     if existing:
         raise HTTPException(status_code=400, detail='User already exists')
     
-    # Определяем город по IP если не указан
-    city = user_data.city
-    if not city or city == "Москва":
-        client_ip = request.client.host
-        # Проверяем заголовки на случай прокси
-        forwarded_for = request.headers.get('X-Forwarded-For')
-        if forwarded_for:
-            client_ip = forwarded_for.split(',')[0].strip()
-        
-        detected_city = get_city_from_ip(client_ip)
-        if detected_city != "Москва":
-            city = detected_city
-    
+    # City is optional in the mobile form; registration must not depend on IP geolocation.
+    city = (user_data.city or '').strip() or 'Москва'
+
     user = User(
         email=user_data.email,
         password_hash=get_password_hash(user_data.password),
@@ -488,7 +464,7 @@ async def register(user_data: UserCreate, request: Request):
         birth_date=user_data.birth_date,
         city=city or 'Москва',
         phone_number=user_data.phone_number,
-        credits_remaining=100
+        credits_remaining=10
     )
     await db.users.insert_one(user.dict())
 
@@ -496,7 +472,7 @@ async def register(user_data: UserCreate, request: Request):
     credit_transaction = CreditTransaction(
         user_id=user.id,
         transaction_type='credit',
-        amount=100,
+        amount=10,
         description='Приветственный бонус при регистрации',
         category='purchase',
         details={'reason': 'registration_bonus'}
@@ -509,301 +485,14 @@ async def register(user_data: UserCreate, request: Request):
     token = create_access_token({'sub': user.id, 'role': role})
     return TokenResponse(access_token=token, user=create_user_response(user))
 
-@api_router.post('/auth/login', response_model=TokenResponse)
-async def login(login_data: LoginRequest):
-    print(f"=== ПОПЫТКА ВХОДА ===")
-    print(f"Email: {login_data.email}")
-    print(f"Пароль (первые 3 символа): {login_data.password[:3]}...")
-
-    user_dict = await db.users.find_one({'email': login_data.email})
-    print(f"Найден пользователь в БД: {user_dict is not None}")
-
-    if not user_dict:
-        print(f"ОШИБКА: Пользователь с email {login_data.email} не найден в БД")
-        raise HTTPException(status_code=401, detail='Invalid credentials')
-
-    user = User(**user_dict)
-    print(f"User ID: {user.id}")
-    print(f"User password_hash (первые 10 символов): {user.password_hash[:10]}...")
-
-    password_valid = verify_password(login_data.password, user.password_hash)
-    print(f"Проверка пароля: {password_valid}")
-
-    if not password_valid:
-        print(f"ОШИБКА: Неверный пароль для пользователя {login_data.email}")
-        raise HTTPException(status_code=401, detail='Invalid credentials')
-
-    # expire subscription if needed
-    if user.subscription_expires_at and user.subscription_expires_at < datetime.utcnow():
-        await db.users.update_one(
-            {'id': user.id},
-            {'$set': {'is_premium': False, 'subscription_type': None, 'subscription_expires_at': None}}
-        )
-        user.is_premium = False
-        user.subscription_type = None
-
-    # Вычисляем роль из флагов
-    role = 'admin' if (user.is_super_admin or user.is_admin) else 'user'
-
-    token = create_access_token({'sub': user.id, 'role': role})
-    print(f"✅ УСПЕШНЫЙ ВХОД для {login_data.email}, роль: {role}")
-    return TokenResponse(access_token=token, user=create_user_response(user))
-
-# ----------------- PAYMENTS -----------------
-@api_router.post('/payments/checkout/session')
-async def create_checkout_session(payment_request: PaymentRequest, request: Request, current_user: dict = Depends(get_current_user)):
-    if payment_request.package_type not in PAYMENT_PACKAGES:
-        raise HTTPException(status_code=400, detail='Invalid package type')
-    amount = PAYMENT_PACKAGES[payment_request.package_type]
-
-    if PAYMENT_DEMO_MODE:
-        session_id = f"cs_demo_{uuid.uuid4().hex[:16]}"
-        transaction = PaymentTransaction(
-            package_type=payment_request.package_type,
-            amount=amount,
-            currency='eur',
-            session_id=session_id,
-            payment_status='pending',
-            metadata={'origin_url': payment_request.origin_url, 'demo': True},
-            user_id=current_user['user_id']
-        )
-        await db.payment_transactions.insert_one(transaction.dict())
-        url = f"{payment_request.origin_url}/payment-success?session_id={session_id}&demo=true"
-        return {'url': url, 'session_id': session_id}
-
-    try:
-        success_url = f"{payment_request.origin_url}/payment-success?session_id={{CHECKOUT_SESSION_ID}}"
-        cancel_url = f"{payment_request.origin_url}/payment-cancelled"
-        
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{
-                'price_data': {
-                    'currency': 'eur',
-                    'product_data': {
-                        'name': f'Numerom Package: {payment_request.package_type}',
-                    },
-                    'unit_amount': int(amount * 100),  # Stripe expects amounts in cents
-                },
-                'quantity': 1,
-            }],
-            mode='payment',
-            success_url=success_url,
-            cancel_url=cancel_url,
-            metadata={'package_type': payment_request.package_type, 'origin_url': payment_request.origin_url, 'user_id': current_user['user_id']}
-        )
-        
-        transaction = PaymentTransaction(
-            package_type=payment_request.package_type,
-            amount=amount,
-            currency='eur',
-            session_id=session.id,
-            payment_status='pending',
-            metadata={'origin_url': payment_request.origin_url},
-            user_id=current_user['user_id']
-        )
-        await db.payment_transactions.insert_one(transaction.dict())
-        return {'url': session.url, 'session_id': session.id}
-    except Exception as e:
-        logger.error(f'Stripe error: {e}')
-        raise HTTPException(status_code=500, detail=f'Failed to create checkout session: {e}')
-
-@api_router.get('/payments/checkout/status/{session_id}')
-async def get_payment_status(session_id: str):
-    tx = await db.payment_transactions.find_one({'session_id': session_id})
-    if not tx:
-        raise HTTPException(status_code=404, detail='Transaction not found')
-
-    # Demo mode: auto pay and grant credits
-    if PAYMENT_DEMO_MODE or tx.get('metadata', {}).get('demo'):
-        package = tx['package_type']
-        user_id = tx.get('user_id')
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем что баллы еще не были начислены
-        if user_id and tx.get('payment_status') != 'paid':
-            # Добавляем баллы согласно пакету
-            credits_to_add = SUBSCRIPTION_CREDITS.get(package, 0)
-            await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': credits_to_add}})
-            
-            # Записываем транзакцию в историю
-            if credits_to_add > 0:
-                package_names = {
-                    'one_time': 'Разовая покупка',
-                    'monthly': 'Месячная подписка',
-                    'annual': 'Годовая подписка',
-                    'master_consultation': 'Мастер консультация'
-                }
-                await record_credit_transaction(
-                    user_id=user_id,
-                    amount=credits_to_add,
-                    description=f"Покупка: {package_names.get(package, package)} ({credits_to_add} баллов)",
-                    category='purchase' if package == 'one_time' else 'subscription',
-                    details={
-                        'package_type': package,
-                        'package_name': package_names.get(package, package),
-                        'amount_paid': tx.get('amount', 0),
-                        'currency': tx.get('currency', 'eur'),
-                        'session_id': session_id,
-                        'payment_method': 'demo' if PAYMENT_DEMO_MODE else 'stripe'
-                    }
-                )
-            
-            # Обновляем подписку если это не разовая покупка
-            if package == 'monthly':
-                await db.users.update_one({'id': user_id}, {'$set': {
-                    'subscription_type': 'monthly',
-                    'subscription_expires_at': datetime.utcnow() + timedelta(days=30)
-                }})
-            elif package == 'annual':
-                await db.users.update_one({'id': user_id}, {'$set': {
-                    'subscription_type': 'annual',
-                    'subscription_expires_at': datetime.utcnow() + timedelta(days=365)
-                }})
-            elif package == 'master_consultation':
-                # Для мастер консультации создаем персональную консультацию
-                master_consultation = {
-                    'id': str(uuid.uuid4()),
-                    'title': 'Персональная консультация от мастера',
-                    'description': 'Эксклюзивная персональная консультация от ведущего мастера нумерологии',
-                    'assigned_user_id': user_id,
-                    'cost_credits': 0,  # Уже оплачено
-                    'is_active': True,
-                    'video_url': 'https://example.com/master-consultation-video',  # Будет заменено на реальное видео
-                    'created_at': datetime.utcnow(),
-                    'updated_at': datetime.utcnow()
-                }
-                await db.personal_consultations.insert_one(master_consultation)
-                
-        await db.payment_transactions.update_one({'session_id': session_id}, {'$set': {'payment_status': 'paid', 'updated_at': datetime.utcnow()}})
-        return {'status': 'complete', 'payment_status': 'paid', 'amount_total': int(tx['amount'] * 100), 'currency': 'eur', 'user_id': user_id}
-
-    # Real stripe mode
-    try:
-        session = stripe.checkout.Session.retrieve(session_id)
-        if session.payment_status == 'paid' and tx['payment_status'] != 'paid':
-            package = tx['package_type']
-            user_id = tx.get('user_id')
-            if user_id:
-                # Добавляем баллы согласно пакету (используем $inc чтобы добавить к существующему балансу)
-                credits_to_add = SUBSCRIPTION_CREDITS.get(package, 0)
-                await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': credits_to_add}})
-                
-                # Записываем транзакцию в историю
-                if credits_to_add > 0:
-                    package_names = {
-                        'one_time': 'Разовая покупка',
-                        'monthly': 'Месячная подписка',
-                        'annual': 'Годовая подписка',
-                        'master_consultation': 'Мастер консультация'
-                    }
-                    await record_credit_transaction(
-                        user_id=user_id,
-                        amount=credits_to_add,
-                        description=f"Покупка: {package_names.get(package, package)} ({credits_to_add} баллов)",
-                        category='purchase' if package == 'one_time' else 'subscription',
-                        details={
-                            'package_type': package,
-                            'package_name': package_names.get(package, package),
-                            'amount_paid': tx.get('amount', 0),
-                            'currency': tx.get('currency', 'eur'),
-                            'session_id': session_id,
-                            'payment_method': 'stripe'
-                        }
-                    )
-                
-                # Обновляем подписку если это не разовая покупка
-                if package == 'monthly':
-                    await db.users.update_one({'id': user_id}, {'$set': {
-                        'subscription_type': 'monthly',
-                        'subscription_expires_at': datetime.utcnow() + timedelta(days=30)
-                    }})
-                elif package == 'annual':
-                    await db.users.update_one({'id': user_id}, {'$set': {
-                        'subscription_type': 'annual',
-                        'subscription_expires_at': datetime.utcnow() + timedelta(days=365)
-                    }})
-                elif package == 'master_consultation':
-                    # Для мастер консультации создаем персональную консультацию
-                    master_consultation = {
-                        'id': str(uuid.uuid4()),
-                        'title': 'Персональная консультация от мастера',
-                        'description': 'Эксклюзивная персональная консультация от ведущего мастера нумерологии',
-                        'assigned_user_id': user_id,
-                        'cost_credits': 0,  # Уже оплачено
-                        'is_active': True,
-                        'video_url': 'https://example.com/master-consultation-video',  # Будет заменено на реальное видео
-                        'created_at': datetime.utcnow(),
-                        'updated_at': datetime.utcnow()
-                    }
-                    await db.personal_consultations.insert_one(master_consultation)
-            await db.payment_transactions.update_one({'session_id': session_id}, {'$set': {'payment_status': checkout_status.payment_status, 'updated_at': datetime.utcnow()}})
-        return {
-            'status': checkout_status.status,
-            'payment_status': checkout_status.payment_status,
-            'amount_total': checkout_status.amount_total,
-            'currency': checkout_status.currency
-        }
-    except Exception as e:
-        logger.error(f'Stripe status check error: {e}')
-        raise HTTPException(status_code=500, detail=f'Failed to check payment status: {e}')
-
-@api_router.post('/webhook/stripe')
-async def stripe_webhook(request: Request):
-    body = await request.body()
-    signature = request.headers.get('Stripe-Signature')
-    webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
-    
-    try:
-        event = stripe.Webhook.construct_event(body, signature, webhook_secret)
-        logger.info(f'Received Stripe webhook event: {event["type"]}')
-        return {'received': True}
-    except stripe.error.SignatureVerificationError as e:
-        logger.error(f'Webhook signature verification failed: {e}')
-        raise HTTPException(status_code=400, detail=f'Webhook signature verification failed: {e}')
-    except Exception as e:
-        logger.error(f'Webhook error: {e}')
-        raise HTTPException(status_code=400, detail=f'Webhook error: {e}')
 
 # ----------------- NUMEROLOGY -----------------
 @api_router.post('/numerology/personal-numbers')
 async def personal_numbers(birth_date: str = None, current_user: dict = Depends(get_current_user)):
-    """Расчёт персональных чисел - 1 балл"""
-    user_id = current_user['user_id']
-    
-    # Get user data for birth_date if not provided
-    if not birth_date:
-        user_dict = await db.users.find_one({'id': user_id})
-        if not user_dict:
-            raise HTTPException(status_code=404, detail='Пользователь не найден')
-        user = User(**user_dict)
-        birth_date = user.birth_date
-    
-    # Получаем стоимость из конфигурации
+    from services.personal_numbers import personal_numbers_result
     config = await get_credits_deduction_config()
     cost = config.get('personal_numbers', CREDIT_COSTS.get('personal_numbers', 1))
-    
-    # Списываем баллы с записью в историю
-    await deduct_credits(
-        user_id, 
-        cost, 
-        'Расчёт персональных чисел', 
-        'numerology',
-        {'calculation_type': 'personal_numbers', 'birth_date': birth_date}
-    )
-    
-    results = calculate_personal_numbers(birth_date)
-    # augment with full_name_number from user profile (compute and persist if absent)
-    user_doc = await db.users.find_one({'id': user_id})
-    # Для числа имени используем ТОЛЬКО латинское имя + фамилию
-    name_val = (user_doc or {}).get('name', '')  # ожидаем латиницу
-    surname_val = (user_doc or {}).get('surname', '')
-    fn_number = (user_doc or {}).get('full_name_number')
-    if fn_number is None:
-        fn_number = calculate_full_name_number(name_val, surname_val)
-        await db.users.update_one({'id': user_id}, {'$set': {'full_name_number': fn_number}})
-    results['full_name_number'] = fn_number
-    calc = NumerologyCalculation(user_id=user_id, birth_date=birth_date, calculation_type='personal_numbers', results=results)
-    await db.numerology_calculations.insert_one(calc.dict())
-    return results
+    return await personal_numbers_result(db, current_user['user_id'], birth_date, cost)
 
 @api_router.get('/numerology/planetary-advice/{planet_number}', response_model=PlanetaryAdviceResponse)
 async def planetary_advice_endpoint(
@@ -907,195 +596,28 @@ async def pythagorean_square(birth_date: str = None, current_user: dict = Depend
 
 @api_router.post('/numerology/compatibility')
 async def compatibility_endpoint(request_data: CompatibilityRequest, current_user: dict = Depends(get_current_user)):
-    """Расчёт совместимости пары - 1 балл"""
-    user_id = current_user['user_id']
-    
-    # Получаем стоимость из конфигурации
-    config = await get_credits_deduction_config()
-    cost = config.get('compatibility_pair', CREDIT_COSTS.get('compatibility_pair', 1))
-    
-    # Списываем баллы с записью в историю
-    await deduct_credits(
-        user_id, 
-        cost, 
-        'Расчёт совместимости пары', 
-        'numerology',
-        {
-            'calculation_type': 'compatibility', 
-            'person1_birth_date': request_data.person1_birth_date,
-            'person2_birth_date': request_data.person2_birth_date
-        }
-    )
-    
-    results = calculate_compatibility(request_data.person1_birth_date, request_data.person2_birth_date)
-    calc = NumerologyCalculation(user_id=user_id, birth_date=f"{request_data.person1_birth_date},{request_data.person2_birth_date}", calculation_type='compatibility', results=results)
-    await db.numerology_calculations.insert_one(calc.dict())
-    return results
+    from services.relationships import Relationships
+    return await Relationships(db).legacy(current_user['user_id'], 'pair', request_data.model_dump(mode='json'))
 
 @api_router.post('/numerology/name-numerology')
 async def name_numerology(name_data: dict, current_user: dict = Depends(get_current_user)):
-    """Нумерология имени - 1 балл"""
-    user_id = current_user['user_id']
-    
-    name = name_data.get('name', '')
-    surname = name_data.get('surname', '')
-    full_name = f"{name} {surname}".strip()
-    
-    if not name:
-        raise HTTPException(status_code=400, detail='Имя обязательно для расчёта')
-    
-    # Получаем стоимость из конфигурации
-    config = await get_credits_deduction_config()
-    cost = config.get('name_numerology', CREDIT_COSTS.get('name_numerology', 1))
-    
-    # Списываем баллы с записью в историю
-    await deduct_credits(
-        user_id, 
-        cost, 
-        'Нумерология имени', 
-        'numerology',
-        {'calculation_type': 'name_numerology', 'name': name, 'surname': surname}
-    )
-    
-    # Рассчитываем нумерологию имени
-    from numerology import calculate_name_numerology
-    results = calculate_name_numerology(full_name)
-    
-    # Сохраняем в БД
-    calc = NumerologyCalculation(
-        user_id=user_id, 
-        birth_date='', 
-        calculation_type='name_numerology', 
-        results={**results, 'name': name, 'surname': surname}
-    )
-    await db.numerology_calculations.insert_one(calc.dict())
-    
-    return results
+    from services.number_tools import NumberTools
+    return await NumberTools(db).legacy(current_user['user_id'], 'name', name_data)
 
 @api_router.post('/numerology/group-compatibility')
 async def group_compatibility_numerology(group_data: GroupCompatibilityRequest, current_user: dict = Depends(get_current_user)):
-    """Групповая совместимость (5 человек) - 5 баллов"""
-    user_id = current_user['user_id']
-    
-    if len(group_data.people) > 5:
-        raise HTTPException(status_code=400, detail='Максимум 5 человек для группового анализа')
-    
-    # Получаем стоимость из конфигурации
-    config = await get_credits_deduction_config()
-    cost = config.get('group_compatibility', CREDIT_COSTS.get('group_compatibility', 5))
-    
-    # Списываем баллы с записью в историю
-    await deduct_credits(
-        user_id, 
-        cost, 
-        f'Групповая совместимость ({len(group_data.people)} чел.)', 
-        'numerology',
-        {'calculation_type': 'group_compatibility', 'people_count': len(group_data.people)}
-    )
-    
-    # Рассчитываем групповую совместимость
-    try:
-        from numerology import calculate_group_compatibility
-        # Конвертируем данные людей в нужный формат
-        people_data = [{"name": person.name, "birth_date": person.birth_date} for person in group_data.people]
-        results = calculate_group_compatibility(group_data.main_person_birth_date, people_data)
-        
-        # Сохраняем в БД
-        calc = NumerologyCalculation(
-            user_id=user_id, 
-            birth_date=group_data.main_person_birth_date, 
-            calculation_type='group_compatibility', 
-            results={**results, 'main_person_birth_date': group_data.main_person_birth_date, 'people': people_data}
-        )
-        await db.numerology_calculations.insert_one(calc.dict())
-        
-        return results
-    except Exception as e:
-        # Возвращаем баллы при ошибке
-        config = await get_credits_deduction_config()
-        cost = config.get('group_compatibility', CREDIT_COSTS.get('group_compatibility', 5))
-        await record_credit_transaction(user_id, cost, 'Возврат за ошибку группового анализа', 'refund')
-        await db.users.update_one({'id': user_id}, {'$inc': {'credits_remaining': cost}})
-        raise HTTPException(status_code=400, detail=f'Ошибка расчета: {str(e)}')
+    from services.relationships import Relationships
+    return await Relationships(db).legacy(current_user['user_id'], 'group', group_data.model_dump(mode='json'))
 
 @api_router.post('/numerology/address-numerology')
 async def address_numerology(address_data: dict, current_user: dict = Depends(get_current_user)):
-    """Нумерология адреса - 1 балл"""
-    user_id = current_user['user_id']
-    
-    street = address_data.get('street', '')
-    house_number = address_data.get('house_number', '')
-    apartment_number = address_data.get('apartment_number', '')
-    postal_code = address_data.get('postal_code', '')
-    
-    if not house_number:
-        raise HTTPException(status_code=400, detail='Номер дома обязателен для расчёта')
-    
-    # Получаем стоимость из конфигурации
-    config = await get_credits_deduction_config()
-    cost = config.get('address_numerology', CREDIT_COSTS.get('address_numerology', 1))
-    
-    # Списываем баллы с записью в историю
-    await deduct_credits(
-        user_id, 
-        cost, 
-        'Нумерология адреса', 
-        'numerology',
-        {'calculation_type': 'address_numerology', 'street': street, 'house_number': house_number, 'apartment_number': apartment_number}
-    )
-    
-    # Рассчитываем нумерологию адреса
-    from numerology import calculate_address_numerology
-    results = calculate_address_numerology(street, house_number, apartment_number, postal_code)
-    
-    # Сохраняем в БД
-    calc = NumerologyCalculation(
-        user_id=user_id, 
-        birth_date='', 
-        calculation_type='address_numerology', 
-        results={**results, 'street': street, 'house_number': house_number, 'apartment_number': apartment_number, 'postal_code': postal_code}
-    )
-    await db.numerology_calculations.insert_one(calc.dict())
-    
-    return results
+    from services.number_tools import NumberTools
+    return await NumberTools(db).legacy(current_user['user_id'], 'address', address_data)
 
 @api_router.post('/numerology/car-numerology')
 async def car_numerology(car_data: dict, current_user: dict = Depends(get_current_user)):
-    """Нумерология автомобиля - 1 балл"""
-    user_id = current_user['user_id']
-    
-    car_number = car_data.get('car_number', '')
-    
-    if not car_number:
-        raise HTTPException(status_code=400, detail='Номер автомобиля обязателен для расчёта')
-    
-    # Получаем стоимость из конфигурации
-    config = await get_credits_deduction_config()
-    cost = config.get('car_numerology', CREDIT_COSTS.get('car_numerology', 1))
-    
-    # Списываем баллы с записью в историю
-    await deduct_credits(
-        user_id, 
-        cost, 
-        'Нумерология автомобиля', 
-        'numerology',
-        {'calculation_type': 'car_numerology', 'car_number': car_number}
-    )
-    
-    # Рассчитываем нумерологию автомобиля
-    from numerology import calculate_car_number_numerology
-    results = calculate_car_number_numerology(car_number)
-    
-    # Сохраняем в БД
-    calc = NumerologyCalculation(
-        user_id=user_id, 
-        birth_date='', 
-        calculation_type='car_numerology', 
-        results=results
-    )
-    await db.numerology_calculations.insert_one(calc.dict())
-    
-    return results
+    from services.number_tools import NumberTools
+    return await NumberTools(db).legacy(current_user['user_id'], 'car', car_data)
 
 @api_router.post('/vedic-time/planetary-route/save')
 async def save_planetary_route(route_data: dict, current_user: dict = Depends(get_current_user)):
@@ -1241,7 +763,7 @@ async def vedic_daily_schedule(vedic_request: VedicTimeRequest = Depends(), curr
                     'soul_number': personal_numbers.get('soul_number'),
                     'mind_number': personal_numbers.get('mind_number'),
                     'destiny_number': personal_numbers.get('destiny_number'),
-                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'wisdom_number': route_wisdom_number(user),
                     'ruling_number': personal_numbers.get('ruling_number'),
                     'personal_day': personal_numbers.get('personal_day')
                 }
@@ -1275,19 +797,8 @@ async def vedic_daily_schedule(vedic_request: VedicTimeRequest = Depends(), curr
                 problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
                 problem_numbers = [problem1, problem2, problem3, problem4]
                 
-                # Get name numbers if available
-                if hasattr(user, 'full_name') and user.full_name:
-                    from numerology import calculate_name_numerology
-                    try:
-                        name_data = calculate_name_numerology(user.full_name)
-                        name_numbers = {
-                            'first_name_number': name_data.get('first_name_number'),
-                            'last_name_number': name_data.get('last_name_number'),
-                            'total_name_number': name_data.get('total_name_number'),
-                            'full_name_number': name_data.get('total_name_number')
-                        }
-                    except:
-                        pass
+                # Name numbers by the current name tool, as in the route tools and the full report
+                name_numbers = profile_name_numbers({'name': user.name, 'surname': user.surname})
                 
                 # Calculate weekday energy
                 try:
@@ -2436,7 +1947,7 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
                     'soul_number': personal_numbers.get('soul_number'),
                     'mind_number': personal_numbers.get('mind_number'),
                     'destiny_number': personal_numbers.get('destiny_number'),
-                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'wisdom_number': route_wisdom_number(user),
                     'ruling_number': personal_numbers.get('ruling_number'),
                     'personal_day': personal_numbers.get('personal_day')
                 }
@@ -2470,19 +1981,8 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
                 problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
                 problem_numbers = [problem1, problem2, problem3, problem4]
                 
-                # Get name numbers if available
-                if hasattr(user, 'full_name') and user.full_name:
-                    from numerology import calculate_name_numerology
-                    try:
-                        name_data = calculate_name_numerology(user.full_name)
-                        name_numbers = {
-                            'first_name_number': name_data.get('first_name_number'),
-                            'last_name_number': name_data.get('last_name_number'),
-                            'total_name_number': name_data.get('total_name_number'),
-                            'full_name_number': name_data.get('total_name_number')
-                        }
-                    except:
-                        pass
+                # Name numbers by the current name tool, as in the route tools and the full report
+                name_numbers = profile_name_numbers({'name': user.name, 'surname': user.surname})
                 
                 # Calculate weekday energy
                 try:
@@ -2573,7 +2073,8 @@ async def planetary_route(vedic_request: VedicTimeRequest = Depends(), current_u
             'destiny_number': user_data.get('destiny_number'),
             'mind_number': user_data.get('mind_number'),
             'compatibility_score': day_analysis.get('overall_score', 0)
-        }
+        },
+        **route_wisdom(user)
     }
     
     # Сохраняем планетарный маршрут в БД
@@ -2654,7 +2155,7 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
                     'soul_number': personal_numbers.get('soul_number'),
                     'mind_number': personal_numbers.get('mind_number'),
                     'destiny_number': personal_numbers.get('destiny_number'),
-                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'wisdom_number': route_wisdom_number(user),
                     'ruling_number': personal_numbers.get('ruling_number'),
                     'personal_day': personal_numbers.get('personal_day')
                 }
@@ -2686,19 +2187,8 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
                 problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
                 problem_numbers = [problem1, problem2, problem3, problem4]
                 
-                # Get name numbers if available
-                if hasattr(user, 'full_name') and user.full_name:
-                    from numerology import calculate_name_numerology
-                    try:
-                        name_data = calculate_name_numerology(user.full_name)
-                        name_numbers = {
-                            'first_name_number': name_data.get('first_name_number'),
-                            'last_name_number': name_data.get('last_name_number'),
-                            'total_name_number': name_data.get('total_name_number'),
-                            'full_name_number': name_data.get('total_name_number')
-                        }
-                    except:
-                        pass
+                # Name numbers by the current name tool, as in the route tools and the full report
+                name_numbers = profile_name_numbers({'name': user.name, 'surname': user.surname})
                 
                 # Calculate weekday energy
                 try:
@@ -2825,6 +2315,7 @@ async def weekly_planetary_route(vedic_request: VedicTimeRequest = Depends(), cu
             day['user_mind_number'] = mind_number
             day['user_destiny_number'] = destiny_number
         
+        weekly_route.update(route_wisdom(user))
         return weekly_route
         
     except Exception as e:
@@ -2897,7 +2388,7 @@ async def monthly_planetary_route(vedic_request: VedicTimeRequest = Depends(), c
                     'soul_number': personal_numbers.get('soul_number'),
                     'mind_number': personal_numbers.get('mind_number'),
                     'destiny_number': personal_numbers.get('destiny_number'),
-                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'wisdom_number': route_wisdom_number(user),
                     'ruling_number': personal_numbers.get('ruling_number'),
                     'personal_day': personal_numbers.get('personal_day')
                 }
@@ -2929,19 +2420,8 @@ async def monthly_planetary_route(vedic_request: VedicTimeRequest = Depends(), c
                 problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
                 problem_numbers = [problem1, problem2, problem3, problem4]
                 
-                # Get name numbers if available
-                if hasattr(user, 'full_name') and user.full_name:
-                    from numerology import calculate_name_numerology
-                    try:
-                        name_data = calculate_name_numerology(user.full_name)
-                        name_numbers = {
-                            'first_name_number': name_data.get('first_name_number'),
-                            'last_name_number': name_data.get('last_name_number'),
-                            'total_name_number': name_data.get('total_name_number'),
-                            'full_name_number': name_data.get('total_name_number')
-                        }
-                    except:
-                        pass
+                # Name numbers by the current name tool, as in the route tools and the full report
+                name_numbers = profile_name_numbers({'name': user.name, 'surname': user.surname})
                 
                 # Calculate weekday energy
                 try:
@@ -2972,6 +2452,7 @@ async def monthly_planetary_route(vedic_request: VedicTimeRequest = Depends(), c
             name_numbers=name_numbers, weekday_energy=weekday_energy,
             janma_ank=janma_ank_value, modifiers_config=modifiers_config
         )
+        monthly_route.update(route_wisdom(user))
         return monthly_route
     except Exception as e:
         # Возвращаем баллы при ошибке
@@ -3037,7 +2518,7 @@ async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(),
                     'soul_number': personal_numbers.get('soul_number'),
                     'mind_number': personal_numbers.get('mind_number'),
                     'destiny_number': personal_numbers.get('destiny_number'),
-                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'wisdom_number': route_wisdom_number(user),
                     'ruling_number': personal_numbers.get('ruling_number'),
                     'personal_day': personal_numbers.get('personal_day')
                 }
@@ -3069,19 +2550,8 @@ async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(),
                 problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
                 problem_numbers = [problem1, problem2, problem3, problem4]
                 
-                # Get name numbers if available
-                if hasattr(user, 'full_name') and user.full_name:
-                    from numerology import calculate_name_numerology
-                    try:
-                        name_data = calculate_name_numerology(user.full_name)
-                        name_numbers = {
-                            'first_name_number': name_data.get('first_name_number'),
-                            'last_name_number': name_data.get('last_name_number'),
-                            'total_name_number': name_data.get('total_name_number'),
-                            'full_name_number': name_data.get('total_name_number')
-                        }
-                    except:
-                        pass
+                # Name numbers by the current name tool, as in the route tools and the full report
+                name_numbers = profile_name_numbers({'name': user.name, 'surname': user.surname})
                 
                 # Calculate weekday energy
                 try:
@@ -3112,6 +2582,7 @@ async def quarterly_planetary_route(vedic_request: VedicTimeRequest = Depends(),
             name_numbers=name_numbers, weekday_energy=weekday_energy,
             janma_ank=janma_ank_value, modifiers_config=modifiers_config
         )
+        quarterly_route.update(route_wisdom(user))
         return quarterly_route
     except Exception as e:
         # Возвращаем баллы при ошибке
@@ -3355,7 +2826,7 @@ async def get_planetary_energy(days: int = 7, current_user: dict = Depends(get_c
                     'soul_number': personal_numbers.get('soul_number'),
                     'mind_number': personal_numbers.get('mind_number'),
                     'destiny_number': personal_numbers.get('destiny_number'),
-                    'wisdom_number': personal_numbers.get('wisdom_number'),
+                    'wisdom_number': route_wisdom_number(user),
                     'ruling_number': personal_numbers.get('ruling_number'),
                     'personal_day': personal_numbers.get('personal_day')
                 }
@@ -3396,25 +2867,8 @@ async def get_planetary_energy(days: int = 7, current_user: dict = Depends(get_c
                 problem_numbers = [problem1, problem2, problem3, problem4]
                 
                 # Get name numbers if available
-                if hasattr(user, 'full_name') and user.full_name:
-                    # Calculate name numbers (name and surname separately)
-                    from numerology import calculate_name_numerology
-                    try:
-                        name_data = calculate_name_numerology(user.full_name)
-                        name_numbers = {
-                            'first_name_number': name_data.get('first_name_number'),
-                            'last_name_number': name_data.get('last_name_number'),
-                            'total_name_number': name_data.get('total_name_number'),
-                            'full_name_number': name_data.get('total_name_number')  # Alias
-                        }
-                    except:
-                        # Fallback to simple calculation
-                        try:
-                            from numerology import calculate_full_name_number
-                            name_num = calculate_full_name_number(user.full_name)
-                            name_numbers = {'name_number': name_num, 'full_name_number': name_num}
-                        except:
-                            pass
+                # Name numbers by the current name tool, as in the route tools and the full report
+                name_numbers = profile_name_numbers({'name': user.name, 'surname': user.surname})
                 
                 # Calculate weekday energy (personal energy by day of week)
                 # This uses calculate_planetary_strength which calculates DDMM × YYYY
@@ -3864,12 +3318,8 @@ async def get_all_users(current_user: dict = Depends(get_current_user)):
         # Получаем всех пользователей
         users = await db.users.find({}).to_list(1000)
 
-        users_list = []
-        for user_doc in users:
-            user_dict = dict(user_doc)
-            user_dict.pop('_id', None)
-            user_dict.pop('password_hash', None)  # Не показываем хэш пароля
-            users_list.append(user_dict)
+        from services.admin_management import safe_user
+        users_list = [safe_user(document) for document in users]
 
         return {"users": users_list}
 
@@ -3879,77 +3329,41 @@ async def get_all_users(current_user: dict = Depends(get_current_user)):
         logger.error(f"Error getting users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting users: {str(e)}")
 
+from pydantic import Field, StrictInt
+from routers.admin_management import AdminChange, CreditChange
+from services.admin_management import AdminManagementService, MAX_CREDITS
+
+
+class LegacyCreditChange(AdminChange):
+    credits_remaining: StrictInt = Field(ge=0, le=MAX_CREDITS)
+    expected_balance: StrictInt | None = Field(default=None, ge=0, le=MAX_CREDITS)
+    reason: str = Field(default='Изменение баланса в прежней панели администратора',
+                        min_length=1, max_length=500)
+
+
 @app.patch("/api/admin/users/{target_user_id}/credits")
 async def update_user_credits(
     target_user_id: str,
-    request_data: dict,
+    request_data: LegacyCreditChange,
     current_user: dict = Depends(get_current_user)
 ):
-    """Обновить кредиты пользователя (администратор)"""
-    try:
-        # Проверка прав администратора
-        admin_user_id = current_user.get("user_id")
-        if not admin_user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        admin_user = await db.users.find_one({"id": admin_user_id})
-        if not admin_user:
-            raise HTTPException(status_code=404, detail="Admin user not found")
-
-        if not admin_user.get('is_super_admin', False) and not admin_user.get('is_admin', False):
-            raise HTTPException(status_code=403, detail="Недостаточно прав")
-
-        # Получаем целевого пользователя
-        target_user = await db.users.find_one({"id": target_user_id})
-        if not target_user:
-            raise HTTPException(status_code=404, detail="Target user not found")
-
-        # Получаем новое значение кредитов
-        new_credits = request_data.get("credits_remaining")
-        if new_credits is None:
-            raise HTTPException(status_code=400, detail="credits_remaining is required")
-
-        new_credits = int(new_credits)
-        old_credits = target_user.get("credits_remaining", 0)
-        credits_difference = new_credits - old_credits
-
-        # Обновляем кредиты
-        await db.users.update_one(
-            {"id": target_user_id},
-            {"$set": {"credits_remaining": new_credits}}
-        )
-
-        # Записываем транзакцию в историю
-        if credits_difference != 0:
-            await record_credit_transaction(
-                user_id=target_user_id,
-                amount=credits_difference,
-                description=f"Изменение баланса администратором {admin_user.get('email', admin_user_id)}",
-                category='admin',
-                details={
-                    'added_by_admin': True,
-                    'admin_user_id': admin_user_id,
-                    'admin_email': admin_user.get('email', ''),
-                    'old_credits': old_credits,
-                    'new_credits': new_credits,
-                    'difference': credits_difference
-                }
-            )
-
-        return {
-            "message": "Кредиты успешно обновлены",
-            "old_credits": old_credits,
-            "new_credits": new_credits,
-            "difference": credits_difference
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating user credits: {str(e)}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error updating user credits: {str(e)}")
+    """Keep the legacy response while sharing current account mutation policy."""
+    service = AdminManagementService(db)
+    actor = await service.authorize(current_user.get('user_id'))
+    detail = await service.user_detail(target_user_id)
+    old_credits = request_data.expected_balance
+    if old_credits is None:
+        # Old clients lack a displayed-balance guard; still compare at commit time.
+        old_credits = detail['user']['credits_remaining']
+    difference = request_data.credits_remaining - old_credits
+    if difference == 0:
+        raise HTTPException(status_code=400, detail='No credit changes provided')
+    change = CreditChange(amount=difference, expected_balance=old_credits, reason=request_data.reason)
+    result = await service.change_credits(actor, target_user_id, change)
+    return {
+        'message': 'Кредиты успешно обновлены', 'old_credits': old_credits,
+        'new_credits': result['user']['credits_remaining'], 'difference': difference,
+    }
 
 # ==================== API УРОКОВ V2 ====================
 
@@ -4090,79 +3504,11 @@ async def get_lesson_v2_admin(lesson_id: str, current_user: dict = Depends(get_c
 
 @app.get("/api/learning-v2/lessons")
 async def get_all_lessons_v2_student(current_user: dict = Depends(get_current_user)):
-    """Получить все доступные уроки V2 для студентов"""
-    try:
-        logger.info(f"get_all_lessons_v2_student called, current_user: {current_user}")
-        user_id = current_user.get('user_id') or current_user.get('id')
-        if not user_id:
-            logger.error(f"Invalid current_user object: {current_user}")
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        # Проверяем уровень пользователя
-        user = await db.users.find_one({'id': user_id})
-        user_level = user.get('level', 1) if user else 1
-
-        # Получаем активные уроки до текущего уровня пользователя
-        # Временно убираем фильтр по уровню, чтобы показывать все активные уроки
-        # TODO: Восстановить фильтр по уровню после настройки системы уровней
-        lessons = await db.lessons_v2.find({
-            "is_active": True
-        }).sort("order", 1).to_list(1000)
-
-        lessons_list = []
-        for lesson in lessons:
-            lesson_dict = dict(lesson)
-            lesson_dict.pop('_id', None)
-            # Убираем чувствительную информацию
-            lesson_dict.pop('created_by', None)
-            lesson_dict.pop('updated_by', None)
-            lessons_list.append(lesson_dict)
-        
-        logger.info(f"Returning {len(lessons_list)} lessons for user {user_id} (level {user_level})")
-        return {
-            "lessons": lessons_list,
-            "user_level": user_level
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting lessons V2 for student: {str(e)}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error getting lessons: {str(e)}")
+    return await StudentLearningService(db).lessons(current_user['user_id'])
 
 @app.get("/api/learning-v2/lessons/{lesson_id}")
 async def get_lesson_v2_student(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить урок V2 для студента"""
-    try:
-        user_id = current_user['user_id']
-
-        lesson = await db.lessons_v2.find_one({"id": lesson_id, "is_active": True})
-        if not lesson:
-            raise HTTPException(status_code=404, detail="Lesson not found")
-
-        lesson_dict = dict(lesson)
-        lesson_dict.pop('_id', None)
-        lesson_dict.pop('created_by', None)
-        lesson_dict.pop('updated_by', None)
-
-        # Получаем прогресс пользователя по уроку
-        progress = await db.lesson_progress_v2.find_one({
-            "lesson_id": lesson_id,
-            "user_id": user_id
-        })
-        
-        return {
-            "lesson": lesson_dict,
-            "progress": progress or {}
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting lesson V2 for student: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting lesson: {str(e)}")
+    return await StudentLearningService(db).lesson(current_user['user_id'], lesson_id)
 
 # ==================== ADMIN: GET LESSONS ====================
 
@@ -4726,6 +4072,60 @@ async def send_test_notification(
 # ==================== END PUSH NOTIFICATIONS ====================
 
 # Include router and middleware at the end to ensure all endpoints are registered
+from routers.exercise_attachments import create_exercise_attachments_router
+from routers.mobile_admin import create_mobile_admin_router
+from routers.admin_reports import create_admin_reports_router
+from routers.passkeys import create_passkeys_router
+from routers.accounts import create_accounts_router
+from routers.telegram import create_telegram_router
+from routers.geography import create_geography_router
+from routers.recovery import create_recovery_router
+from routers.admin_management import create_admin_management_router
+from routers.student_media import create_student_media_router
+from routers.admin_media import create_admin_media_router
+from routers.vedic_calculations import create_vedic_calculations_router
+from routers.assessment import create_assessment_router
+from routers.personal_calculations import create_personal_calculations_router
+from routers.personal_reports import create_personal_reports_router
+from routers.narration import create_narration_router
+from routers.payments import create_payments_router
+from routers.consultations import create_consultations_router
+from routers.relationships import create_relationships_router
+from routers.number_tools import create_number_tools_router
+from routers.challenge_diary import create_challenge_diary_router
+from routers.exercise_drafts import create_exercise_drafts_router
+from routers.learning_drafts import create_learning_drafts_router
+from routers.business import create_business_router
+from routers.full_reports import create_full_reports_router
+from routers.report_pdf import create_report_pdf_router
+from routers.daily_email import create_daily_email_router
+app.include_router(create_exercise_attachments_router(db))
+app.include_router(create_mobile_admin_router(db))
+app.include_router(create_admin_reports_router(db))
+app.include_router(create_passkeys_router(db))
+app.include_router(create_accounts_router(db))
+app.include_router(create_telegram_router(db))
+app.include_router(create_geography_router())
+app.include_router(create_recovery_router(db))
+app.include_router(create_admin_management_router(db))
+app.include_router(create_student_media_router(db))
+app.include_router(create_admin_media_router(db))
+app.include_router(create_vedic_calculations_router(db))
+app.include_router(create_assessment_router(db))
+app.include_router(create_personal_calculations_router(db))
+app.include_router(create_personal_reports_router(db))
+app.include_router(create_narration_router(db))
+app.include_router(create_payments_router(db))
+app.include_router(create_consultations_router(db))
+app.include_router(create_relationships_router(db))
+app.include_router(create_number_tools_router(db))
+app.include_router(create_challenge_diary_router(db))
+app.include_router(create_exercise_drafts_router(db))
+app.include_router(create_learning_drafts_router(db))
+app.include_router(create_business_router(db))
+app.include_router(create_full_reports_router(db))
+app.include_router(create_report_pdf_router(db))
+app.include_router(create_daily_email_router(db))
 app.include_router(api_router)
 
 # Bunny.net Stream integration
@@ -4803,168 +4203,20 @@ async def custom_cors_handler(request, call_next):
 # ===== LEARNING SYSTEM V2 ENDPOINTS =====
 # Интеграция системы обучения V2 в основной проект
 
-# Простая аутентификация для тестирования системы обучения V2
-@app.post("/api/auth/login-v2")
-async def login_v2(request_data: dict):
-    """Простая аутентификация для системы обучения V2"""
-    email = request_data.get("email", "")
-    password = request_data.get("password", "")
-
-    # Для тестирования принимаем любые credentials
-    # В реальной системе здесь должна быть проверка с основной БД
-    if email and password:
-        # Создаем тестовый токен
-        test_token = create_access_token({"sub": email, "user_id": "test_user_v2", "is_admin": True})
-
-        return {
-            "access_token": test_token,
-            "token_type": "bearer",
-            "user": {
-                "id": "test_user_v2",
-                "email": email,
-                "name": "Test User V2",
-                "is_admin": True,
-                "is_super_admin": True
-            }
-        }
-
-    raise HTTPException(status_code=401, detail="Invalid credentials")
-
-@app.get("/api/user/profile-v2")
-async def get_user_profile_v2(current_user: dict = Depends(get_current_user)):
-    """Получить профиль пользователя для системы обучения V2"""
-    try:
-        user_id = current_user.get("user_id")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        # Получаем реальные данные пользователя из базы данных
-        user = await db.users.find_one({"id": user_id})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Удаляем MongoDB _id перед возвратом
-        user_dict = dict(user)
-        user_dict.pop("_id", None)
-        
-        # Возвращаем все поля пользователя, включая личные данные
-        return {
-            "id": user_dict.get("id", ""),
-            "email": user_dict.get("email", ""),
-            "name": user_dict.get("name", user_dict.get("full_name", "Пользователь")),
-            "full_name": user_dict.get("full_name", ""),
-            "surname": user_dict.get("surname", ""),
-            "full_name_number": user_dict.get("full_name_number", None),
-            "birth_date": user_dict.get("birth_date", ""),
-            "phone_number": user_dict.get("phone_number", ""),
-            "city": user_dict.get("city", ""),
-            "car_number": user_dict.get("car_number", ""),
-            "street": user_dict.get("street", ""),
-            "house_number": user_dict.get("house_number", ""),
-            "apartment_number": user_dict.get("apartment_number", ""),
-            "postal_code": user_dict.get("postal_code", ""),
-            "is_admin": user_dict.get("is_admin", False),
-            "is_super_admin": user_dict.get("is_super_admin", False),
-            "credits_remaining": user_dict.get("credits_remaining", 0),
-            "level": user_dict.get("level", 1)
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting user profile V2: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting user profile: {str(e)}")
+# Compatibility URL for learning clients; use the same account checks as login.
+@app.post("/api/auth/login-v2", response_model=TokenResponse)
+async def login_v2(request_data: LoginRequest):
+    from services.accounts import AccountService
+    return await AccountService(db).login(request_data)
 
 
-@app.patch("/api/user/profile-v2")
-async def update_user_profile_v2(request_data: dict, current_user: dict = Depends(get_current_user)):
-    """Обновить профиль пользователя для системы обучения V2"""
-    try:
-        user_id = current_user.get("user_id")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
 
-        user = await db.users.find_one({"id": user_id})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        allowed_fields = [
-            "full_name",
-            "name",
-            "surname",
-            "birth_date",
-            "city",
-            "phone_number",
-            "car_number",
-            "street",
-            "house_number",
-            "apartment_number",
-            "postal_code"
-        ]
-
-        update_payload = {}
-        for field in allowed_fields:
-            if field in request_data:
-                value = request_data.get(field)
-                if isinstance(value, str):
-                    value = value.strip()
-                update_payload[field] = value
-
-        if not update_payload:
-            raise HTTPException(status_code=400, detail="No valid fields provided for update")
-
-        update_payload["updated_at"] = datetime.utcnow()
-
-        await db.users.update_one({"id": user_id}, {"$set": update_payload})
-        # Пересчитываем число имени ТОЛЬКО по name+surname (латиница)
-        if any(f in request_data for f in ["name", "surname"]):
-            fresh = await db.users.find_one({"id": user_id})
-            if fresh:
-                name_val = fresh.get("name", "")
-                surname_val = fresh.get("surname", "")
-                fn_number = calculate_full_name_number(name_val, surname_val)
-                await db.users.update_one({"id": user_id}, {"$set": {"full_name_number": fn_number}})
-
-        updated_user = await db.users.find_one({"id": user_id})
-        if not updated_user:
-            raise HTTPException(status_code=404, detail="User not found after update")
-
-        updated_user.pop("_id", None)
-        return updated_user
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating user profile V2: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating user profile: {str(e)}")
 
 # Этот эндпоинт уже определен выше (строка 2790), удаляем дубликат
 
 @app.get("/api/learning-v2/lessons/{lesson_id}")
 async def get_lesson_v2_student(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить урок V2 для студента"""
-    try:
-        user_id = current_user['user_id']
-
-        lesson = await db.lessons_v2.find_one({"id": lesson_id, "is_active": True})
-        if not lesson:
-            raise HTTPException(status_code=404, detail="Lesson not found")
-
-        lesson_dict = dict(lesson)
-        lesson_dict.pop('_id', None)
-        lesson_dict.pop('created_by', None)
-        lesson_dict.pop('updated_by', None)
-
-        return {
-            "lesson": lesson_dict,
-            "progress": {}  # Пока без прогресса
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting lesson V2 for student: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting lesson: {str(e)}")
+    return await StudentLearningService(db).lesson(current_user['user_id'], lesson_id)
 
 @app.get("/api/admin/lessons-v2")
 async def get_all_lessons_v2_admin(current_user: dict = Depends(get_current_user)):
@@ -5063,7 +4315,7 @@ async def update_lesson_v2(
         # Обновляем урок в базе данных
         result = await db.lessons_v2.update_one(
             {"id": lesson_id},
-            {"$set": update_data}
+            {"$set": update_data, "$inc": {"mobile_revision": 1}}
         )
 
         if result.matched_count == 0:
@@ -5594,7 +4846,7 @@ async def get_student_dashboard_stats(current_user: dict = Depends(get_current_u
         exercise_review_time = 0  # Время проверки упражнений администратором
         
         if "exercise_responses" in collection_names:
-            exercise_cursor = db.exercise_responses.find({"user_id": user_id})
+            exercise_cursor = db.exercise_responses.find({"attachment_draft_only": {"$ne": True}, "user_id": user_id})
             exercise_responses = await exercise_cursor.to_list(length=None)
             total_exercises_completed = len(exercise_responses)
             
@@ -5890,14 +5142,14 @@ async def get_student_dashboard_stats(current_user: dict = Depends(get_current_u
             day_efficiencies = []
 
             if "exercise_responses" in collection_names:
-                exercise_count = await db.exercise_responses.count_documents({
+                exercise_count = await db.exercise_responses.count_documents({"attachment_draft_only": {"$ne": True}, 
                     "user_id": user_id,
                     "submitted_at": {"$gte": day_start, "$lt": day_end}
                 })
                 day_activity += exercise_count
                 
                 # Получаем упражнения для расчета эффективности
-                exercise_records = await db.exercise_responses.find({
+                exercise_records = await db.exercise_responses.find({"attachment_draft_only": {"$ne": True}, 
                     "user_id": user_id,
                     "submitted_at": {"$gte": day_start, "$lt": day_end}
                 }).to_list(length=None)
@@ -6462,13 +5714,13 @@ async def get_detailed_analytics(
                 
                 # Упражнения
                 if "exercise_responses" in collection_names:
-                    exercise_count = await db.exercise_responses.count_documents({
+                    exercise_count = await db.exercise_responses.count_documents({"attachment_draft_only": {"$ne": True}, 
                         "user_id": user_id,
                         "submitted_at": {"$gte": period_start, "$lt": period_end}
                     })
                     period_activity += exercise_count
                     
-                    exercise_records = await db.exercise_responses.find({
+                    exercise_records = await db.exercise_responses.find({"attachment_draft_only": {"$ne": True}, 
                         "user_id": user_id,
                         "submitted_at": {"$gte": period_start, "$lt": period_end}
                     }).to_list(length=None)
@@ -7529,7 +6781,7 @@ async def get_detailed_analytics(
             # Детальная аналитика по упражнениям
             exercise_details = []
             if "exercise_responses" in collection_names:
-                exercise_cursor = db.exercise_responses.find({"user_id": user_id})
+                exercise_cursor = db.exercise_responses.find({"attachment_draft_only": {"$ne": True}, "user_id": user_id})
                 exercise_responses = await exercise_cursor.to_list(length=None)
                 
                 lessons_cursor = db.lessons_v2.find({"is_active": True})
@@ -7633,7 +6885,7 @@ async def get_detailed_analytics(
             
             # Дополнительный источник: exercise_responses (для обратной совместимости)
             if "exercise_responses" in collection_names:
-                exercise_responses_records = await db.exercise_responses.find({
+                exercise_responses_records = await db.exercise_responses.find({"attachment_draft_only": {"$ne": True}, 
                     "user_id": user_id,
                     "submitted_at": {"$gte": start_date, "$lte": end_date}
                 }).sort("submitted_at", 1).to_list(length=None)
@@ -7758,7 +7010,8 @@ async def get_user_consultations(current_user: dict = Depends(get_current_user))
         user_id = current_user.get('user_id', current_user.get('id'))
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid token")
-
+        from services.consultations import marker, cost
+        user_access = await db.users.find_one({'id': user_id}, {'consultation_access': 1}) or {}
         collection_names = await db.list_collection_names()
         
         consultations = []
@@ -7784,7 +7037,8 @@ async def get_user_consultations(current_user: dict = Depends(get_current_user))
                 
                 # Проверяем, куплена ли консультация
                 purchase = purchases.get(consultation.get("id"))
-                consultation_dict["is_purchased"] = purchase is not None
+                consultation_dict["is_purchased"] = (purchase is not None or cost(consultation) == 0 or
+                    marker(consultation['id']) in user_access.get('consultation_access', {}))
                 consultation_dict["purchased_at"] = purchase.get("purchased_at").isoformat() if purchase and purchase.get("purchased_at") else None
                 
                 consultations.append(consultation_dict)
@@ -7802,71 +7056,13 @@ async def get_user_consultations(current_user: dict = Depends(get_current_user))
 
 @app.post("/api/user/consultations/{consultation_id}/purchase")
 async def purchase_consultation(consultation_id: str, current_user: dict = Depends(get_current_user)):
-    """Купить консультацию за баллы"""
-    try:
-        user_id = current_user.get('user_id', current_user.get('id'))
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        # Получаем информацию о пользователе
-        user = await db.users.find_one({"id": user_id})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        # Получаем информацию о консультации
-        consultation = await db.personal_consultations.find_one({"id": consultation_id})
-        if not consultation:
-            raise HTTPException(status_code=404, detail="Consultation not found")
-
-        cost_credits = consultation.get("cost_credits", 0)
-        user_credits = user.get("credits_remaining", 0)
-
-        if user_credits < cost_credits:
-            raise HTTPException(status_code=402, detail="Insufficient credits")
-
-        # Проверяем, не куплена ли уже консультация
-        existing_purchase = await db.consultation_purchases.find_one({
-            "user_id": user_id,
-            "consultation_id": consultation_id
-        })
-        if existing_purchase:
-            raise HTTPException(status_code=400, detail="Consultation already purchased")
-
-        # Списываем баллы
-        await db.users.update_one(
-            {"id": user_id},
-            {"$inc": {"credits_remaining": -cost_credits}}
-        )
-
-        # Создаем запись о покупке
-        purchase_data = {
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "consultation_id": consultation_id,
-            "purchased_at": datetime.utcnow(),
-            "cost_credits": cost_credits
-        }
-        await db.consultation_purchases.insert_one(purchase_data)
-
-        # Записываем транзакцию
-        await db.credit_transactions.insert_one({
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "amount": -cost_credits,
-            "transaction_type": "consultation_purchase",
-            "description": f"Покупка консультации: {consultation.get('title', 'Консультация')}",
-            "created_at": datetime.utcnow()
-        })
-
-        return {"message": "Consultation purchased successfully", "purchase": purchase_data}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        logger.error(f"Error purchasing consultation: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error purchasing consultation: {str(e)}")
+    # The existing website and mobile client share one atomic purchase marker.
+    from services.consultations import Consultations, cost
+    service = Consultations(db)
+    uid = current_user['user_id']
+    _, item = await service.assigned(uid, consultation_id)
+    result = await service.purchase(uid, consultation_id, cost(item))
+    return {"message": "Доступ к консультации открыт", "consultation": result}
 
 # ==================== ADMIN CONSULTATIONS API ====================
 
@@ -8217,693 +7413,42 @@ async def upload_consultation_subtitles(
 
 @app.get("/api/student/lesson-progress/{lesson_id}")
 async def get_lesson_progress(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить прогресс урока для студента"""
-    try:
-        user_id = current_user.get('user_id', current_user.get('id'))
+    return await StudentLearningService(db).progress(current_user['user_id'], lesson_id)
 
-        # Получаем урок
-        lesson = await db.lessons_v2.find_one({"id": lesson_id})
-        if not lesson:
-            raise HTTPException(status_code=404, detail="Урок не найден")
 
-        now = datetime.utcnow()
-        
-        # ЗАПИСЫВАЕМ В time_activity с типом "lesson_view" при открытии урока
-        # Проверяем, есть ли уже запись за сегодня
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        existing_activity = await db.time_activity.find_one({
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "activity_type": "lesson_view",
-            "created_at": {"$gte": today_start}
-        })
-        
-        if not existing_activity:
-            # Создаем новую запись в time_activity для отслеживания присутствия в уроке
-            activity_data = {
-                "id": str(uuid.uuid4()),
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "activity_type": "lesson_view",
-                "total_minutes": 0,  # Время будет обновляться через save_time_activity
-                "total_points": 0,
-                "created_at": now,
-                "last_activity_at": now
-            }
-            await db.time_activity.insert_one(activity_data)
-
-        # Получаем прогресс урока
-        progress = await db.lesson_progress.find_one({"user_id": user_id, "lesson_id": lesson_id})
-        if not progress:
-            # Создаем начальный прогресс
-            progress = {
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "is_completed": False,
-                "completion_percentage": 0,
-                "theory_read": False,
-                "exercises_completed": 0,
-                "challenge_started": False,
-                "challenge_completed": False,
-                "quiz_passed": False,
-                "started_at": now,
-                "last_activity_at": now,
-                "last_accessed": now  # Добавляем last_accessed для отслеживания просмотра теории
-            }
-            # Сохраняем прогресс в базу
-            await db.lesson_progress.insert_one(progress)
-            
-            # ЗАПИСЫВАЕМ В time_activity с типом "theory_view" при первом открытии урока
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            existing_theory_activity = await db.time_activity.find_one({
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "activity_type": {"$in": ["theory", "theory_view"]},
-                "created_at": {"$gte": today_start}
-            })
-            
-            if not existing_theory_activity:
-                # Создаем новую запись в time_activity для отслеживания просмотра теории
-                theory_activity_data = {
-                    "id": str(uuid.uuid4()),
-                    "user_id": user_id,
-                    "lesson_id": lesson_id,
-                    "activity_type": "theory_view",
-                    "total_minutes": 0,
-                    "total_points": 0,
-                    "created_at": now,
-                    "last_activity_at": now
-                }
-                await db.time_activity.insert_one(theory_activity_data)
-        else:
-            progress = dict(progress)
-            progress.pop('_id', None)
-            # Обновляем last_accessed при каждом открытии урока
-            await db.lesson_progress.update_one(
-                {"user_id": user_id, "lesson_id": lesson_id},
-                {"$set": {"last_accessed": now, "last_activity_at": now}}
-            )
-            progress["last_accessed"] = now
-            
-            # ЗАПИСЫВАЕМ В time_activity с типом "theory_view" при открытии урока (для отслеживания просмотра теории)
-            # Проверяем, есть ли уже запись за сегодня
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            existing_theory_activity = await db.time_activity.find_one({
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "activity_type": {"$in": ["theory", "theory_view"]},
-                "created_at": {"$gte": today_start}
-            })
-            
-            if not existing_theory_activity:
-                # Создаем новую запись в time_activity для отслеживания просмотра теории
-                theory_activity_data = {
-                    "id": str(uuid.uuid4()),
-                    "user_id": user_id,
-                    "lesson_id": lesson_id,
-                    "activity_type": "theory_view",
-                    "total_minutes": 0,
-                    "total_points": 0,
-                    "created_at": now,
-                    "last_activity_at": now
-                }
-                await db.time_activity.insert_one(theory_activity_data)
-
-        return progress
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        logger.error(f"Error getting lesson progress: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error getting lesson progress: {str(e)}")
+@app.post('/api/student/lesson-progress/{lesson_id}/theory')
+async def mark_lesson_theory_read(lesson_id: str, request_data: TheoryRead,
+                                current_user: dict = Depends(get_current_user)):
+    return await StudentLearningService(db).mark_theory(current_user['user_id'], lesson_id)
 
 @app.post("/api/student/exercise-response")
-async def save_exercise_response(request_data: dict, current_user: dict = Depends(get_current_user)):
-    """Сохранить ответ на упражнение"""
-    try:
-        user_id = current_user.get('user_id', current_user.get('id'))
-
-        exercise_response_data = {
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "lesson_id": request_data["lesson_id"],
-            "exercise_id": request_data["exercise_id"],
-            "response_text": request_data["response_text"],
-            "submitted_at": datetime.utcnow(),
-            "reviewed": False
-        }
-
-        # Сохраняем или обновляем ответ
-        existing_response = await db.exercise_responses.find_one({
-            "user_id": user_id,
-            "lesson_id": request_data["lesson_id"],
-            "exercise_id": request_data["exercise_id"]
-        })
-
-        if existing_response:
-            # Обновляем существующий
-            await db.exercise_responses.update_one(
-                {"_id": existing_response["_id"]},
-                {"$set": {
-                    "response_text": request_data["response_text"],
-                    "submitted_at": datetime.utcnow(),
-                    "reviewed": False,
-                    "admin_comment": None,
-                    "reviewed_at": None,
-                    "reviewed_by": None
-                }}
-            )
-            exercise_response_data["id"] = existing_response["id"]
-        else:
-            # Создаем новый
-            result = await db.exercise_responses.insert_one(exercise_response_data)
-            
-            # Начисляем кредиты за выполнение упражнения (только для новых ответов)
-            points_config = await get_learning_points_config()
-            exercise_points = points_config.get('exercise_points_per_submission', 10)
-            
-            await award_credits_for_learning(
-                user_id=user_id,
-                amount=exercise_points,
-                description=f"Выполнение упражнения урока {request_data['lesson_id']}",
-                category='exercise',
-                details={
-                    'lesson_id': request_data['lesson_id'],
-                    'exercise_id': request_data['exercise_id'],
-                    'points': exercise_points
-                }
-            )
-            
-            # ЗАПИСЫВАЕМ В time_activity с типом "exercise" для унифицированной аналитики
-            now = datetime.utcnow()
-            existing_activity = await db.time_activity.find_one({
-                "user_id": user_id,
-                "lesson_id": request_data["lesson_id"],
-                "activity_type": "exercise"
-            })
-            
-            if existing_activity:
-                # Обновляем существующую запись
-                await db.time_activity.update_one(
-                    {"_id": existing_activity["_id"]},
-                    {"$set": {"last_activity_at": now}}
-                )
-            else:
-                # Создаем новую запись в time_activity
-                activity_data = {
-                    "id": str(uuid.uuid4()),
-                    "user_id": user_id,
-                    "lesson_id": request_data["lesson_id"],
-                    "activity_type": "exercise",
-                    "total_minutes": 0,
-                    "total_points": exercise_points,
-                    "created_at": now,
-                    "last_activity_at": now
-                }
-                await db.time_activity.insert_one(activity_data)
-
-        # Обновляем прогресс урока
-        await update_lesson_progress(user_id, request_data["lesson_id"])
-        
-        return {
-            "message": "Ответ сохранен успешно",
-            "response_id": exercise_response_data["id"]
-        }
-        
-    except Exception as e:
-        import traceback
-        logger.error(f"Error saving exercise response: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error saving exercise response: {str(e)}")
+async def save_exercise_response(request_data: ExerciseSubmission, current_user: dict = Depends(get_current_user)):
+    return await StudentLearningService(db).submit_exercise(current_user['user_id'], request_data)
 
 @app.get("/api/student/exercise-responses/{lesson_id}")
 async def get_exercise_responses(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить все ответы на упражнения урока"""
-    try:
-        user_id = current_user.get('user_id', current_user.get('id'))
+    return await StudentLearningService(db).exercise_responses(current_user['user_id'], lesson_id)
 
-        responses = await db.exercise_responses.find({
-            "user_id": user_id,
-            "lesson_id": lesson_id
-        }).to_list(length=None)
+@app.post('/api/student/challenge-progress')
+async def save_challenge_progress(request_data: LegacyDiaryWrite, current_user: dict = Depends(get_current_user)):
+    return await ChallengeDiary(db).legacy_save(current_user['user_id'], request_data)
 
-        # Группируем по exercise_id
-        exercise_responses = {}
-        for response in responses:
-            response_dict = dict(response)
-            response_dict.pop('_id', None)
-            exercise_responses[response["exercise_id"]] = response_dict
-        
-        return {
-            "exercise_responses": exercise_responses
-        }
-        
-    except Exception as e:
-        import traceback
-        logger.error(f"Error getting exercise responses: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error getting exercise responses: {str(e)}")
-
-@app.post("/api/student/challenge-progress")
-async def save_challenge_progress(request_data: dict, current_user: dict = Depends(get_current_user)):
-    """Сохранить прогресс челленджа (заметки, завершение дня, начисление баллов)"""
-    try:
-        user_id = current_user.get('user_id', current_user.get('id'))
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        lesson_id = request_data.get("lesson_id")
-        challenge_id = request_data.get("challenge_id")
-        day = int(request_data.get("day", 0))
-        note_text = request_data.get("note", "")
-        mark_completed = bool(request_data.get("completed", False))
-
-        if not lesson_id or not challenge_id or day <= 0:
-            raise HTTPException(status_code=400, detail="Invalid challenge progress payload")
-
-        # Получаем урок, чтобы взять параметры челленджа
-        lesson = await db.lessons_v2.find_one({"id": lesson_id})
-        challenge = lesson.get("challenge", {}) if lesson else {}
-        total_days = challenge.get("duration_days", 7)
-        
-        # Получаем настройки начисления баллов из конфигурации
-        points_config = await get_learning_points_config()
-        points_per_day = challenge.get("points_per_day") or points_config.get('challenge_points_per_day', 10)
-        bonus_points = challenge.get("bonus_points") or points_config.get('challenge_bonus_points', 50)
-
-        # Получаем существующий прогресс (активную попытку)
-        existing_progress = await db.challenge_progress.find_one({
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "challenge_id": challenge_id,
-            "is_completed": False
-        })
-
-        now = datetime.utcnow()
-
-        if existing_progress:
-            daily_notes = existing_progress.get("daily_notes", [])
-            completed_days = existing_progress.get("completed_days", [])
-
-            # Обновляем или добавляем заметку
-            note_found = False
-            for note_item in daily_notes:
-                if int(note_item.get("day", 0)) == day:
-                    note_item["day"] = day
-                    note_item["note"] = note_text
-                    note_item["updated_at"] = now
-                    note_item["completed_at"] = now
-                    note_found = True
-                    break
-
-            if not note_found:
-                daily_notes.append({
-                    "day": day,
-                    "note": note_text,
-                    "updated_at": now,
-                    "completed_at": now
-                })
-
-            # Обновляем список завершенных дней
-            day_was_newly_completed = False
-            if mark_completed and day not in completed_days:
-                completed_days.append(day)
-                day_was_newly_completed = True
-
-            # Пересчитываем показатели
-            completed_days = sorted(set(completed_days))
-            completed_count = len(completed_days)
-            is_completed = completed_count >= total_days
-            was_already_completed = existing_progress.get("is_completed", False)
-            current_day = min(total_days, max(completed_days) + 1) if completed_days else max(existing_progress.get("current_day", 1), 1)
-
-            points_earned = completed_count * points_per_day
-            if is_completed:
-                points_earned += bonus_points
-
-            update_data = {
-                "current_day": current_day,
-                "completed_days": completed_days,
-                "daily_notes": daily_notes,
-                "is_completed": is_completed,
-                "points_earned": points_earned,
-                "total_points": points_earned,
-                "last_updated": now
-            }
-
-            if is_completed and not existing_progress.get("completed_at"):
-                update_data["completed_at"] = now
-            
-            # Начисляем кредиты за завершение дня (только если день был только что завершен)
-            if day_was_newly_completed:
-                await award_credits_for_learning(
-                    user_id=user_id,
-                    amount=points_per_day,
-                    description=f"Завершение дня {day} челленджа урока {lesson_id}",
-                    category='challenge',
-                    details={
-                        'lesson_id': lesson_id,
-                        'challenge_id': challenge_id,
-                        'day': day,
-                        'points_per_day': points_per_day
-                    }
-                )
-            
-            # Начисляем бонусные кредиты при завершении всего челленджа (только один раз)
-            if is_completed and not was_already_completed:
-                await award_credits_for_learning(
-                    user_id=user_id,
-                    amount=bonus_points,
-                    description=f"Завершение челленджа урока {lesson_id}",
-                    category='challenge',
-                    details={
-                        'lesson_id': lesson_id,
-                        'challenge_id': challenge_id,
-                        'total_days': total_days,
-                        'completed_days': completed_count
-                    }
-                )
-
-            await db.challenge_progress.update_one(
-                {"_id": existing_progress["_id"]},
-                {"$set": update_data}
-            )
-            
-            # ЗАПИСЫВАЕМ В time_activity с типом "challenge" для унифицированной аналитики
-            existing_activity = await db.time_activity.find_one({
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "activity_type": "challenge"
-            })
-            
-            if existing_activity:
-                # Обновляем существующую запись
-                await db.time_activity.update_one(
-                    {"_id": existing_activity["_id"]},
-                    {"$set": {"last_activity_at": now}}
-                )
-            else:
-                # Создаем новую запись в time_activity
-                activity_data = {
-                    "id": str(uuid.uuid4()),
-                    "user_id": user_id,
-                    "lesson_id": lesson_id,
-                    "activity_type": "challenge",
-                    "total_minutes": 0,
-                    "total_points": 0,
-                    "created_at": now,
-                    "last_activity_at": now
-                }
-                await db.time_activity.insert_one(activity_data)
-        else:
-            # Подсчитываем, сколько попыток уже было
-            total_attempts = await db.challenge_progress.count_documents({
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "challenge_id": challenge_id
-            })
-
-            completed_days = [day] if mark_completed else []
-            completed_count = len(completed_days)
-            is_completed = completed_count >= total_days
-
-            points_earned = completed_count * points_per_day
-            if is_completed:
-                points_earned += bonus_points
-
-            progress_data = {
-                "id": str(uuid.uuid4()),
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "challenge_id": challenge_id,
-                "current_day": max(1, day if not mark_completed else min(total_days, day + 1)),
-                "completed_days": completed_days,
-                "daily_notes": [{
-                    "day": day,
-                    "note": note_text,
-                    "updated_at": now,
-                    "completed_at": now
-                }] if note_text else [],
-                "is_completed": is_completed,
-                "points_earned": points_earned,
-                "total_points": points_earned,
-                "attempt_number": total_attempts + 1,
-                "started_at": now,
-                "last_updated": now
-            }
-
-            if is_completed:
-                progress_data["completed_at"] = now
-
-            await db.challenge_progress.insert_one(progress_data)
-            
-            # ЗАПИСЫВАЕМ В time_activity с типом "challenge" для унифицированной аналитики
-            existing_activity = await db.time_activity.find_one({
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "activity_type": "challenge"
-            })
-            
-            if not existing_activity:
-                # Создаем новую запись в time_activity
-                activity_data = {
-                    "id": str(uuid.uuid4()),
-                    "user_id": user_id,
-                    "lesson_id": lesson_id,
-                    "activity_type": "challenge",
-                    "total_minutes": 0,
-                    "total_points": 0,
-                    "created_at": now,
-                    "last_activity_at": now
-                }
-                await db.time_activity.insert_one(activity_data)
-            
-            # Начисляем кредиты за завершение дня (если день был завершен)
-            if mark_completed:
-                await award_credits_for_learning(
-                    user_id=user_id,
-                    amount=points_per_day,
-                    description=f"Завершение дня {day} челленджа урока {lesson_id}",
-                    category='challenge',
-                    details={
-                        'lesson_id': lesson_id,
-                        'challenge_id': challenge_id,
-                        'day': day,
-                        'points_per_day': points_per_day
-                    }
-                )
-            
-            # Начисляем бонусные кредиты при завершении всего челленджа
-            if is_completed:
-                await award_credits_for_learning(
-                    user_id=user_id,
-                    amount=bonus_points,
-                    description=f"Завершение челленджа урока {lesson_id}",
-                    category='challenge',
-                    details={
-                        'lesson_id': lesson_id,
-                        'challenge_id': challenge_id,
-                        'total_days': total_days,
-                        'completed_days': completed_count
-                    }
-                )
-
-        # Обновляем прогресс урока
-        await update_lesson_progress(user_id, lesson_id)
-
-        return {"message": "Прогресс челленджа сохранен"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        logger.error(f"Error saving challenge progress: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error saving challenge progress: {str(e)}")
-
-@app.get("/api/student/challenge-progress/{lesson_id}/{challenge_id}")
+@app.get('/api/student/challenge-progress/{lesson_id}/{challenge_id}')
 async def get_challenge_progress(lesson_id: str, challenge_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить прогресс челленджа"""
-    try:
-        user_id = current_user.get('user_id', current_user.get('id'))
+    return await ChallengeDiary(db).legacy_read(current_user['user_id'], lesson_id, challenge_id)
 
-        progress = await db.challenge_progress.find_one({
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "challenge_id": challenge_id
-        })
-
-        if progress:
-            progress_dict = dict(progress)
-            progress_dict.pop('_id', None)
-            return progress_dict
-        else:
-            # Возвращаем пустой прогресс
-            return {
-                "id": str(uuid.uuid4()),
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "challenge_id": challenge_id,
-                "current_day": 1,
-                "completed_days": [],
-                "daily_notes": [],
-                "is_completed": False,
-                "points_earned": 0,
-                "total_points": 0
-        }
-        
-    except Exception as e:
-        import traceback
-        logger.error(f"Error getting challenge progress: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error getting challenge progress: {str(e)}")
-
-@app.get("/api/student/challenge-history/{lesson_id}/{challenge_id}")
+@app.get('/api/student/challenge-history/{lesson_id}/{challenge_id}')
 async def get_challenge_history(lesson_id: str, challenge_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить историю всех попыток челленджа"""
-    try:
-        user_id = current_user.get('user_id', current_user.get('id'))
-
-        attempts = await db.challenge_progress.find({
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "challenge_id": challenge_id
-        }).sort("started_at", -1).to_list(length=None)
-
-        attempts_list = []
-        for attempt in attempts:
-            attempt_dict = dict(attempt)
-            attempt_dict.pop('_id', None)
-            attempts_list.append(attempt_dict)
-
-        return {"attempts": attempts_list}
-        
-    except Exception as e:
-        import traceback
-        logger.error(f"Error getting challenge history: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error getting challenge history: {str(e)}")
+    result = await ChallengeDiary(db).read(current_user['user_id'], lesson_id, challenge_id)
+    return {'attempts': [result['progress'], *result['history']]}
 
 @app.get("/api/student/quiz-attempts/{lesson_id}")
 async def get_quiz_attempts(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить все попытки прохождения теста урока"""
-    try:
-        user_id = current_user.get('user_id', current_user.get('id'))
-
-        attempts = await db.quiz_attempts.find({
-            "user_id": user_id,
-            "lesson_id": lesson_id
-        }).sort("attempted_at", -1).to_list(length=None)
-
-        attempts_list = []
-        for attempt in attempts:
-            attempt_dict = dict(attempt)
-            attempt_dict.pop('_id', None)
-            attempts_list.append(attempt_dict)
-
-        return {"attempts": attempts_list}
-        
-    except Exception as e:
-        import traceback
-        logger.error(f"Error getting quiz attempts: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error getting quiz attempts: {str(e)}")
+    return await StudentLearningService(db).quiz_attempts(current_user['user_id'], lesson_id)
 
 @app.post("/api/student/quiz-attempt")
-async def save_quiz_attempt(request_data: dict, current_user: dict = Depends(get_current_user)):
-    """Сохранить попытку прохождения теста"""
-    try:
-        user_id = current_user.get('user_id', current_user.get('id'))
-        lesson_id = request_data["lesson_id"]
-        passed = request_data.get("passed", False)
-        
-        # Получаем настройки начисления баллов из конфигурации
-        points_config = await get_learning_points_config()
-        quiz_points = points_config.get('quiz_points_per_attempt', 10)
-        
-        # Начисляем баллы за прохождение теста
-        points_earned = quiz_points if passed else 0
-        if request_data.get("points_earned") is not None:
-            # Если баллы переданы явно, используем их
-            points_earned = request_data.get("points_earned", 0)
-
-        attempt_data = {
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "quiz_id": request_data.get("quiz_id", lesson_id),
-            "score": request_data["score"],
-            "passed": passed,
-            "answers": request_data["answers"],
-            "attempted_at": datetime.utcnow(),
-            "points_earned": points_earned
-        }
-
-        result = await db.quiz_attempts.insert_one(attempt_data)
-
-        # Начисляем кредиты за прохождение теста (только если тест пройден)
-        if passed and points_earned > 0:
-            await award_credits_for_learning(
-                user_id=user_id,
-                amount=points_earned,
-                description=f"Прохождение теста урока {lesson_id}",
-                category='quiz',
-                details={
-                    'lesson_id': lesson_id,
-                    'quiz_id': request_data.get("quiz_id", lesson_id),
-                    'score': request_data["score"],
-                    'passed': passed,
-                    'points_earned': points_earned
-                }
-            )
-
-        # ЗАПИСЫВАЕМ В time_activity с типом "quiz" для унифицированной аналитики
-        now = datetime.utcnow()
-        existing_activity = await db.time_activity.find_one({
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "activity_type": "quiz"
-        })
-        
-        if existing_activity:
-            # Обновляем существующую запись
-            await db.time_activity.update_one(
-                {"_id": existing_activity["_id"]},
-                {
-                    "$inc": {"total_points": points_earned},
-                    "$set": {"last_activity_at": now}
-                }
-            )
-        else:
-            # Создаем новую запись в time_activity
-            activity_data = {
-                "id": str(uuid.uuid4()),
-                "user_id": user_id,
-                "lesson_id": lesson_id,
-                "activity_type": "quiz",
-                "total_minutes": 0,
-                "total_points": points_earned,
-                "created_at": now,
-                "last_activity_at": now
-            }
-            await db.time_activity.insert_one(activity_data)
-
-        # Обновляем прогресс урока
-        await update_lesson_progress(user_id, lesson_id)
-        
-        return {
-            "message": "Результат теста сохранен",
-            "attempt_id": attempt_data["id"],
-            "points_earned": points_earned
-        }
-        
-    except Exception as e:
-        import traceback
-        logger.error(f"Error saving quiz attempt: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error saving quiz attempt: {str(e)}")
+async def save_quiz_attempt(request_data: QuizSubmission, current_user: dict = Depends(get_current_user)):
+    return await StudentLearningService(db).submit_quiz(current_user['user_id'], request_data)
 
 @app.get("/api/student/time-activity/{lesson_id}")
 async def get_time_activity(lesson_id: str, current_user: dict = Depends(get_current_user)):
@@ -9042,26 +7587,7 @@ async def save_time_activity(request_data: dict, current_user: dict = Depends(ge
 
 @app.get("/api/student/lesson-files/{lesson_id}")
 async def get_lesson_files(lesson_id: str, current_user: dict = Depends(get_current_user)):
-    """Получить файлы урока"""
-    try:
-        files = await db.files.find({"lesson_id": lesson_id}).to_list(length=None)
-
-        files_list = []
-        for file in files:
-            file_dict = dict(file)
-            file_dict.pop('_id', None)
-            files_list.append(file_dict)
-
-        return {
-            "files": files_list,
-            "total": len(files_list)
-        }
-
-    except Exception as e:
-        import traceback
-        logger.error(f"Error getting lesson files: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error getting lesson files: {str(e)}")
+    return await StudentLearningService(db).files(current_user['user_id'], lesson_id)
 
 async def award_points_for_file_view(user_id: str, file_id: str, lesson_id: str):
     """Начислить баллы за просмотр файла и записать в time_activity"""
@@ -9459,141 +7985,13 @@ async def get_admin_files_stats(lesson_id: str = Query(None), section: str = Que
 
 @app.post("/api/admin/review-response/{response_id}")
 async def review_exercise_response(response_id: str, request_data: dict, current_user: dict = Depends(get_current_user)):
-    """Проверить и прокомментировать ответ на упражнение, назначить баллы"""
+    from services.mobile_admin import MobileAdmin, LegacyReview
+    from pydantic import ValidationError
     try:
-        # Получаем полные данные пользователя из базы данных
-        user_id = current_user.get("user_id")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        user = await db.users.find_one({"id": user_id})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        # Проверка прав администратора
-        if not user.get('is_super_admin', False) and not user.get('is_admin', False):
-            raise HTTPException(status_code=403, detail="Недостаточно прав")
-
-        # Находим ответ на упражнение
-        response_doc = await db.exercise_responses.find_one({"id": response_id})
-        if not response_doc:
-            raise HTTPException(status_code=404, detail="Ответ не найден")
-
-        student_user_id = response_doc.get("user_id")
-        lesson_id = response_doc.get("lesson_id")
-        exercise_id = response_doc.get("exercise_id")
-        points_earned = request_data.get("points_earned", 0)
-        admin_comment = request_data.get("admin_comment", "")
-        review_start_time = request_data.get("review_start_time")  # Время начала проверки (ISO string)
-        
-        # Вычисляем время проверки
-        review_time_minutes = 0
-        if review_start_time:
-            try:
-                start_time = datetime.fromisoformat(review_start_time.replace('Z', '+00:00'))
-                if start_time.tzinfo:
-                    start_time = start_time.replace(tzinfo=None) - (start_time.utcoffset() or timedelta(0))
-                review_time_minutes = max(0, (datetime.utcnow() - start_time).total_seconds() / 60)
-            except:
-                pass
-
-        # Обновляем ответ
-        update_data = {
-            "reviewed": True,
-            "admin_comment": admin_comment,
-            "reviewed_at": datetime.utcnow(),
-            "reviewed_by": user_id,
-            "points_earned": points_earned,
-            "review_time_minutes": round(review_time_minutes, 2)
-        }
-        
-        await db.exercise_responses.update_one(
-            {"id": response_id},
-            {"$set": update_data}
-        )
-
-        # Сохраняем баллы в единую базу данных time_activity
-        # Проверяем, были ли уже начислены баллы за это упражнение
-        old_points_earned = response_doc.get("points_earned", 0)
-        points_difference = points_earned - old_points_earned
-        
-        if points_earned > 0:
-            # Ищем существующую запись или создаем новую
-            time_activity = await db.time_activity.find_one({
-                "user_id": student_user_id,
-                "lesson_id": lesson_id,
-                "activity_type": "exercise_review"
-            })
-            
-            if time_activity:
-                # Обновляем существующую запись
-                await db.time_activity.update_one(
-                    {"_id": time_activity["_id"]},
-                    {
-                        "$inc": {
-                            "total_points": points_difference,  # Начисляем только разницу
-                            "review_count": 1 if old_points_earned == 0 else 0,  # Увеличиваем счетчик только при первой проверке
-                            "review_time_minutes": review_time_minutes
-                        },
-                        "$set": {
-                            "last_updated": datetime.utcnow()
-                        }
-                    }
-                )
-            else:
-                # Создаем новую запись
-                await db.time_activity.insert_one({
-                    "id": str(uuid.uuid4()),
-                    "user_id": student_user_id,
-                    "lesson_id": lesson_id,
-                    "activity_type": "exercise_review",
-                    "total_points": points_earned,
-                    "total_minutes": 0,
-                    "review_count": 1,
-                    "review_time_minutes": review_time_minutes,
-                    "created_at": datetime.utcnow(),
-                    "last_updated": datetime.utcnow()
-                })
-        
-        # Начисляем баллы через award_credits_for_learning (только разницу, если баллы изменились)
-        if points_difference > 0:
-            # Получаем информацию об упражнении для описания
-            lesson = await db.lessons_v2.find_one({"id": lesson_id})
-            lesson_title = lesson.get("title", "Урок") if lesson else "Урок"
-            
-            await award_credits_for_learning(
-                user_id=student_user_id,
-                amount=points_difference,
-                description=f"Проверка упражнения урока '{lesson_title}' (упражнение {exercise_id})",
-                category='exercise_review',
-                details={
-                    'lesson_id': lesson_id,
-                    'exercise_id': exercise_id,
-                    'response_id': response_id,
-                    'points_earned': points_earned,
-                    'old_points': old_points_earned,
-                    'points_difference': points_difference,
-                    'reviewed_by': user_id,
-                    'admin_email': user.get('email', ''),
-                    'admin_review': True,
-                    'review_time_minutes': review_time_minutes,
-                    'admin_comment': admin_comment
-                }
-            )
-
-        return {
-            "message": "Ответ проверен и прокомментирован",
-            "points_earned": points_earned,
-            "review_time_minutes": round(review_time_minutes, 2)
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        logger.error(f"Error reviewing response: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Error reviewing response: {str(e)}")
+        body = LegacyReview.model_validate(request_data)
+    except ValidationError:
+        raise HTTPException(422, 'Баллы за проверку должны быть целым числом от 0 до 100; проверьте комментарий.')
+    return await MobileAdmin(db).legacy_review(current_user['user_id'], response_id, body)
 
 
 def _ensure_admin_user(current_user: dict):
@@ -9627,7 +8025,7 @@ async def get_lesson_analytics(lesson_id: str, current_user: dict = Depends(get_
         if not lesson:
             raise HTTPException(status_code=404, detail="Урок не найден")
 
-        exercise_responses = await db.exercise_responses.find({"lesson_id": lesson_id}).to_list(length=None)
+        exercise_responses = await db.exercise_responses.find({"attachment_draft_only": {"$ne": True}, "lesson_id": lesson_id}).to_list(length=None)
         lesson_progress_list = await db.lesson_progress.find({"lesson_id": lesson_id}).to_list(length=None)
         quiz_attempts = await db.quiz_attempts.find({"lesson_id": lesson_id}).to_list(length=None)
         challenge_progress_list = await db.challenge_progress.find({"lesson_id": lesson_id}).to_list(length=None)
@@ -9813,7 +8211,7 @@ async def get_student_responses_for_lesson(lesson_id: str, current_user: dict = 
         if not lesson:
             raise HTTPException(status_code=404, detail="Урок не найден")
 
-        responses = await db.exercise_responses.find({"lesson_id": lesson_id}).sort("submitted_at", -1).to_list(length=None)
+        responses = await db.exercise_responses.find({"attachment_draft_only": {"$ne": True}, "lesson_id": lesson_id}).sort("submitted_at", -1).to_list(length=None)
         user_ids = [resp.get("user_id") for resp in responses if resp.get("user_id")]
         users = await db.users.find({"id": {"$in": user_ids}}).to_list(length=None) if user_ids else []
         users_map = {u.get("id"): u.get("full_name") or u.get("email") or u.get("id") for u in users}
@@ -10027,7 +8425,7 @@ async def get_admin_analytics_overview(current_user: dict = Depends(get_current_
         pending_reviews_details = []
 
         if "exercise_responses" in await db.list_collection_names():
-            pending_cursor = db.exercise_responses.find({"reviewed": False})
+            pending_cursor = db.exercise_responses.find({"attachment_draft_only": {"$ne": True}, "reviewed": False})
             pending_docs = await pending_cursor.to_list(length=None)
             pending_reviews = len(pending_docs)
 
@@ -10110,125 +8508,7 @@ async def get_admin_analytics_overview(current_user: dict = Depends(get_current_
 
 # Вспомогательные функции для обновления прогресса
 async def update_lesson_progress(user_id: str, lesson_id: str):
-    """Обновить прогресс урока на основе выполненных заданий"""
-    try:
-        # Получаем урок
-        lesson = await db.lessons_v2.find_one({"id": lesson_id})
-        if not lesson:
-            return
-
-        # Получаем существующий прогресс
-        existing_progress = await db.lesson_progress.find_one({"user_id": user_id, "lesson_id": lesson_id})
-
-        # Подсчитываем прогресс
-        theory_read = True  # Пока считаем, что теория прочитана
-
-        # Подсчитываем выполненные упражнения
-        exercises_count = len(lesson.get("exercises", []))
-        completed_exercises = 0
-
-        if "exercise_responses" in await db.list_collection_names():
-            completed_exercises = await db.exercise_responses.count_documents({
-                "user_id": user_id,
-                "lesson_id": lesson_id
-            })
-
-        # Проверяем челлендж
-        challenge_started = False
-        challenge_completed = False
-
-        if lesson.get("challenge") and "challenge_progress" in await db.list_collection_names():
-            challenge_progress_doc = await db.challenge_progress.find_one({
-                "user_id": user_id,
-            "lesson_id": lesson_id,
-                "challenge_id": lesson["challenge"]["id"]
-            })
-
-            if challenge_progress_doc:
-                challenge_started = True
-                challenge_completed = challenge_progress_doc.get("is_completed", False)
-
-        # Проверяем тест
-        quiz_passed = False
-
-        if lesson.get("quiz") and "quiz_attempts" in await db.list_collection_names():
-            quiz_attempt = await db.quiz_attempts.find_one({
-                "user_id": user_id,
-            "lesson_id": lesson_id,
-                "passed": True
-            }, sort=[("attempted_at", -1)])
-
-            quiz_passed = quiz_attempt is not None
-
-        # Рассчитываем процент завершения
-        total_tasks = 1 + exercises_count + (1 if lesson.get("challenge") else 0) + (1 if lesson.get("quiz") else 0)  # теория + упражнения + челлендж + тест
-        completed_tasks = (1 if theory_read else 0) + completed_exercises + (1 if challenge_completed else 0) + (1 if quiz_passed else 0)
-        completion_percentage = int((completed_tasks / total_tasks) * 100) if total_tasks > 0 else 0
-
-        is_completed = completion_percentage >= 100
-
-        progress_data = {
-            "user_id": user_id,
-            "lesson_id": lesson_id,
-            "is_completed": is_completed,
-            "completion_percentage": completion_percentage,
-            "theory_read": theory_read,
-            "exercises_completed": completed_exercises,
-            "challenge_started": challenge_started,
-            "challenge_completed": challenge_completed,
-            "quiz_passed": quiz_passed,
-            "last_activity_at": datetime.utcnow()
-        }
-
-        # Проверяем, был ли урок только что завершен (для начисления бонусных кредитов)
-        was_already_completed = existing_progress.get("is_completed", False) if existing_progress else False
-        lesson_just_completed = is_completed and not was_already_completed
-
-        if existing_progress:
-            # Обновляем существующий прогресс
-            await db.lesson_progress.update_one(
-                {"_id": existing_progress["_id"]},
-                {"$set": progress_data}
-            )
-
-            # Если урок завершен и не был завершен ранее
-            if is_completed and not existing_progress.get("is_completed"):
-                progress_data["completed_at"] = datetime.utcnow()
-                await db.lesson_progress.update_one(
-                    {"_id": existing_progress["_id"]},
-                    {"$set": {"completed_at": datetime.utcnow()}}
-                )
-        else:
-            # Создаем новый прогресс
-            progress_data["id"] = str(uuid.uuid4())
-            progress_data["started_at"] = datetime.utcnow()
-
-            if is_completed:
-                progress_data["completed_at"] = datetime.utcnow()
-
-            result = await db.lesson_progress.insert_one(progress_data)
-        
-        # Начисляем бонусные кредиты при завершении урока (только один раз)
-        if lesson_just_completed:
-            await award_credits_for_learning(
-                user_id=user_id,
-                amount=50,  # 50 бонусных баллов за завершение урока
-                description=f"Завершение урока {lesson_id}",
-                category='lesson',
-                details={
-                    'lesson_id': lesson_id,
-                    'completion_percentage': completion_percentage,
-                    'theory_read': theory_read,
-                    'exercises_completed': completed_exercises,
-                    'quiz_passed': quiz_passed,
-                    'challenge_completed': challenge_completed
-                }
-            )
-
-    except Exception as e:
-        import traceback
-        logger.error(f"Error updating lesson progress: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+    return await StudentLearningService(db).sync_progress(user_id, lesson_id)
 
 # ==================== FILE OPERATIONS ====================
 
@@ -10388,7 +8668,7 @@ async def update_learning_points_config(
             # Обновляем существующую конфигурацию
             await db.learning_points_config.update_one(
                 {'_id': existing_config['_id']},
-                {'$set': update_data}
+                {'$set': update_data, '$inc': {'mobile_revision': 1}}
             )
             config_id = existing_config.get('id')
         else:
@@ -10576,7 +8856,7 @@ async def update_credits_deduction_config(
             # Обновляем существующую конфигурацию
             await db.credits_deduction_config.update_one(
                 {'_id': existing_config['_id']},
-                {'$set': update_data}
+                {'$set': update_data, '$inc': {'mobile_revision': 1}}
             )
             config_id = existing_config.get('id')
         else:
@@ -10677,7 +8957,7 @@ async def update_planetary_energy_modifiers_config(
             # Обновляем существующую конфигурацию
             await db.planetary_energy_modifiers_config.update_one(
                 {'_id': existing_config['_id']},
-                {'$set': update_data}
+                {'$set': update_data, '$inc': {'mobile_revision': 1}}
             )
             config_id = existing_config.get('id')
         else:
@@ -10779,7 +9059,7 @@ async def update_monthly_route_config(
             # Обновляем существующую конфигурацию
             await db.monthly_route_config.update_one(
                 {'_id': existing_config['_id']},
-                {'$set': update_data}
+                {'$set': update_data, '$inc': {'mobile_revision': 1}}
             )
             config_id = existing_config.get('id')
         else:
@@ -10942,26 +9222,8 @@ async def generate_numerology_html_report(
                         problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
                         problem_numbers = [problem1, problem2, problem3, problem4]
                         
-                        # Get name numbers if available
-                        if user.get('full_name'):
-                            # Calculate name numbers (name and surname separately)
-                            from numerology import calculate_name_numerology
-                            try:
-                                name_data = calculate_name_numerology(user.get('full_name', ''))
-                                name_numbers = {
-                                    'first_name_number': name_data.get('first_name_number'),
-                                    'last_name_number': name_data.get('last_name_number'),
-                                    'total_name_number': name_data.get('total_name_number'),
-                                    'full_name_number': name_data.get('total_name_number')  # Alias
-                                }
-                            except:
-                                # Fallback to simple calculation
-                                try:
-                                    from numerology import calculate_full_name_number
-                                    name_num = calculate_full_name_number(user.get('full_name', ''))
-                                    name_numbers = {'name_number': name_num, 'full_name_number': name_num}
-                                except:
-                                    pass
+                        # Name numbers by the current name tool, as in the routes and the full report
+                        name_numbers = profile_name_numbers(user)
                         
                         # Calculate weekday energy (personal energy by day of week)
                         try:
@@ -11170,26 +9432,8 @@ async def generate_numerology_pdf_report(
                         problem4 = reduce_to_single_digit(abs(mind_num - year_reduced))
                         problem_numbers = [problem1, problem2, problem3, problem4]
                         
-                        # Get name numbers if available
-                        if user.get('full_name'):
-                            # Calculate name numbers (name and surname separately)
-                            from numerology import calculate_name_numerology
-                            try:
-                                name_data = calculate_name_numerology(user.get('full_name', ''))
-                                name_numbers = {
-                                    'first_name_number': name_data.get('first_name_number'),
-                                    'last_name_number': name_data.get('last_name_number'),
-                                    'total_name_number': name_data.get('total_name_number'),
-                                    'full_name_number': name_data.get('total_name_number')  # Alias
-                                }
-                            except:
-                                # Fallback to simple calculation
-                                try:
-                                    from numerology import calculate_full_name_number
-                                    name_num = calculate_full_name_number(user.get('full_name', ''))
-                                    name_numbers = {'name_number': name_num, 'full_name_number': name_num}
-                                except:
-                                    pass
+                        # Name numbers by the current name tool, as in the routes and the full report
+                        name_numbers = profile_name_numbers(user)
                         
                         # Calculate weekday energy (personal energy by day of week)
                         try:

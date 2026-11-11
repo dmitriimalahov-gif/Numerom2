@@ -1,0 +1,12 @@
+{
+  "source": "https://download.geonames.org/export/dump/",
+  "license": "CC BY 4.0",
+  "attribution": "GeoNames",
+  "dataset": "cities500",
+  "rows": 236632,
+  "sources_sha256": {
+    "numerom-cities500.zip": "3b8292a6ffcb11d87aa3b2dff47972fb0c8c0ed7245d54227db8f2ca1c81fc7f",
+    "numerom-admin1.txt": "b577baa3476bbe94f0454545e517e1835401d79c5b1105c8e02cf1d4a505e8ec",
+    "numerom-countries.txt": "c55f638cfaafb4fe45a9aa15120a0f1f78e8a34a8e1847d7b9320cf740fbc9ab"
+  }
+}

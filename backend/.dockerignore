@@ -1,11 +1,14 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
 *.so
-.env.local
+.env*
+!.env.example
 .DS_Store
 uploads/*
 !uploads/.gitkeep
+private/
