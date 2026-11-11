@@ -1,0 +1,20 @@
+{
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "node": "22.22.2",
+      "environment": "preview",
+      "env": {"APP_VARIANT": "production"},
+      "android": {"buildType": "apk"}
+    },
+    "simulator": {
+      "extends": "preview",
+      "ios": {"simulator": true}
+    },
+    "production": {
+      "node": "22.22.2",
+      "environment": "production",
+      "env": {"APP_VARIANT": "production"}
+    }
+  }
+}

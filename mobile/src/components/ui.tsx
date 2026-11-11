@@ -1,0 +1,23 @@
+import React, {useContext} from 'react';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { colors as c } from '../lib/theme';
+import {NavigationChromeContext} from './NavigationChromeContext';
+
+export function Screen({children, refreshing, onRefresh, scrollRef}: {children: React.ReactNode; refreshing?: boolean; onRefresh?: () => void; scrollRef?: React.RefObject<ScrollView | null>}) {
+  const hasHeader=useContext(NavigationChromeContext);
+  return <SafeAreaView style={s.screen} edges={hasHeader?['left','right','bottom']:['top','left','right','bottom']}><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" contentContainerStyle={s.scroll} refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh}/> : undefined}><View style={s.content}>{children}</View></ScrollView></KeyboardAvoidingView></SafeAreaView>;
+}
+export { Brand } from './Brand';
+export function Heading({eyebrow, title, subtitle}: {eyebrow?: string; title:string; subtitle?:string}) { return <View style={{gap:9}}>{eyebrow && <Text style={s.eyebrow}>{eyebrow}</Text>}<Text accessibilityRole="header" style={s.heading}>{title}</Text>{subtitle && <Text style={s.body}>{subtitle}</Text>}</View>; }
+export function Card({children, tinted = false}: {children:React.ReactNode; tinted?:boolean}) { return <View style={[s.card,tinted && {backgroundColor:c.blue,borderColor:c.blue}]}>{children}</View>; }
+export function Button({title,onPress,busy=false,disabled=false,secondary=false}: {title:string; onPress:()=>void; busy?:boolean; disabled?:boolean; secondary?:boolean}) { return <Pressable accessibilityRole="button" accessibilityState={{disabled:disabled || busy,busy}} disabled={disabled || busy} onPress={onPress} style={({pressed})=>[s.button,secondary && s.secondary,(disabled || busy) && {opacity:.55},pressed && {opacity:.8}]}>{busy && <ActivityIndicator color={secondary ? c.navy : '#fff'}/>}<Text style={[s.buttonText,secondary && {color:c.navy}]}>{title}</Text></Pressable>; }
+export function Field({label,...props}: TextInputProps & {label:string}) { return <View style={{gap:8}}><Text style={s.label}>{label}</Text><TextInput accessibilityLabel={label} placeholderTextColor={c.muted} style={s.input} {...props}/></View>; }
+export function Notice({message,action,onAction}: {message:string; action?:string; onAction?:()=>void}) { return <View accessibilityLiveRegion="polite" style={s.notice}><Text style={{color:c.error,lineHeight:22}}>{message}</Text>{action && onAction && <Button title={action} onPress={onAction} secondary/>}</View>; }
+export function Loading() { return <View style={{padding:32,gap:12,alignItems:'center'}}><ActivityIndicator color={c.navy}/><Text style={s.body}>Загружаем…</Text></View>; }
+export const s = StyleSheet.create({
+ screen:{flex:1,backgroundColor:c.background},scroll:{flexGrow:1,paddingHorizontal:22,paddingTop:22,paddingBottom:36},content:{width:'100%',maxWidth:640,alignSelf:'center',gap:24},
+ brand:{flexDirection:'row',gap:11,alignItems:'center'},brandMark:{width:38,height:38,backgroundColor:c.navy,borderRadius:12,alignItems:'center',justifyContent:'center'},brandGlyph:{fontSize:24,fontWeight:'500',color:'#fff'},brandText:{fontSize:25,fontWeight:'700',color:c.navy,letterSpacing:-.8},
+ eyebrow:{fontSize:11,fontWeight:'700',letterSpacing:1.7,color:c.accent,textTransform:'uppercase'},heading:{fontSize:31,lineHeight:37,fontWeight:'700',letterSpacing:-.8,color:c.navy},title:{fontSize:20,fontWeight:'600',color:c.navy,lineHeight:27},body:{fontSize:15,lineHeight:23,color:c.muted},small:{fontSize:12,lineHeight:18,color:c.muted},
+ card:{padding:21,borderRadius:23,backgroundColor:c.surface,borderWidth:1,borderColor:c.line,gap:15},button:{minHeight:50,paddingHorizontal:18,paddingVertical:13,borderRadius:14,backgroundColor:c.navy,alignItems:'center',justifyContent:'center',flexDirection:'row',gap:10},buttonText:{color:'#fff',fontSize:15,fontWeight:'600'},secondary:{backgroundColor:c.blue},label:{fontSize:13,fontWeight:'600',color:c.ink},input:{minHeight:52,paddingHorizontal:15,paddingVertical:13,fontSize:16,color:c.ink,backgroundColor:c.surface,borderColor:c.line,borderWidth:1,borderRadius:13},notice:{backgroundColor:c.errorBg,padding:16,borderRadius:15,gap:12},row:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:12},link:{color:c.accent,fontSize:14,fontWeight:'600'},separator:{height:1,backgroundColor:c.line},
+});

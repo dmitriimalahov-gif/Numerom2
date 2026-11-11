@@ -1,0 +1,7 @@
+export interface DiaryDay {day:number;title:string;description:string;tasks:string[];narration_id:string}
+export interface DiaryProgress {id:string;attempt_id:string;attempt_number:number;revision:number;last_request_id?:string;current_day:number;completed_days:number[];daily_notes:{day:number;note:string;updated_at?:string|null}[];is_completed:boolean;points_earned:number;points_per_day:number;bonus_points:number;started_at?:string|null;last_updated?:string|null}
+export interface Diary {challenge:{id:string;title:string;description:string;duration_days:number;days:DiaryDay[]};progress:DiaryProgress;history:Partial<DiaryProgress>[];progress_sync_pending?:boolean}
+export interface DiaryState {data:Diary|null;drafts:Record<number,string>;dirty:Record<number,boolean>;pending:{restart:boolean;body:Record<string,unknown>}|null;busy:boolean;loading:boolean;error:string;remoteConflict:boolean}
+export function diary(value:unknown):Diary;
+export function challengeId(lesson:unknown):string|null;
+export function createDiaryController(options:{read:()=>Promise<unknown>;save:(body:unknown)=>Promise<unknown>;restart:(body:unknown)=>Promise<unknown>;onSaved?:()=>Promise<void>;makeId:()=>string;isCurrent?:()=>boolean}):{getSnapshot:()=>DiaryState;subscribe:(listener:()=>void)=>()=>void;load:()=>Promise<void>;discardDrafts:()=>Promise<void>;edit:(day:number,note:string)=>void;retry:()=>Promise<void>;save:(day:number,completed:boolean)=>Promise<void>;restart:()=>Promise<void>};
