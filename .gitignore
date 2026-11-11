@@ -119,3 +119,18 @@ learning-v2-data/
 # Token files
 .admin_token
 .user_token
+
+# Private generated lesson narration and queue
+backend/private/
+backend/.service-venv/
+backend/.service-voice-venv/
+
+# Generated build/test evidence (large, not source)
+/artifacts/
+
+# Unrelated working notes kept in this folder
+reports/
+research_notes/
+
+# Generated geodata index (built by scripts/build-city-index.py)
+backend/data/geography/cities.sqlite

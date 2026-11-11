@@ -1,0 +1,13 @@
+# Root context is used only for the web image and its shared client.
+*
+!frontend/
+!frontend/**
+!packages/
+packages/*
+!packages/api-client/
+!packages/api-client/**
+frontend/node_modules/
+frontend/build/
+frontend/.env*
+frontend/.git/
+packages/api-client/test/
