@@ -1,5 +1,6 @@
 """The listener learns a term before hearing interpretations or advice."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -97,8 +98,9 @@ class ConsultationContract(unittest.TestCase):
             new,old = clip(*args),clip(*args,consultation=False)
             def ready(item):
                 path=Path(tmp)/'clips'/item['hash'];path.mkdir(parents=True)
-                (path/'audio.m4a').write_bytes(b'audio')
-                (path/'ready.json').write_text(json.dumps({'hash':item['hash'],'bytes':5,'seconds':1}))
+                audio=path/'audio.m4a';audio.write_bytes(b'audio')
+                digest=hashlib.sha256(b'audio').hexdigest()
+                (path/'ready.json').write_text(json.dumps({'hash':item['hash'],'bytes':5,'seconds':1,'sha256':digest}))
             ready(old)
             self.assertEqual(service.prefer_current(new,old)['hash'],old['hash'])
             self.assertTrue(service.prefer_current(new,old)['replacement_pending'])
