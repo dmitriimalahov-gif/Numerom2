@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -46,6 +46,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { getBackendUrl } from '../utils/backendUrl';
+import useQuizSubmission from '../features/learning/useQuizSubmission';
+import NarrationPanel from '../features/learning/NarrationPanel';
 
 // Компонент для плавного линейного графика попыток теста
 const QuizAttemptsLineChart = ({ attempts, maxPossibleScore }) => {
@@ -1431,6 +1433,8 @@ const LearningSystemV2 = () => {
   const navigate = useNavigate();
   const [lessons, setLessons] = useState([]);
   const [currentLesson, setCurrentLesson] = useState(null);
+  const currentQuizLesson = useRef(null);
+  currentQuizLesson.current = currentLesson?.id;
   const [currentSection, setCurrentSection] = useState('theory');
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [analyticsSection, setAnalyticsSection] = useState(null); // 'lessons', 'challenges', 'quizzes', 'exercises'
@@ -1471,6 +1475,8 @@ const LearningSystemV2 = () => {
   const [challengeProgress, setChallengeProgress] = useState(null);
   const [challengeNotes, setChallengeNotes] = useState({});
   const [savingChallengeNote, setSavingChallengeNote] = useState({});
+  const challengeRestart = useRef({pending:null,busy:false});
+  const [restartingChallenge,setRestartingChallenge] = useState(false);
   const [challengeHistory, setChallengeHistory] = useState([]); // История всех попыток челленджа
   const [quizHistory, setQuizHistory] = useState([]); // История всех попыток теста
   
@@ -1494,6 +1500,8 @@ const LearningSystemV2 = () => {
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizCompleted, setQuizCompleted] = useState(false);
   const [quizScore, setQuizScore] = useState(0);
+  const [quizPassed, setQuizPassed] = useState(false);
+  const quizSubmission = useQuizSubmission();
   
   // Состояния для отслеживания времени активности
   const [timeActivity, setTimeActivity] = useState({ total_minutes: 0, total_points: 0 });
@@ -2171,7 +2179,9 @@ const LearningSystemV2 = () => {
       }
 
       const data = await response.json();
+      currentQuizLesson.current = data.lesson.id;
       setCurrentLesson(data.lesson);
+      quizSubmission.reset(); setQuizHistory([]); setQuizStarted(false); setQuizCompleted(false); setQuizPassed(false); setQuizAnswers({}); setQuizScore(0); setCurrentQuestionIndex(0);
       setCurrentSection('theory');
       
       // Загружаем ответы и прогресс для этого урока (обновляем после открытия)
@@ -2270,7 +2280,7 @@ const LearningSystemV2 = () => {
 
       if (response.ok) {
         const data = await response.json();
-        console.log('Quiz history loaded:', data);
+        if (currentQuizLesson.current !== lessonId) return;
         setQuizHistory(data.attempts || []);
         
         // Восстанавливаем состояние последней попытки теста
@@ -2278,6 +2288,8 @@ const LearningSystemV2 = () => {
           const lastAttempt = data.attempts[0]; // Первая попытка - самая последняя (сортировка по убыванию)
           setQuizCompleted(true);
           setQuizScore(lastAttempt.score);
+          setQuizPassed(Boolean(lastAttempt.passed));
+          setQuizAnswers(lastAttempt.answers || {});
           console.log('Quiz state restored:', { score: lastAttempt.score, passed: lastAttempt.passed });
         }
       }
@@ -2649,32 +2661,28 @@ const LearningSystemV2 = () => {
 
   // Сброс челленджа для повторного прохождения (создание новой попытки)
   const restartChallenge = async () => {
-    try {
-      console.log('Restarting challenge...');
-      
-      // Сбрасываем локальное состояние на пустой прогресс
-      setChallengeProgress({
-        current_day: 1,
-        completed_days: [],
-        daily_notes: [],
-        is_completed: false,
-        attempt_number: (challengeProgress?.total_attempts || 0) + 1,
-        total_attempts: (challengeProgress?.total_attempts || 0) + 1,
-        points_earned: 0,
-        total_points: challengeProgress?.total_points || 0
-      });
-      
-      // Очищаем заметки
-      setChallengeNotes({});
-      
-      console.log('Challenge restarted successfully - new attempt ready');
-    } catch (error) {
-      console.error('Error restarting challenge:', error);
+    if (challengeRestart.current.busy || !currentLesson?.challenge || !challengeProgress?.attempt_id) return;
+    const lessonId=currentLesson.id, challengeId=currentLesson.challenge.id;
+    const path=`${backendUrl}/api/student/diary/${encodeURIComponent(lessonId)}/${encodeURIComponent(challengeId)}/restart`;
+    if (!challengeRestart.current.pending || challengeRestart.current.pending.path!==path) {
+      challengeRestart.current.pending={path,body:{request_id:crypto.randomUUID(),attempt_id:challengeProgress.attempt_id,revision:challengeProgress.revision}};
     }
+    challengeRestart.current.busy=true;setRestartingChallenge(true);
+    try {
+      const request=challengeRestart.current.pending;
+      const response=await fetch(request.path,{method:'POST',headers:{Authorization:`Bearer ${localStorage.getItem('token')}`,'Content-Type':'application/json'},body:JSON.stringify(request.body)});
+      const data=await response.json();
+      if(!response.ok){if([400,403,404,409,422].includes(response.status))challengeRestart.current.pending=null;throw new Error(typeof data.detail==='string'?data.detail:'Не удалось начать новую практику');}
+      challengeRestart.current.pending=null;
+      await loadChallengeProgress(lessonId,challengeId);await loadChallengeHistory(lessonId,challengeId);
+    } catch(error){setError(error.message || 'Не удалось начать новую практику. Повторите попытку.');}
+    finally {challengeRestart.current.busy=false;setRestartingChallenge(false);}
   };
 
   // Функции для работы с тестом
   const startQuiz = () => {
+    quizSubmission.reset();
+    setQuizPassed(false);
     setQuizStarted(true);
     setCurrentQuestionIndex(0);
     setQuizAnswers({});
@@ -2702,85 +2710,19 @@ const LearningSystemV2 = () => {
   };
 
   const submitQuiz = async () => {
-    try {
-      // Подсчет правильных ответов
-      let correctCount = 0;
-      const questions = currentLesson.quiz.questions;
-      
-      questions.forEach(question => {
-        const userAnswer = quizAnswers[question.id];
-        if (userAnswer === question.correct_answer) {
-          correctCount++;
-        }
-      });
-
-      const score = Math.round((correctCount / questions.length) * 100);
-      const passingScore = currentLesson.quiz.passing_score || 70;
-      const passed = score >= passingScore;
-      
-      // Начисляем 10 баллов за прохождение теста
-      const pointsEarned = passed ? 10 : 0;
-
-      // Сохраняем результат в БД
-      const response = await fetch(
-        `${backendUrl}/api/student/quiz-attempt`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            lesson_id: currentLesson.id,
-            quiz_id: currentLesson.quiz.id || currentLesson.id,
-            score: score,
-            passed: passed,
-            answers: quizAnswers,
-            points_earned: pointsEarned
-          })
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      console.log('Quiz result saved:', data);
-
-      // Обновляем состояние с баллами
-      setQuizScore(score);
-      setQuizCompleted(true);
-      
-      // Сохраняем заработанные баллы
-      if (data.points_earned) {
-        // Можно сохранить в состояние для отображения
-        console.log(`Earned ${data.points_earned} points for quiz!`);
-      }
-
-      // Обновляем прогресс урока и историю тестов
-      await loadLessonProgress(currentLesson.id);
-      await loadQuizHistory(currentLesson.id);
-
-    } catch (error) {
-      console.error('Error submitting quiz:', error);
-      // Даже если сохранение не удалось, показываем результат
-      // Пересчитываем score локально
-      let localCorrectCount = 0;
-      const questions = currentLesson.quiz.questions;
-      questions.forEach(question => {
-        const userAnswer = quizAnswers[question.id];
-        if (userAnswer === question.correct_answer) {
-          localCorrectCount++;
-        }
-      });
-      const score = Math.round((localCorrectCount / questions.length) * 100);
-      setQuizScore(score);
-      setQuizCompleted(true);
-    }
+    const result = await quizSubmission.submit(currentLesson, quizAnswers);
+    if (!result || currentQuizLesson.current !== currentLesson.id) return;
+    setQuizScore(result.score);
+    setQuizPassed(result.passed);
+    setQuizCompleted(true);
+    await loadLessonProgress(currentLesson.id);
+    await loadQuizHistory(currentLesson.id);
   };
 
   const restartQuiz = () => {
+    if (quizSubmission.submitting) return;
+    quizSubmission.reset();
+    setQuizPassed(false);
     setQuizStarted(false);
     setCurrentQuestionIndex(0);
     setQuizAnswers({});
@@ -3036,6 +2978,7 @@ const LearningSystemV2 = () => {
 
     return (
       <div className="space-y-6">
+        <NarrationPanel key={`${currentLesson.id}:${currentSection}`} lessonId={currentLesson.id} section={currentSection==='exercises'?'exercise':currentSection==='quiz'?'quiz':currentSection==='challenge'?'challenge':'theory'}/>
         {/* Навигация - фиксированная при прокрутке, компактная на мобильных */}
         <div className={`sticky top-0 z-40 bg-white shadow-md transition-all duration-300 ${isScrolled ? 'py-1' : 'py-0'}`}>
           <Card className="border-0 rounded-none">
@@ -3683,7 +3626,7 @@ const LearningSystemV2 = () => {
               <div className="text-sm text-green-700 mb-1">Баллы (текущая)</div>
               <div className="text-2xl font-bold text-green-900">{pointsEarned}</div>
               <div className="text-xs text-green-600 mt-1">
-                {currentLesson.challenge?.points_per_day || 10} за день
+                {challengeProgress?.points_per_day ?? 10} за день
               </div>
             </div>
             
@@ -3828,7 +3771,7 @@ const LearningSystemV2 = () => {
                     +{pointsEarned} 🌟
                   </div>
                   <div className="text-xs text-gray-500 mt-1">
-                    ({completedDays.length} дней × {currentLesson.challenge?.points_per_day || 10} + бонус {currentLesson.challenge?.bonus_points || 50})
+                    ({completedDays.length} дней × {challengeProgress?.points_per_day ?? 10} + бонус {challengeProgress?.bonus_points ?? 50})
                   </div>
                 </div>
               </div>
@@ -3836,6 +3779,7 @@ const LearningSystemV2 = () => {
                 <Button
                   variant="outline"
                   onClick={restartChallenge}
+                  disabled={restartingChallenge}
                   className="flex items-center gap-2 border-green-600 text-green-700 hover:bg-green-100"
                 >
                   <Calendar className="w-4 h-4" />
@@ -3908,7 +3852,7 @@ const LearningSystemV2 = () => {
     // Если тест завершен - показываем результаты
     if (quizCompleted) {
       const passingScore = currentLesson.quiz.passing_score || 70;
-      const passed = quizScore >= passingScore;
+      const passed = quizPassed;
 
       return (
         <Card>
@@ -4085,6 +4029,7 @@ const LearningSystemV2 = () => {
                   <button
                     key={index}
                     onClick={() => handleQuizAnswer(currentQuestion.id, option)}
+                    disabled={quizSubmission.submitting}
                     className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
                       isSelected
                         ? 'border-blue-500 bg-blue-100'
@@ -4119,10 +4064,10 @@ const LearningSystemV2 = () => {
             {currentQuestionIndex === totalQuestions - 1 ? (
               <Button
                 onClick={submitQuiz}
-                disabled={!allQuestionsAnswered}
+                disabled={!allQuestionsAnswered || quizSubmission.submitting}
                 className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
               >
-                Завершить тест
+                {quizSubmission.submitting ? 'Сохраняем результат…' : 'Завершить тест'}
                 <CheckCircle className="w-4 h-4" />
               </Button>
             ) : (
@@ -4136,6 +4081,7 @@ const LearningSystemV2 = () => {
             )}
           </div>
 
+          {quizSubmission.error && <Alert role="alert"><AlertDescription>{quizSubmission.error} Результат не подтверждён. Повторите отправку.</AlertDescription></Alert>}
           {!allQuestionsAnswered && currentQuestionIndex === totalQuestions - 1 && (
             <Alert>
               <AlertDescription>
@@ -4163,7 +4109,7 @@ const LearningSystemV2 = () => {
     const challengeProgressPercent = challengeDays > 0 ? Math.round((completedChallengeDays / challengeDays) * 100) : 0;
 
     const hasQuiz = currentLesson.quiz && currentLesson.quiz.questions?.length > 0;
-    const quizPassed = quizCompleted && quizScore >= (currentLesson.quiz?.passing_score || 70);
+    const passedCurrentQuiz = quizCompleted && quizPassed;
 
     const overallProgress = lessonProgress?.completion_percentage || 0;
 
@@ -4365,14 +4311,14 @@ const LearningSystemV2 = () => {
 
             {/* Тест */}
             {hasQuiz && (
-              <div className={`rounded-lg p-5 border ${quizPassed ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
+              <div className={`rounded-lg p-5 border ${passedCurrentQuiz ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
                 <div className="flex items-center gap-3 mb-3">
-                  <div className={`p-2 rounded-lg ${quizPassed ? 'bg-blue-100' : 'bg-gray-100'}`}>
-                    <Target className={`w-6 h-6 ${quizPassed ? 'text-blue-600' : 'text-gray-600'}`} />
+                  <div className={`p-2 rounded-lg ${passedCurrentQuiz ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                    <Target className={`w-6 h-6 ${passedCurrentQuiz ? 'text-blue-600' : 'text-gray-600'}`} />
                   </div>
                   <div>
-                    <h5 className={`font-semibold ${quizPassed ? 'text-blue-900' : 'text-gray-900'}`}>Тест</h5>
-                    <p className={`text-sm ${quizPassed ? 'text-blue-700' : 'text-gray-700'}`}>
+                    <h5 className={`font-semibold ${passedCurrentQuiz ? 'text-blue-900' : 'text-gray-900'}`}>Тест</h5>
+                    <p className={`text-sm ${passedCurrentQuiz ? 'text-blue-700' : 'text-gray-700'}`}>
                       {quizCompleted ? `${quizScore}%` : 'Не пройден'}
                     </p>
                   </div>
@@ -4380,8 +4326,8 @@ const LearningSystemV2 = () => {
                 {quizCompleted ? (
                   <>
                     <Progress value={quizScore} className="h-2 mb-2" />
-                    <p className={`text-xs ${quizPassed ? 'text-blue-600' : 'text-red-600'}`}>
-                      {quizPassed ? '✓ Тест пройден успешно!' : '✗ Тест не пройден'}
+                    <p className={`text-xs ${passedCurrentQuiz ? 'text-blue-600' : 'text-red-600'}`}>
+                      {passedCurrentQuiz ? '✓ Тест пройден успешно!' : '✗ Тест не пройден'}
                     </p>
                   </>
                 ) : (
@@ -4444,7 +4390,7 @@ const LearningSystemV2 = () => {
                   <p className="text-xs text-yellow-700">{completedChallengeDays} дней челленджа</p>
                 </div>
               )}
-              {quizPassed && (
+              {passedCurrentQuiz && (
                 <div className="text-center">
                   <div className="text-3xl mb-2">🎓</div>
                   <p className="text-sm font-medium text-yellow-900">Знаток</p>
@@ -4698,7 +4644,7 @@ const LearningSystemV2 = () => {
               {hasQuiz && !quizCompleted && (
                 <p>• Пройдите тест для проверки знаний</p>
               )}
-              {hasQuiz && quizCompleted && !quizPassed && (
+              {hasQuiz && quizCompleted && !passedCurrentQuiz && (
                 <p>• Повторите материал и пройдите тест заново</p>
               )}
               {overallProgress === 100 && (

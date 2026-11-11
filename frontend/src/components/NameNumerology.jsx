@@ -377,8 +377,8 @@ const NameNumerology = () => {
   const [cost, setCost] = useState(7); // Стоимость расчёта
   const [activeSection, setActiveSection] = useState('calculator');
   const [theme, setTheme] = useState(() => {
-    if (typeof window === 'undefined') return 'dark';
-    return localStorage.getItem('name-numerology-theme') === 'light' ? 'light' : 'dark';
+    if (typeof window === 'undefined') return 'light';
+    return (localStorage.getItem('name-numerology-theme') || localStorage.getItem('theme')) === 'dark' ? 'dark' : 'light';
   });
 
   useEffect(() => {

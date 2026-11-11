@@ -1,0 +1,79 @@
+/* The SVG owns the identity. These transparent layers only awaken its orbit. */
+.nm-brand.nm-brand-living {
+  --nm-planet-one: #7ccfb8;
+  --nm-planet-two: #7a9fdf;
+  --nm-planet-three: #b7a2d7;
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  aspect-ratio: 995 / 785;
+  line-height: 0;
+  perspective: 600px;
+  isolation: isolate;
+}
+.nm-brand-living[data-palette="1"] { --nm-planet-one: #67c6cb; --nm-planet-two: #aaa2e4; --nm-planet-three: #d6b37d; }
+.nm-brand-living[data-palette="2"] { --nm-planet-one: #9ac99c; --nm-planet-two: #80b7d8; --nm-planet-three: #cd9dbc; }
+.nm-brand-scene, .nm-brand-art { position: relative; display: block; width: 100%; height: 100%; }
+.nm-brand-scene { transform-origin: 39.6% 50%; }
+.nm-brand-art { z-index: 1; }
+.nm-brand-cosmos { position: absolute; inset: 0; display: block; pointer-events: none; opacity: 0; }
+.nm-brand-halo {
+  position: absolute; left: 39.6%; top: 50%; width: 77%; aspect-ratio: 1;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(closest-side, transparent 54%, color-mix(in srgb, var(--nm-planet-one) 13%, transparent) 83%, transparent 100%);
+}
+.nm-brand-orbit {
+  position: absolute; left: 2.5%; top: 3%; width: 74.2%; aspect-ratio: 1;
+  --nm-orbit-angle: -28deg; --nm-orbit-tilt: 61deg; --nm-orbit-start: 12deg; --nm-orbit-end: 332deg;
+  --nm-planet-color: var(--nm-planet-one);
+  transform: rotateZ(var(--nm-orbit-angle)) rotateX(var(--nm-orbit-tilt));
+  transform-style: preserve-3d;
+}
+.nm-brand-orbit-b {
+  --nm-orbit-angle: 37deg; --nm-orbit-tilt: 55deg; --nm-orbit-start: 170deg; --nm-orbit-end: -110deg;
+  --nm-planet-color: var(--nm-planet-two);
+}
+.nm-brand-orbit-c {
+  --nm-orbit-angle: -11deg; --nm-orbit-tilt: 18deg; --nm-orbit-start: 245deg; --nm-orbit-end: 485deg;
+  --nm-planet-color: var(--nm-planet-three);
+}
+.nm-brand-orbit-track { position: absolute; inset: 0; border: 1px solid var(--nm-planet-color); border-radius: 50%; opacity: .33; }
+.nm-brand-traveller { position: absolute; inset: 0; transform-style: preserve-3d; }
+.nm-brand-planet {
+  position: absolute; display: block; left: 50%; top: 0; width: 8%; aspect-ratio: 1; border-radius: 50%;
+  transform: translate(-50%, -50%) rotateX(calc(-1 * var(--nm-orbit-tilt)));
+  background: radial-gradient(circle at 28% 25%, #f4fffa 0%, var(--nm-planet-color) 35%, #405867 100%);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--nm-planet-color) 45%, transparent);
+}
+.nm-brand-orbit-b .nm-brand-planet { width: 6%; }
+.nm-brand-orbit-c .nm-brand-planet { width: 4.5%; }
+.nm-brand-heart {
+  position: absolute; display: block; left: 76.38%; top: 49.94%; width: 14.07%; aspect-ratio: 1;
+  border-radius: 50%; transform: translate(-50%, -50%); opacity: 0; pointer-events: none;
+  background: radial-gradient(circle at 29% 25%, #e8fff3 0%, var(--nm-planet-one) 45%, #527b73 100%);
+}
+.nm-brand-replay {
+  position: absolute; inset: 0; z-index: 2; display: block; width: 100%; height: 100%;
+  padding: 0; border: 0; border-radius: 12px; background: transparent; color: inherit; cursor: pointer;
+}
+.nm-brand-replay:focus-visible { outline: 2px solid #5c82b5; outline-offset: 5px; }
+.nm-brand-living[data-awake="true"] .nm-brand-scene { animation: nm-logo-awaken 4.4s cubic-bezier(.22, .7, .3, 1) both; }
+.nm-brand-living[data-awake="true"] .nm-brand-cosmos { animation: nm-logo-reveal 4.4s ease both; }
+.nm-brand-living[data-awake="true"] .nm-brand-heart { animation: nm-logo-sphere 4.4s ease both; }
+.nm-brand-living[data-awake="true"] .nm-brand-traveller { animation: nm-logo-orbit 4.4s cubic-bezier(.2, .55, .35, 1) both; }
+@keyframes nm-logo-awaken {
+  0%, 100% { transform: rotateX(0) rotateY(0) rotateZ(0); }
+  23% { transform: rotateX(5deg) rotateY(-11deg) rotateZ(-1deg); }
+  60% { transform: rotateX(-3deg) rotateY(8deg) rotateZ(.6deg); }
+  85% { transform: rotateX(1deg) rotateY(-2deg) rotateZ(0); }
+}
+@keyframes nm-logo-reveal { 0%, 100% { opacity: 0; } 13% { opacity: .85; } 35%, 70% { opacity: 1; } }
+@keyframes nm-logo-sphere { 0%, 100% { opacity: 0; } 24%, 70% { opacity: .9; } }
+@keyframes nm-logo-orbit { from { transform: rotateZ(var(--nm-orbit-start)); } to { transform: rotateZ(var(--nm-orbit-end)); } }
+@media (prefers-reduced-motion: reduce) {
+  .nm-brand-living[data-awake] .nm-brand-scene,
+  .nm-brand-living[data-awake] .nm-brand-cosmos,
+  .nm-brand-living[data-awake] .nm-brand-heart,
+  .nm-brand-living[data-awake] .nm-brand-traveller { animation: none; transform: none; }
+  .nm-brand-living .nm-brand-cosmos, .nm-brand-living .nm-brand-heart, .nm-brand-living .nm-brand-replay { display: none; }
+}

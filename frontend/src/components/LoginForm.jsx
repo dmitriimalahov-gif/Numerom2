@@ -53,13 +53,13 @@ const LoginForm = ({ onSwitchToRegister, onClose }) => {
   };
 
   return (
-    <Card className="w-full max-w-md mx-auto">
+    <Card className="nm-auth-card">
       <CardHeader className="text-center">
-        <CardTitle className="text-2xl font-bold bg-gradient-to-r from-[hsl(160,60%,50%)] via-[hsl(200,70%,55%)] to-[hsl(250,60%,55%)] bg-clip-text text-transparent">
-          Добро пожаловать в NUMEROM
+        <CardTitle className="nm-auth-title">
+          С возвращением
         </CardTitle>
         <CardDescription>
-          Войдите в свой личный кабинет для самопознания
+          Войдите, чтобы продолжить знакомство с собой.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -76,6 +76,7 @@ const LoginForm = ({ onSwitchToRegister, onClose }) => {
               id="email"
               name="email"
               type="email"
+              autoComplete="email"
               value={formData.email}
               onChange={handleChange}
               required
@@ -89,12 +90,15 @@ const LoginForm = ({ onSwitchToRegister, onClose }) => {
               id="password"
               name="password"
               type="password"
+              autoComplete="current-password"
               value={formData.password}
               onChange={handleChange}
               required
               placeholder="Введите пароль..."
             />
           </div>
+
+          <a href="/forgot-password" className="nm-text-link">Забыли пароль?</a>
 
           <Button 
             type="submit" 

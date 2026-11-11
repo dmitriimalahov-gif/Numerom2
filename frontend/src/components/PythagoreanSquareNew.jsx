@@ -14,59 +14,24 @@ import {
   Legend
 } from 'chart.js';
 import { getBackendUrl, getApiBaseUrl } from '../utils/backendUrl';
+import NarrationPanel from '../features/learning/NarrationPanel';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
-const pillGradient = 'bg-gradient-to-br from-[#515855] via-[#454b48] to-[#2c302e]';
-const valueGradient = 'bg-gradient-to-br from-[#7e8f88] via-[#708078] to-[#57605d]';
+const pillGradient = 'bg-[#203653]';
+const valueGradient = 'bg-[#385da5]';
 
+// Match the supplied NumerOM square while keeping live values as text.
 const CELL_COLORS = {
-  1: {
-    background: 'linear-gradient(135deg, #fef3c7, #fde68a)',
-    text: '#1f2937',
-    border: '#fde68a'
-  },
-  2: {
-    background: 'linear-gradient(135deg, #f8fafc, #e2e8f0)',
-    text: '#1f2937',
-    border: '#e2e8f0',
-    glow: '0 0 0 3px rgba(226,232,240,0.45)'
-  },
-  3: {
-    background: 'linear-gradient(135deg, #fde68a, #fbbf24)',
-    text: '#1f2937',
-    border: '#fcd34d'
-  },
-  4: {
-    background: 'linear-gradient(135deg, #e0c9a4, #c8a978)',
-    text: '#1f2937',
-    border: '#d4b48c'
-  },
-  5: {
-    background: 'linear-gradient(135deg, #bbf7d0, #6ee7b7)',
-    text: '#14532d',
-    border: '#86efac'
-  },
-  6: {
-    background: 'linear-gradient(135deg, #fce7f3, #fbcfe8)',
-    text: '#831843',
-    border: '#f9a8d4'
-  },
-  7: {
-    background: 'linear-gradient(135deg, #e5e7eb, #d1d5db)',
-    text: '#1f2937',
-    border: '#cbd5f5'
-  },
-  8: {
-    background: 'linear-gradient(135deg, #dbeafe, #bfdbfe)',
-    text: '#1f2937',
-    border: '#bfdbfe'
-  },
-  9: {
-    background: 'linear-gradient(135deg, #fee2e2, #fecaca)',
-    text: '#7f1d1d',
-    border: '#fca5a5'
-  }
+  1: { background: '#f47758', text: '#203653', border: '#f47758' },
+  2: { background: '#ffffff', text: '#203653', border: '#bfdfd1' },
+  3: { background: '#fa9418', text: '#203653', border: '#fa9418' },
+  4: { background: '#ba9669', text: '#172c43', border: '#ba9669' },
+  5: { background: '#bedfd0', text: '#203653', border: '#aed3c3' },
+  6: { background: '#f8cbd3', text: '#203653', border: '#f8cbd3' },
+  7: { background: '#bcbfc0', text: '#203653', border: '#bcbfc0' },
+  8: { background: '#3867ad', text: '#ffffff', border: '#3867ad' },
+  9: { background: '#f53f58', text: '#17283b', border: '#f53f58' }
 };
 
 const DOW_NUMBERS = [1, 2, 9, 5, 3, 6, 8]; // Sunday -> 1, Monday -> 2, ...
@@ -216,7 +181,7 @@ const THEME_CONFIG = {
   },
   light: {
     pageBackground: 'bg-[#f6f8fb]',
-    overlayGradient: 'radial-gradient(circle at top, rgba(148, 163, 184, 0.3), transparent 58%)',
+    overlayGradient: 'none',
     textPrimary: 'text-slate-900',
     textSecondary: 'text-slate-600',
     textMuted: 'text-slate-500',
@@ -224,7 +189,7 @@ const THEME_CONFIG = {
     border: 'border-slate-200',
     subtleBorder: 'border-slate-300',
     surfaceBackground: 'bg-white/80',
-    surfaceShadow: 'shadow-[0_30px_60px_rgba(148,163,184,0.25)]',
+    surfaceShadow: 'shadow-sm',
     cardBackground: 'bg-white',
     secondaryCardBackground: 'bg-slate-100',
     inlineCardBackground: 'bg-slate-50',
@@ -768,8 +733,8 @@ const PythagoreanSquareNew = () => {
   const [detail, setDetail] = useState(DETAIL_INITIAL_STATE);
   const [hoveredNumbers, setHoveredNumbers] = useState([]);
   const [theme, setTheme] = useState(() => {
-    if (typeof window === 'undefined') return 'dark';
-    return localStorage.getItem('pythagorean-square-theme') === 'light' ? 'light' : 'dark';
+    if (typeof window === 'undefined') return 'light';
+    return (localStorage.getItem('pythagorean-square-theme') || localStorage.getItem('theme')) === 'dark' ? 'dark' : 'light';
   });
   const now = useMemo(() => {
     const date = new Date();
@@ -1315,10 +1280,12 @@ const personalCycles = [
     };
   }, [theme]);
   const openDetail = useCallback((title, text, options = {}) => {
+    const names={'Число Души (ч/д)':'soul','Число Ума (ч/у)':'mind','Число Судьбы (ч/с)':'destiny','Число Ума* (ч/у*)':'helping_mind','Число Мудрости (ч/м)':'wisdom','Правящее Число (п/ч)':'ruling','Горизонталь 1-4-7':'row-0','Горизонталь 2-5-8':'row-1','Горизонталь 3-6-9':'row-2','Вертикаль 1-2-3':'col-0','Вертикаль 4-5-6':'col-1','Вертикаль 7-8-9':'col-2','Диагональ 1-5-9':'diag-0','Диагональ 3-5-7':'diag-1'};
     setDetail({
       open: true,
       title,
       text,
+      narrationId:names[title],
       advice: options.advice ?? '',
       loading: options.loading ?? false,
       energy: options.energy ?? null
@@ -1547,15 +1514,14 @@ const personalCycles = [
         className="absolute inset-0 pointer-events-none"
         style={{ background: themeConfig.overlayGradient }}
       />
-      <div className="relative z-10 mx-auto max-w-6xl px-4 py-12 md:py-16">
+      <div className="relative z-10 mx-auto max-w-6xl px-2 py-4 md:py-6">
         <div className="mb-8 flex flex-col md:flex-row md:items-start md:justify-between gap-4">
           <div>
             <h1 className="text-3xl md:text-4xl font-semibold tracking-tight mb-2">
-            Квадрат Пифагора — новый дизайн
+            Ваша карта чисел
           </h1>
             <p className={`${textSecondaryClass} text-sm md:text-base max-w-2xl`}>
-            Обновлённый визуал квадрата Пифагора с акцентом на персональные числа и структуру матрицы.
-            Значения подгружаются автоматически из расчёта на сервере.
+            Персональные числа, квадрат Пифагора и планетарные энергии по вашей дате рождения.
           </p>
           </div>
           <button type="button" onClick={toggleTheme} className={toggleClassName}>
@@ -1573,7 +1539,7 @@ const personalCycles = [
               <span>Загружаем данные...</span>
             </div>
           ) : error ? (
-            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-6 py-5 text-sm text-red-100">
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-6 py-5 text-sm text-red-700 dark:text-red-200">
               {error}
             </div>
           ) : (
@@ -2122,6 +2088,7 @@ const personalCycles = [
             className={`mt-4 space-y-4 overflow-y-auto pr-2 text-sm leading-relaxed ${textSecondaryClass}`}
             style={{ maxHeight: '60vh' }}
           >
+            {detail.open&&detail.narrationId&&<NarrationPanel key={detail.narrationId} clipId={detail.narrationId}/>}
             <div className="whitespace-pre-line">{detail.text}</div>
             {detail.energy !== null && (
               <div>

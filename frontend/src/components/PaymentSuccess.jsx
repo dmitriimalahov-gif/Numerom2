@@ -1,173 +1,53 @@
-import React, { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Button } from './ui/button';
-import { CheckCircle, Loader, Crown, ArrowRight } from 'lucide-react';
-import { useAuth } from './AuthContext';
-import axios from 'axios';
-import { getBackendUrl } from '../utils/backendUrl';
+import React,{useEffect,useRef,useState} from 'react';
+import {useSearchParams,useNavigate} from 'react-router-dom';
+import {Button} from './ui/button';
+import {useAuth} from './AuthContext';
+import {api} from '../services/api';
+import {paymentReceipt,paymentMessage} from '@numerom/api-client';
 
-const PaymentSuccess = () => {
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const { refreshProfile } = useAuth();
-  const [status, setStatus] = useState('checking'); // checking, success, error
-  const [paymentDetails, setPaymentDetails] = useState(null);
+export default function PaymentSuccess(){
+ const [params]=useSearchParams();
+ if(params.get('service')==='full-report')return <FullReportReturn orderId={params.get('order_id')}/>;
+ return <CreditPaymentSuccess/>;
+}
 
-  const sessionId = searchParams.get('session_id');
-  const backendUrl = getBackendUrl();
+function FullReportReturn({orderId}){
+ const navigate=useNavigate();
+ useEffect(()=>{navigate('/dashboard/full-report'+(orderId?'?order_id='+encodeURIComponent(orderId):''),{replace:true});},[navigate,orderId]);
+ return <p role="status">Открываем ваш разбор и проверяем подтверждение оплаты…</p>;
+}
 
-  useEffect(() => {
-    if (sessionId) {
-      checkPaymentStatus();
-    } else {
-      setStatus('error');
-    }
-  }, [sessionId]);
-
-  const checkPaymentStatus = async () => {
-    let attempts = 0;
-    const maxAttempts = 5;
-    const pollInterval = 2000; // 2 seconds
-
-    const pollStatus = async () => {
-      if (attempts >= maxAttempts) {
-        setStatus('error');
-        return;
-      }
-
-      try {
-        const response = await axios.get(`${backendUrl}/api/payments/checkout/status/${sessionId}`);
-        const data = response.data;
-
-        if (data.payment_status === 'paid') {
-          setPaymentDetails(data);
-          setStatus('success');
-          // Refresh user profile to get updated subscription/credits
-          await refreshProfile();
-          return;
-        } else if (data.status === 'expired') {
-          setStatus('error');
-          return;
-        }
-
-        // Continue polling if payment is still pending
-        attempts++;
-        setTimeout(pollStatus, pollInterval);
-      } catch (error) {
-        console.error('Error checking payment status:', error);
-        attempts++;
-        if (attempts >= maxAttempts) {
-          setStatus('error');
-        } else {
-          setTimeout(pollStatus, pollInterval);
-        }
-      }
-    };
-
-    pollStatus();
-  };
-
-  const handleContinue = () => {
-    navigate('/');
-  };
-
-  if (status === 'checking') {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <Card className="max-w-md w-full">
-          <CardContent className="p-8 text-center">
-            <Loader className="w-12 h-12 animate-spin text-primary mx-auto mb-4" />
-            <h2 className="text-xl font-semibold mb-2">Обрабатываем ваш платёж</h2>
-            <p className="text-muted-foreground">
-              Пожалуйста, подождите, мы проверяем статус вашего платежа...
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (status === 'error') {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <Card className="max-w-md w-full">
-          <CardContent className="p-8 text-center">
-            <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
-              <span className="text-destructive text-xl">✕</span>
-            </div>
-            <h2 className="text-xl font-semibold mb-2">Ошибка платежа</h2>
-            <p className="text-muted-foreground mb-6">
-              Произошла ошибка при обработке вашего платежа. Если средства были списаны, 
-              они будут возвращены в течение 5-7 рабочих дней.
-            </p>
-            <Button onClick={handleContinue} variant="outline" className="w-full">
-              Вернуться на главную
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <Card className="max-w-md w-full">
-        <CardHeader className="text-center">
-          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-            <CheckCircle className="w-8 h-8 text-primary" />
-          </div>
-          <CardTitle className="text-2xl text-primary">Платёж успешен!</CardTitle>
-          <CardDescription>
-            Добро пожаловать в мир углублённого самопознания
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent className="space-y-6">
-          {paymentDetails && (
-            <div className="bg-muted rounded-lg p-4">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm text-muted-foreground">Сумма:</span>
-                <span className="font-medium">
-                  {paymentDetails.amount_total / 100} {paymentDetails.currency.toUpperCase()}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Статус:</span>
-                <span className="text-primary font-medium">Оплачено</span>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-3">
-            <div className="flex items-center space-x-3 p-3 bg-primary/5 rounded-lg">
-              <Crown className="w-5 h-5 text-primary" />
-              <span className="text-sm">Premium функции активированы</span>
-            </div>
-            
-            <div className="flex items-center space-x-3 p-3 bg-primary/5 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-primary" />
-              <span className="text-sm">Безлимитные расчёты доступны</span>
-            </div>
-            
-            <div className="flex items-center space-x-3 p-3 bg-primary/5 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-primary" />
-              <span className="text-sm">Персональные рекомендации включены</span>
-            </div>
-          </div>
-
-          <Button onClick={handleContinue} className="w-full numerology-gradient">
-            Продолжить изучение
-            <ArrowRight className="w-4 h-4 ml-2" />
-          </Button>
-
-          <p className="text-xs text-muted-foreground text-center">
-            Вы получите email-подтверждение вашей покупки в ближайшее время.
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-};
-
-export default PaymentSuccess;
+function CreditPaymentSuccess(){
+ const [params]=useSearchParams();const navigate=useNavigate();const {user,refreshProfile}=useAuth();
+ const [result,setResult]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[revision,setRevision]=useState(0);
+ const generation=useRef(0);
+ const refresh=useRef(refreshProfile);refresh.current=refreshProfile;
+ const key=user?'numerom.web.payment.'+user.id:null;let saved=null;try{saved=JSON.parse(sessionStorage.getItem(key)||'null');}catch{}
+ const sid=params.get('session_id')||saved?.session_id;
+ const identity=(user?.id||'')+':'+(sid||'');
+ const receipt=result?.identity===identity?result.receipt:null;
+ useEffect(()=>{
+  generation.current++;if(!user||!sid)return;let active=true,timer,attempts=0;const controller=new AbortController();
+  async function poll(){setBusy(true);setError('');try{
+   const r=paymentReceipt(await api.request('/payments/checkout/status/'+encodeURIComponent(sid),{signal:controller.signal}));
+   if(!active)return;setResult({identity,receipt:r});
+   if(['paid','expired','failed'].includes(r.status)){
+    let current=null;try{current=JSON.parse(sessionStorage.getItem(key)||'null');}catch{}
+    if(current?.session_id===sid)sessionStorage.removeItem(key);
+    await refresh.current();
+   }else if(++attempts<10)timer=setTimeout(poll,4000);
+  }catch(e){if(active)setError(e.message);}finally{if(active)setBusy(false);}}
+  void poll();return()=>{generation.current++;active=false;controller.abort();clearTimeout(timer);};
+ },[user?.id,sid,key,revision,identity]);
+ async function cancel(){const current=generation.current;setBusy(true);setError('');try{const r=paymentReceipt(await api.request('/payments/checkout/'+encodeURIComponent(sid)+'/cancel',{method:'POST',body:{}}));if(current!==generation.current)return;setResult({identity,receipt:r});setRevision(v=>v+1);}catch(e){if(current===generation.current)setError(e.message);}finally{if(current===generation.current)setBusy(false);}}
+ return <main className="min-h-screen bg-slate-50 flex items-center justify-center p-5"><section className="w-full max-w-lg rounded-2xl bg-white border p-7 space-y-5"><h1 className="text-2xl font-semibold">Статус оплаты</h1>
+ {!user?<p>Войдите в аккаунт NumerOM, чтобы проверить оплату. Подтверждение приходит на сервер автоматически.</p>:!sid?<p>Активная оплата не найдена. Баланс и история доступны в вашем кабинете.</p>:<>
+ {receipt&&<><p role="status">{paymentMessage(receipt)}</p><p>{receipt.title} · {new Intl.NumberFormat('ru-RU',{style:'currency',currency:'EUR'}).format(receipt.amount_total/100)}</p></>}
+ {!receipt&&busy&&<p role="status">Проверяем подтверждение Stripe…</p>}
+ {error&&<p role="alert">{error}</p>}
+ <Button disabled={busy} onClick={()=>setRevision(v=>v+1)}>Проверить ещё раз</Button>
+ {receipt&&!['paid','expired','failed'].includes(receipt.status)&&<Button variant="outline" disabled={busy} onClick={cancel}>Отменить попытку оплаты</Button>}
+ </>}
+ <Button variant="outline" onClick={()=>navigate(user?'/dashboard/home':'/')}>Вернуться в NumerOM</Button>
+ </section></main>;
+}

@@ -1,12 +1,8 @@
 import React from 'react';
-import AdminPanelV2 from './AdminPanelV2';
+import { Navigate } from 'react-router-dom';
 
 const AdminV2Portal = () => {
-  return (
-    <div className="space-y-6">
-      <AdminPanelV2 />
-    </div>
-  );
+  return <Navigate to="/dashboard/admin/learning" replace />;
 };
 
 export default AdminV2Portal;

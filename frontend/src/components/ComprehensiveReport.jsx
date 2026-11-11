@@ -43,44 +43,6 @@ import {
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
-// Build stamp for cache-busting verification
-let BUILD_STAMP = 'Build: generating...';
-try {
-  const { getBuildVersion, getBuildDate } = require('../utils/buildInfo');
-  BUILD_STAMP = `Build: ${getBuildVersion()} | ${getBuildDate()}`;
-} catch (e) {
-  BUILD_STAMP = `Build: ${new Date().toISOString().split('T')[0]} ${new Date().toTimeString().split(' ')[0]}`;
-}
-
-// Attach badge to document body and set title so we can verify fresh bundle
-(function attachBuildStampOnce(){
-  try {
-    if (typeof window !== 'undefined') {
-      // Avoid duplicate badges
-      const existing = document.getElementById('build-stamp-badge');
-      if (!existing) {
-        const el = document.createElement('div');
-        el.id = 'build-stamp-badge';
-        el.textContent = BUILD_STAMP;
-        el.style.position = 'fixed';
-        el.style.bottom = '8px';
-        el.style.right = '8px';
-        el.style.zIndex = '9999';
-        el.style.padding = '4px 8px';
-        el.style.borderRadius = '8px';
-        el.style.background = 'rgba(17,24,39,0.75)';
-        el.style.color = '#fff';
-        el.style.fontSize = '11px';
-        el.style.fontFamily = 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif';
-        document.body.appendChild(el);
-      }
-      document.title = `${document.title.replace(/\s·\sBuild:.*/, '')} · ${BUILD_STAMP}`;
-      // eslint-disable-next-line no-console
-      console.log(BUILD_STAMP);
-    }
-  } catch {}
-})();
-
 const ComprehensiveReport = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -396,70 +358,40 @@ const ComprehensiveReport = () => {
         });
       }
 
-      // Определяем периоды: первый начинается с (27 - число судьбы), каждый длится 9 лет
+      // Таблица автора «Тени · Вершины · Вызовы · Переходы»: четыре периода по 9 лет (23–32, 32–41, …).
+      // Первый начинается с (27 - число судьбы).
       const firstPeriodStart = 27 - destinyNumber;
       const periodLength = 9;
-      const periods = [];
-      
-      // Год рождения, приведённый к одной цифре
       const yearReduced = reduceToSingleDigit(year);
-      
-      let currentPeriodStart = firstPeriodStart;
-      let periodIndex = 1;
-      
-      while (currentPeriodStart <= 100) {
-        const periodEnd = Math.min(currentPeriodStart + periodLength - 1, 100);
-        const periodYears = years.filter(y => y.age >= currentPeriodStart && y.age <= periodEnd);
-        
-        if (periodYears.length > 0) {
-          // Вершина вычисляется по-разному для каждого периода:
-          let peak;
-          if (periodIndex === 1) {
-            // Первый период: вершина = день + месяц
-            peak = reduceToSingleDigit(dayReduced + monthReduced);
-          } else if (periodIndex === 2) {
-            // Второй период: вершина = день + год рождения
-            peak = reduceToSingleDigit(dayReduced + yearReduced);
-          } else if (periodIndex === 3) {
-            // Третий период: вершина = день - число судьбы (по модулю)
-            peak = reduceToSingleDigit(Math.abs(dayReduced - destinyNumber));
-          } else {
-            // Четвёртый и последующие периоды: вершина = месяц + год рождения
-            peak = reduceToSingleDigit(monthReduced + yearReduced);
-          }
-          
-          // Тень = день рождения + вершина, приведённое к целому числу
-          const shadow = reduceToSingleDigit(dayReduced + peak);
-          
-          // Вызов = день рождения + ЧЛГ для конца периода, приведённое к целому числу
-          const challengeYearData = years.find(y => y.age === periodEnd);
-          const challenge = challengeYearData 
-            ? reduceToSingleDigit(dayReduced + challengeYearData.chlg)
-            : null;
-          
-          // Переход = тень + вершина + вызов, приведённое к целому числу
-          const transition = challenge 
-            ? reduceToSingleDigit(shadow + peak + challenge)
-            : null;
-          
-          periods.push({
-            index: periodIndex,
-            startAge: currentPeriodStart,
-            endAge: periodEnd,
-            years: periodYears,
-            shadow,      // Первая - Тень
-            peak,        // Вторая - Вершина
-            challenge,   // Третья - Вызов
-            transition,  // Четвёртая - Переход
-            periodNumbers: [shadow, peak, challenge, transition].filter(n => n !== null)
-          });
-          
-          periodIndex++;
-          currentPeriodStart = periodEnd + 1;
-        } else {
-          break;
-        }
-      }
+      // Вершины: день + месяц; день + год; первая + вторая; месяц + год
+      const firstPeak = reduceToSingleDigit(dayReduced + monthReduced);
+      const secondPeak = reduceToSingleDigit(dayReduced + yearReduced);
+      const peaks = [firstPeak, secondPeak, reduceToSingleDigit(firstPeak + secondPeak), reduceToSingleDigit(monthReduced + yearReduced)];
+      // Вызовы: |месяц - день|; |день - год|; |первый - второй|; |месяц - год|
+      const firstChallenge = Math.abs(monthReduced - dayReduced);
+      const secondChallenge = Math.abs(dayReduced - yearReduced);
+      const challenges = [firstChallenge, secondChallenge, Math.abs(firstChallenge - secondChallenge), Math.abs(monthReduced - yearReduced)];
+      // Тень = вершина + день, месяц, год, число судьбы по порядку периодов
+      const shadowBases = [dayReduced, monthReduced, yearReduced, destinyNumber];
+      const periods = peaks.map((peak, i) => {
+        const startAge = firstPeriodStart + i * periodLength;
+        const endAge = startAge + periodLength;
+        const shadow = reduceToSingleDigit(shadowBases[i] + peak);
+        const challenge = challenges[i];
+        // Переход = тень + вершина + вызов
+        const transition = reduceToSingleDigit(shadow + peak + challenge);
+        return {
+          index: i + 1,
+          startAge,
+          endAge,
+          years: years.filter(y => y.age >= startAge && y.age < endAge),
+          shadow,      // Первая - Тень
+          peak,        // Вторая - Вершина
+          challenge,   // Третья - Вызов
+          transition,  // Четвёртая - Переход
+          periodNumbers: [shadow, peak, challenge, transition]
+        };
+      });
 
       return {
         baseNumber,
@@ -2959,18 +2891,19 @@ const ComprehensiveReport = () => {
                       <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
                         <div className="text-sm font-semibold mb-3">Алгоритм расчёта для каждого периода:</div>
                         <div className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
-                          <div><strong>Вершина</strong> вычисляется по-разному для каждого периода:</div>
+                          <div>День, месяц и год рождения сначала приводятся к одной цифре. Четыре периода по 9 лет, первый начинается в 27 − число судьбы.</div>
+                          <div className="mt-2"><strong>Вершина</strong> вычисляется по-разному для каждого периода:</div>
                           <div className="ml-4 space-y-1 text-xs">
-                            <div>• <strong>Первый период:</strong> день рождения + месяц рождения, приведённое к целому числу</div>
-                            <div>• <strong>Второй период:</strong> день рождения + год рождения, приведённое к целому числу</div>
-                            <div>• <strong>Третий период:</strong> день рождения - число судьбы (по модулю), приведённое к целому числу</div>
-                            <div>• <strong>Четвёртый и последующие периоды:</strong> месяц рождения + год рождения, приведённое к целому числу</div>
+                            <div>• <strong>Первый период:</strong> день + месяц</div>
+                            <div>• <strong>Второй период:</strong> день + год</div>
+                            <div>• <strong>Третий период:</strong> первая вершина + вторая вершина</div>
+                            <div>• <strong>Четвёртый период:</strong> месяц + год</div>
                           </div>
-                          <div className="mt-2"><strong>Тень</strong> = день рождения + вершина, приведённое к целому числу</div>
-                          <div><strong>Вызов</strong> = день рождения + ЧЛГ (число личного года) для конца периода, приведённое к целому числу</div>
-                          <div><strong>Переход</strong> = тень + вершина + вызов, приведённое к целому числу</div>
+                          <div className="mt-2"><strong>Вызов</strong> — разница тех же чисел по модулю: |месяц − день|, |день − год|, |первый вызов − второй вызов|, |месяц − год|</div>
+                          <div><strong>Тень</strong> = вершина + день, месяц, год и число судьбы — по одному на каждый период</div>
+                          <div><strong>Переход</strong> = тень + вершина + вызов</div>
                           <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                            Примечание: Вершина и Тень меняются для каждого периода, так как вершина вычисляется по-разному. Вызов и Переход также меняются для каждого периода, так как Вызов зависит от ЧЛГ конца периода.
+                            Все суммы приводятся к одной цифре.
                           </div>
                         </div>
                       </div>
@@ -2995,7 +2928,7 @@ const ComprehensiveReport = () => {
                                 <div className="text-xs text-gray-600 dark:text-gray-400">
                                   {period.startAge === 27 - shadowsPeaksData.destinyNumber 
                                     ? `Начало: 27 - ${shadowsPeaksData.destinyNumber} = ${period.startAge}`
-                                    : `Начало: окончание предыдущего периода + 1`} | 
+                                    : `Начало: окончание предыдущего периода`} | 
                                   Окончание: {period.startAge} + 9 = {period.endAge}
                                 </div>
                               </div>
@@ -3005,7 +2938,7 @@ const ComprehensiveReport = () => {
                                 {[
                                   { label: 'Тень', value: period.shadow, showAge: false, age: null },        // Первая - Тень
                                   { label: 'Вершина', value: period.peak, showAge: false, age: null },  // Вторая - Вершина
-                                  { label: 'Вызов', value: period.challenge, showAge: true, age: period.endAge },     // Третья - Вызов (использует ЧЛГ конца периода)
+                                  { label: 'Вызов', value: period.challenge, showAge: false, age: null },     // Третья - Вызов
                                   { label: 'Переход', value: period.transition, showAge: false, age: null } // Четвёртая - Переход
                                 ].map((item, idx) => {
                                   const color = item.value ? getPlanetIndicatorColor(item.value) : '#999';
@@ -3060,14 +2993,13 @@ const ComprehensiveReport = () => {
                           <div className="max-h-96 overflow-y-auto space-y-1">
                             {shadowsPeaksData.years.map((yearData, idx) => {
                               const period = shadowsPeaksData.periods.find(p => 
-                                yearData.age >= p.startAge && yearData.age <= p.endAge
+                                yearData.age >= p.startAge && yearData.age < p.endAge
                               );
                               
                               let cycleType = '';
                               if (period) {
-                                // Только вызов привязан к конкретному возрасту (конец периода)
-                                // Тень, Вершина и Переход - это вычисленные числа, не привязанные к возрасту
-                                if (yearData.age === period.endAge) cycleType = 'Вызов';     // Третья - Вызов (использует ЧЛГ этого года)
+                                // Числа периода не привязаны к отдельному году; отмечаем его начало
+                                if (yearData.age === period.startAge) cycleType = 'Начало периода';
                               }
                               
                               const color = getPlanetIndicatorColor(yearData.chlg);

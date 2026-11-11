@@ -228,8 +228,8 @@ const VedicTimeCalculations = () => {
   const [selectedDate, setSelectedDate] = useState(() => getLocalISODate());
   const [selectedCity, setSelectedCity] = useState('');
   const [theme, setTheme] = useState(() => {
-    if (typeof window === 'undefined') return 'dark';
-    return localStorage.getItem('vedic-time-theme') === 'light' ? 'light' : 'dark';
+    if (typeof window === 'undefined') return 'light';
+    return (localStorage.getItem('vedic-time-theme') || localStorage.getItem('theme')) === 'dark' ? 'dark' : 'light';
   });
   const [selectedHour, setSelectedHour] = useState(null);
   const [isHourDialogOpen, setIsHourDialogOpen] = useState(false);

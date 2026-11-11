@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Button } from './ui/button';
@@ -7,14 +7,27 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Edit, Save, X, Plus, Trash2, BookOpen, Brain, Users, FileText, BarChart3, Upload, Calendar, Eye, Download, ExternalLink, Clock } from 'lucide-react';
+import AdminFilePreview from '../features/admin/AdminFilePreview';
+import { api } from '../services/api';
+import { readAdminResponse } from '../features/admin/requestHelpers';
 import { getBackendUrl } from '../utils/backendUrl';
+
+
+function reviewRequestId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  if (!window.crypto?.getRandomValues) throw new Error('Откройте кабинет по защищённой ссылке HTTPS.');
+  const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+  return Array.from(bytes, (byte, i) => `${[4, 6, 8, 10].includes(i) ? '-' : ''}${byte.toString(16).padStart(2, '0')}`).join('');
+}
 
 const LessonEditModal = ({ 
   lesson, 
   isOpen, 
   onClose, 
   onSave,
-  isSaving 
+  isSaving,
+  saveError = ''
 }) => {
   const [editedLesson, setEditedLesson] = useState(lesson || {});
   const [activeTab, setActiveTab] = useState('general');
@@ -26,6 +39,9 @@ const LessonEditModal = ({
   const [adminComment, setAdminComment] = useState('');
   const [exercisePoints, setExercisePoints] = useState(0);
   const [reviewStartTime, setReviewStartTime] = useState(null);
+  const reviewAttempt = useRef(null);
+  const [reviewPending, setReviewPending] = useState(false);
+  const [reviewNotice, setReviewNotice] = useState('');
   const [filesAnalytics, setFilesAnalytics] = useState(null);
   const backendUrl = getBackendUrl();
   
@@ -39,15 +55,19 @@ const LessonEditModal = ({
   const [quizMediaFiles, setQuizMediaFiles] = useState([]);
   const [quizDocuments, setQuizDocuments] = useState([]);
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const [fileErrors, setFileErrors] = useState({});
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState('');
+  const [mutating, setMutating] = useState(false);
+  const mutation = useRef(false);
+  const busy = isSaving || uploadingFile || mutating;
+  const close = () => { if (reviewAttempt.current) { setReviewNotice('Сначала подтвердите сохранение проверки кнопкой «Проверить сохранение».'); return; } if (!mutation.current && !isSaving) onClose(); };
   
   // Состояния для модальных окон просмотра
   const [viewingFile, setViewingFile] = useState(null);
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
   
-  // Состояния для трекинга видео
-  const [videoWatchStartTime, setVideoWatchStartTime] = useState(null);
-  const [videoWatchInterval, setVideoWatchInterval] = useState(null);
-
   // Текущий раздел на основе активной вкладки
   const currentSection = activeTab === 'theory' ? 'theory' :
                         activeTab === 'exercises' ? 'exercises' :
@@ -91,129 +111,54 @@ const LessonEditModal = ({
   }, [activeTab, lesson?.id]);
 
   const loadAnalytics = async () => {
+    setLoadingAnalytics(true); setAnalyticsError('');
     try {
-      setLoadingAnalytics(true);
-      
-      // Загружаем статистику урока
-      const analyticsResponse = await fetch(
-        `${backendUrl}/api/admin/analytics/lesson/${lesson.id}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      if (analyticsResponse.ok) {
-        const data = await analyticsResponse.json();
-        setAnalyticsData(data);
-      }
-      
-      // Загружаем ответы студентов
-      const responsesResponse = await fetch(
-        `${backendUrl}/api/admin/analytics/student-responses/${lesson.id}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      if (responsesResponse.ok) {
-        const data = await responsesResponse.json();
-        setStudentResponses(data.responses || []);
-      }
-      
-      // Загружаем заметки челленджа
-      const notesResponse = await fetch(
-        `${backendUrl}/api/admin/analytics/challenge-notes/${lesson.id}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      if (notesResponse.ok) {
-        const data = await notesResponse.json();
-        setChallengeNotes(data.notes || []);
-      }
-      
-      // Загружаем аналитику файлов
-      const filesResponse = await fetch(
-        `${backendUrl}/api/admin/lesson-files-analytics/${lesson.id}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      if (filesResponse.ok) {
-        const data = await filesResponse.json();
-        setFilesAnalytics(data);
-      }
-      
-    } catch (error) {
-      console.error('Error loading analytics:', error);
-    } finally {
-      setLoadingAnalytics(false);
-    }
+      const [analytics, responses, notes, files] = await Promise.all([
+        api.request(`/admin/analytics/lesson/${lesson.id}`),
+        api.request(`/admin/analytics/student-responses/${lesson.id}`),
+        api.request(`/admin/analytics/challenge-notes/${lesson.id}`),
+        api.request(`/admin/lesson-files-analytics/${lesson.id}`),
+      ]);
+      setAnalyticsData(analytics); setStudentResponses(responses.responses || []);
+      setChallengeNotes(notes.notes || []); setFilesAnalytics(files);
+    } catch (error) { setAnalyticsError(error.message); }
+    finally { setLoadingAnalytics(false); }
   };
 
   const handleReviewResponse = async (responseId) => {
-    if (!adminComment.trim()) {
-      alert('Введите комментарий');
-      return;
+    if (mutation.current || isSaving) return;
+    let attempt = reviewAttempt.current;
+    if (attempt && attempt.responseId !== responseId) return;
+    if (!attempt && (!adminComment.trim() || !Number.isInteger(exercisePoints) || exercisePoints < 0 || exercisePoints > 100)) {
+      setActionError('Введите комментарий и целое число баллов от 0 до 100.'); return;
     }
-    
+    mutation.current = true; setMutating(true); setActionError(''); setReviewNotice('');
     try {
-      const response = await fetch(
-        `${backendUrl}/api/admin/review-response/${responseId}`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ 
-            admin_comment: adminComment,
-            points_earned: exercisePoints || 0,
-            review_start_time: reviewStartTime ? reviewStartTime.toISOString() : null
-          })
-        }
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        // Обновляем локальное состояние
-        setStudentResponses(prev => prev.map(r => 
-          r.id === responseId 
-            ? { 
-                ...r, 
-                reviewed: true, 
-                admin_comment: adminComment,
-                points_earned: data.points_earned || exercisePoints || 0,
-                review_time_minutes: data.review_time_minutes || 0
-              }
-            : r
-        ));
-        setReviewingResponse(null);
-        setAdminComment('');
-        setExercisePoints(0);
-        setReviewStartTime(null);
-        alert(`Комментарий добавлен${data.points_earned > 0 ? `, начислено ${data.points_earned} баллов` : ''}`);
-      } else {
-        alert('Ошибка при добавлении комментария');
+      if (!attempt) {
+        attempt = { responseId, token: localStorage.getItem('token'), body: { request_id: reviewRequestId(),
+          admin_comment: adminComment.trim(), points_earned: exercisePoints,
+          review_start_time: reviewStartTime ? reviewStartTime.toISOString() : null } };
+        reviewAttempt.current = attempt;
       }
+      if (attempt.token !== localStorage.getItem('token')) throw Object.assign(new Error('Аккаунт изменился. Обновите список ответов.'), { status: 401 });
+      setReviewPending(true);
+      const data = await api.request(`/admin/review-response/${responseId}`, { method: 'POST', body: attempt.body });
+      if (typeof data?.award_pending !== 'boolean') throw new Error('Не удалось подтвердить результат проверки.');
+      if (data.award_pending) {
+        setReviewNotice('Проверка сохранена, начисление ожидает подтверждения. Нажмите «Проверить сохранение»; параметры отправки сохранены.');
+        return;
+      }
+      setStudentResponses(previous => previous.map(response => response.id === responseId ? {
+        ...response, reviewed: true, admin_comment: attempt.body.admin_comment, points_earned: data.points_earned ?? attempt.body.points_earned,
+        review_time_minutes: data.review_time_minutes ?? 0,
+      } : response));
+      reviewAttempt.current = null; setReviewPending(false);
+      setReviewingResponse(null); setAdminComment(''); setExercisePoints(0); setReviewStartTime(null);
     } catch (error) {
-      console.error('Error reviewing response:', error);
-      alert('Ошибка при добавлении комментария');
-    }
+      const rejected = [400, 401, 403, 404, 409, 422].includes(error.status);
+      if (rejected) { reviewAttempt.current = null; setReviewPending(false); }
+      setActionError(rejected || !attempt ? error.message : `${error.message} Результат отправки пока не подтверждён. Повторите проверку сохранения с прежними параметрами.`);
+    } finally { mutation.current = false; setMutating(false); }
   };
 
   // ===== ФУНКЦИИ ДЛЯ РАБОТЫ С ФАЙЛАМИ =====
@@ -222,6 +167,7 @@ const LessonEditModal = ({
   const loadFiles = async (section) => {
     if (!lesson?.id) return;
     
+    setLoadingFiles(true); setFileErrors(previous => ({ ...previous, [section]: '' }));
     try {
       const response = await fetch(
         `${backendUrl}/api/admin/files?lesson_id=${lesson.id}&section=${section}`,
@@ -233,8 +179,8 @@ const LessonEditModal = ({
         }
       );
       
-      if (response.ok) {
-        const data = await response.json();
+      {
+        const data = await readAdminResponse(response);
         
         // Разделяем файлы на медиа и документы
         const mediaFiles = data.files.filter(f => f.file_type === 'media');
@@ -256,83 +202,42 @@ const LessonEditModal = ({
         }
       }
     } catch (error) {
-      console.error('Error loading files:', error);
-    }
+      setFileErrors(previous => ({ ...previous, [section]: error.message }));
+    } finally { setLoadingFiles(false); }
   };
   
   // Загрузка файла
-  const handleFileUpload = async (event, section, fileType) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-    
-    setUploadingFile(true);
-    
+  const handleFileUpload = async (event, section) => {
+    const input = event.target;
+    const files = Array.from(input.files || []);
+    if (!files.length || mutation.current || isSaving) return;
+    mutation.current = true; setUploadingFile(true); setActionError('');
+    let completed = 0;
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        
-        // Создаем FormData
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('section', section);
-        
-        const response = await fetch(
-          `${backendUrl}/api/admin/lessons-v2/${lesson.id}/upload-file`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`
-            },
-            body: formData
-          }
-        );
-        
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.detail || 'Ошибка загрузки файла');
-        }
+      for (const file of files) {
+        const body = new FormData(); body.append('file', file); body.append('section', section);
+        await readAdminResponse(await fetch(`${backendUrl}/api/admin/lessons-v2/${lesson.id}/upload-file`, {
+          method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, body,
+        }));
+        completed += 1;
       }
-      
-      // Перезагружаем список файлов
+    } catch (error) { setActionError(`Загружено ${completed} из ${files.length}. ${error.message}`); }
+    finally {
       await loadFiles(section);
-      alert(`Успешно загружено файлов: ${files.length}`);
-      
-    } catch (error) {
-      console.error('Error uploading file:', error);
-      alert(`Ошибка загрузки: ${error.message}`);
-    } finally {
-      setUploadingFile(false);
-      event.target.value = ''; // Сбрасываем input
+      mutation.current = false; setUploadingFile(false); input.value = '';
     }
   };
-  
-  // Удаление файла
+
   const handleFileDelete = async (fileId, section) => {
-    if (!window.confirm('Удалить этот файл?')) return;
-    
+    if (mutation.current || isSaving || !window.confirm('Удалить этот файл?')) return;
+    mutation.current = true; setMutating(true); setActionError('');
     try {
-      const response = await fetch(
-        `${backendUrl}/api/admin/files/${fileId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      if (response.ok) {
-        // Перезагружаем список файлов
-        await loadFiles(section);
-        alert('Файл удален');
-      }
-    } catch (error) {
-      console.error('Error deleting file:', error);
-      alert('Ошибка при удалении файла');
-    }
+      await api.request(`/admin/files/${fileId}`, { method: 'DELETE' });
+      await loadFiles(section);
+    } catch (error) { setActionError(error.message); }
+    finally { mutation.current = false; setMutating(false); }
   };
-  
+
   // Загрузка файлов при открытии вкладки
   useEffect(() => {
     if (lesson?.id) {
@@ -348,117 +253,13 @@ const LessonEditModal = ({
     }
   }, [activeTab, lesson?.id]);
 
-  // Функция для открытия просмотра файла
-  const handleViewFile = async (file) => {
-    setViewingFile(file);
-    setFileViewerOpen(true);
-    
-    // Отправляем событие просмотра
-    try {
-      const token = localStorage.getItem('token');
-      await fetch(`${backendUrl}/api/student/file-analytics`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          file_id: file.id,
-          lesson_id: lesson.id,
-          action: 'view'
-        })
-      });
-    } catch (error) {
-      console.error('Error tracking file view:', error);
-    }
-  };
-
-  // Функция для закрытия просмотра файла
-  const handleCloseFileViewer = () => {
-    // Останавливаем трекинг видео
-    if (videoWatchInterval) {
-      clearInterval(videoWatchInterval);
-      setVideoWatchInterval(null);
-    }
-    
-    // Отправляем финальное время просмотра
-    if (videoWatchStartTime && viewingFile?.mime_type?.startsWith('video/')) {
-      const minutesWatched = Math.floor((Date.now() - videoWatchStartTime) / 60000);
-      if (minutesWatched > 0) {
-        sendVideoWatchTime(viewingFile.id, minutesWatched);
-      }
-    }
-    
-    setViewingFile(null);
-    setFileViewerOpen(false);
-    setVideoWatchStartTime(null);
-  };
-  
-  // Функция для отправки времени просмотра видео
-  const sendVideoWatchTime = async (fileId, minutesWatched) => {
-    try {
-      const token = localStorage.getItem('token');
-      await fetch(`${backendUrl}/api/student/video-watch-time`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          file_id: fileId,
-          lesson_id: lesson.id,
-          minutes_watched: minutesWatched
-        })
-      });
-    } catch (error) {
-      console.error('Error tracking video watch time:', error);
-    }
-  };
-  
-  // useEffect для трекинга видео
-  useEffect(() => {
-    if (fileViewerOpen && viewingFile?.mime_type?.startsWith('video/')) {
-      // Начинаем трекинг
-      setVideoWatchStartTime(Date.now());
-      
-      // Отправляем данные каждую минуту
-      const interval = setInterval(() => {
-        sendVideoWatchTime(viewingFile.id, 1);
-      }, 60000); // 60000 мс = 1 минута
-      
-      setVideoWatchInterval(interval);
-      
-      // Очистка при размонтировании
-      return () => {
-        if (interval) {
-          clearInterval(interval);
-        }
-      };
-    }
-  }, [fileViewerOpen, viewingFile]);
+  const handleViewFile = (file) => { setViewingFile(file); setFileViewerOpen(true); };
+  const handleCloseFileViewer = () => { setViewingFile(null); setFileViewerOpen(false); };
 
   // Функция для скачивания файла
   const handleDownloadFile = async (file) => {
     try {
       const token = localStorage.getItem('token');
-      
-      // Отправляем событие скачивания
-      try {
-      await fetch(`${backendUrl}/api/student/file-analytics`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            file_id: file.id,
-            lesson_id: lesson.id,
-            action: 'download'
-          })
-        });
-      } catch (analyticsError) {
-        console.error('Error tracking file download:', analyticsError);
-      }
       
       // Скачиваем файл
       const response = await fetch(`${backendUrl}/api/download-file/${file.id}`, {
@@ -487,8 +288,7 @@ const LessonEditModal = ({
       // Освобождаем память
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error downloading file:', error);
-      alert('Ошибка при скачивании файла');
+      setActionError(error.message || 'Ошибка при скачивании файла');
     }
   };
 
@@ -724,9 +524,11 @@ const LessonEditModal = ({
   const handleQuestionOptionChange = (questionIndex, optionIndex, value) => {
     const newQuestions = [...(editedLesson.quiz?.questions || [])];
     const newOptions = [...(newQuestions[questionIndex].options || [])];
+    const wasCorrect = newQuestions[questionIndex].correct_answer === newOptions[optionIndex];
     newOptions[optionIndex] = value;
     newQuestions[questionIndex] = {
       ...newQuestions[questionIndex],
+      ...(wasCorrect ? { correct_answer: value } : {}),
       options: newOptions
     };
     setEditedLesson(prev => ({
@@ -755,8 +557,10 @@ const LessonEditModal = ({
 
   const removeQuestionOption = (questionIndex, optionIndex) => {
     const newQuestions = [...(editedLesson.quiz?.questions || [])];
+    const removedCorrect = newQuestions[questionIndex].correct_answer === newQuestions[questionIndex].options[optionIndex];
     newQuestions[questionIndex] = {
       ...newQuestions[questionIndex],
+      ...(removedCorrect ? { correct_answer: '' } : {}),
       options: newQuestions[questionIndex].options.filter((_, i) => i !== optionIndex)
     };
     setEditedLesson(prev => ({
@@ -770,8 +574,11 @@ const LessonEditModal = ({
 
   const addQuestion = () => {
     const currentQuestions = editedLesson.quiz?.questions || [];
+    const usedIds = new Set(currentQuestions.map(question => question.id));
+    let nextId = currentQuestions.length + 1;
+    while (usedIds.has(`q${nextId}`)) nextId += 1;
     const newQuestion = {
-      id: `q${currentQuestions.length + 1}`,
+      id: `q${nextId}`,
       question: '',
       type: 'multiple_choice',
       options: ['', '', '', ''],
@@ -1213,13 +1020,15 @@ const LessonEditModal = ({
   };
 
   const handleSave = () => {
-    onSave(editedLesson);
+    if (mutation.current || isSaving || reviewAttempt.current) return;
+    if (!editedLesson.title?.trim()) { setActionError('Укажите название урока.'); return; }
+    setActionError(''); onSave({ ...editedLesson, title: editedLesson.title.trim() });
   };
 
   if (!lesson) return null;
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={open => { if (!open) close(); }}>
       <DialogContent className="max-w-[96vw] w-[96vw] max-h-[96vh] h-[96vh] p-0 overflow-hidden bg-white flex flex-col">
         <DialogHeader className="border-b border-gray-200 px-8 py-6 bg-gradient-to-r from-blue-50 to-indigo-50 flex-shrink-0">
           <DialogTitle className="flex items-center gap-3 text-2xl">
@@ -1231,8 +1040,13 @@ const LessonEditModal = ({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 overflow-hidden flex flex-col px-8">
-          <TabsList className="grid w-full grid-cols-6 bg-gray-100 h-14 mt-4 flex-shrink-0">
+        {(actionError || saveError) && <p role="alert" className="mx-8 mt-3 text-red-700">{actionError || saveError}</p>}
+        {reviewNotice && <p role="status" className="mx-8 mt-3 text-amber-800">{reviewNotice}</p>}
+        {fileErrors[currentSection] && <div role="alert" className="mx-8 mt-3 text-red-700">{fileErrors[currentSection]} <Button variant="outline" disabled={busy} onClick={() => loadFiles(currentSection)}>Повторить загрузку файлов</Button></div>}
+        {loadingFiles && <p role="status" className="mx-8 mt-3">Загрузка файлов…</p>}
+        <fieldset disabled={busy} className="contents">
+        <Tabs value={activeTab} onValueChange={value => { if (!reviewAttempt.current) setActiveTab(value); }} className="flex-1 overflow-hidden flex flex-col px-4 sm:px-8">
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 bg-gray-100 h-auto gap-1 py-1 mt-4 flex-shrink-0">
             <TabsTrigger value="general" className="flex items-center gap-2 text-base">
               <Edit className="w-4 h-4" />
               Основное
@@ -1260,6 +1074,160 @@ const LessonEditModal = ({
           </TabsList>
 
           <div className="flex-1 overflow-y-auto py-6 pr-2" style={{ scrollbarWidth: 'thin' }}>
+            {['theory', 'exercises', 'challenge', 'quiz'].includes(activeTab) && <section aria-label="Файлы раздела" className="mb-6 rounded-lg border border-gray-200 p-4">
+              <h3 className="font-semibold mb-3">Файлы раздела</h3>
+              <div className="flex flex-wrap gap-2">
+                  {/* Загрузка медиафайлов */}
+                  <input
+                    type="file"
+                    id={`upload-${currentSection}-media`}
+                    accept="image/*,video/*"
+                    multiple
+                    onChange={(e) => handleFileUpload(e, currentSection, 'media')}
+                    className="hidden"
+                  />
+                  <Button
+                    onClick={() => document.getElementById(`upload-${currentSection}-media`).click()}
+                    size="sm"
+                    variant="outline"
+                    className="border-purple-600 text-purple-600 hover:bg-purple-50"
+                    disabled={uploadingFile}
+                  >
+                    <Upload className="w-4 h-4 mr-1" />
+                    {uploadingFile ? 'Загрузка...' : 'Медиафайлы'}
+                  </Button>
+
+                  {/* Загрузка документов */}
+                  <input
+                    type="file"
+                    id={`upload-${currentSection}-docs`}
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
+                    multiple
+                    onChange={(e) => handleFileUpload(e, currentSection, 'document')}
+                    className="hidden"
+                  />
+                  <Button
+                    onClick={() => document.getElementById(`upload-${currentSection}-docs`).click()}
+                    size="sm"
+                    variant="outline"
+                    className="border-green-600 text-green-600 hover:bg-green-50"
+                    disabled={uploadingFile}
+                  >
+                    <Upload className="w-4 h-4 mr-1" />
+                    {uploadingFile ? 'Загрузка...' : 'Документы'}
+                  </Button>
+
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Загрузка и удаление файлов применяются сразу.</p>
+              {!loadingFiles && !fileErrors[currentSection] && getCurrentMediaFiles().length === 0 && getCurrentDocumentFiles().length === 0 && <p className="text-sm text-gray-500 mt-3">В этом разделе пока нет файлов.</p>}
+              {/* ЗАГРУЖЕННЫЕ ФАЙЛЫ */}
+              {(getCurrentMediaFiles().length > 0 || getCurrentDocumentFiles().length > 0) && (
+                <div className="mt-6 space-y-4">
+                  {/* Медиафайлы */}
+                  {getCurrentMediaFiles().length > 0 && (
+                    <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                      <h4 className="text-sm font-semibold text-purple-900 mb-3 flex items-center gap-2">
+                        <Upload className="w-4 h-4" />
+                        Медиафайлы ({getCurrentMediaFiles().length})
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {getCurrentMediaFiles().map((file) => (
+                          <div key={file.id} className="bg-white p-3 rounded border border-purple-200 flex justify-between items-center">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">{file.original_name}</p>
+                              <p className="text-xs text-gray-500">
+                                {(file.file_size / 1024 / 1024).toFixed(2)} МБ • {file.extension}
+                              </p>
+                            </div>
+                            <div className="flex gap-1 ml-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleViewFile(file)}
+                                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                title="Просмотр"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDownloadFile(file)}
+                                className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                title="Скачать"
+                              >
+                                <Download className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleFileDelete(file.id, currentSection)}
+                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                title="Удалить"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Документы */}
+                  {getCurrentDocumentFiles().length > 0 && (
+                    <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                      <h4 className="text-sm font-semibold text-green-900 mb-3 flex items-center gap-2">
+                        <FileText className="w-4 h-4" />
+                        Документы ({getCurrentDocumentFiles().length})
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {getCurrentDocumentFiles().map((file) => (
+                          <div key={file.id} className="bg-white p-3 rounded border border-green-200 flex justify-between items-center">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">{file.original_name}</p>
+                              <p className="text-xs text-gray-500">
+                                {(file.file_size / 1024 / 1024).toFixed(2)} МБ • {file.extension}
+                              </p>
+                            </div>
+                            <div className="flex gap-1 ml-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleViewFile(file)}
+                                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                title="Просмотр"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDownloadFile(file)}
+                                className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                                title="Скачать"
+                              >
+                                <Download className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleFileDelete(file.id, currentSection)}
+                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                title="Удалить"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>}
+
             {/* ОСНОВНОЕ */}
             <TabsContent value="general" className="space-y-4 mt-0">
               <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
@@ -1393,46 +1361,6 @@ const LessonEditModal = ({
                     Загрузить из файла
                   </Button>
                   
-                  {/* Загрузка медиафайлов */}
-                  <input
-                    type="file"
-                    id="upload-theory-media"
-                    accept="image/*,video/*"
-                    multiple
-                    onChange={(e) => handleFileUpload(e, currentSection, 'media')}
-                    className="hidden"
-                  />
-                  <Button 
-                    onClick={() => document.getElementById('upload-theory-media').click()} 
-                    size="sm" 
-                    variant="outline"
-                    className="border-purple-600 text-purple-600 hover:bg-purple-50"
-                    disabled={uploadingFile}
-                  >
-                    <Upload className="w-4 h-4 mr-1" />
-                    {uploadingFile ? 'Загрузка...' : 'Медиафайлы'}
-                  </Button>
-                  
-                  {/* Загрузка документов */}
-                  <input
-                    type="file"
-                    id="upload-theory-docs"
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
-                    multiple
-                    onChange={(e) => handleFileUpload(e, currentSection, 'document')}
-                    className="hidden"
-                  />
-                  <Button 
-                    onClick={() => document.getElementById('upload-theory-docs').click()} 
-                    size="sm" 
-                    variant="outline"
-                    className="border-green-600 text-green-600 hover:bg-green-50"
-                    disabled={uploadingFile}
-                  >
-                    <Upload className="w-4 h-4 mr-1" />
-                    {uploadingFile ? 'Загрузка...' : 'Документы'}
-                  </Button>
-                  
                   <Button onClick={addTheoryBlock} size="sm" className="bg-blue-600">
                     <Plus className="w-4 h-4 mr-1" />
                     Добавить блок
@@ -1486,112 +1414,6 @@ const LessonEditModal = ({
                 </div>
               )}
 
-              {/* ЗАГРУЖЕННЫЕ ФАЙЛЫ */}
-              {(getCurrentMediaFiles().length > 0 || getCurrentDocumentFiles().length > 0) && (
-                <div className="mt-6 space-y-4">
-                  {/* Медиафайлы */}
-                  {getCurrentMediaFiles().length > 0 && (
-                    <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
-                      <h4 className="text-sm font-semibold text-purple-900 mb-3 flex items-center gap-2">
-                        <Upload className="w-4 h-4" />
-                        Медиафайлы ({getCurrentMediaFiles().length})
-                      </h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {getCurrentMediaFiles().map((file) => (
-                          <div key={file.id} className="bg-white p-3 rounded border border-purple-200 flex justify-between items-center">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-gray-900 truncate">{file.original_name}</p>
-                              <p className="text-xs text-gray-500">
-                                {(file.file_size / 1024 / 1024).toFixed(2)} МБ • {file.extension}
-                              </p>
-                            </div>
-                            <div className="flex gap-1 ml-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleViewFile(file)}
-                                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                title="Просмотр"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDownloadFile(file)}
-                                className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                                title="Скачать"
-                              >
-                                <Download className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleFileDelete(file.id, currentSection)}
-                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                title="Удалить"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Документы */}
-                  {getCurrentDocumentFiles().length > 0 && (
-                    <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                      <h4 className="text-sm font-semibold text-green-900 mb-3 flex items-center gap-2">
-                        <FileText className="w-4 h-4" />
-                        Документы ({getCurrentDocumentFiles().length})
-                      </h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {getCurrentDocumentFiles().map((file) => (
-                          <div key={file.id} className="bg-white p-3 rounded border border-green-200 flex justify-between items-center">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-gray-900 truncate">{file.original_name}</p>
-                              <p className="text-xs text-gray-500">
-                                {(file.file_size / 1024 / 1024).toFixed(2)} МБ • {file.extension}
-                              </p>
-                            </div>
-                            <div className="flex gap-1 ml-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleViewFile(file)}
-                                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                title="Просмотр"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDownloadFile(file)}
-                                className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                                title="Скачать"
-                              >
-                                <Download className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleFileDelete(file.id, currentSection)}
-                                className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                title="Удалить"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
             </TabsContent>
 
             {/* УПРАЖНЕНИЯ */}
@@ -1931,8 +1753,8 @@ const LessonEditModal = ({
                         <Label className="text-sm mb-1 block font-semibold">Проходной балл (%)</Label>
                         <Input
                           type="number"
-                          value={editedLesson.quiz.passing_score || 70}
-                          onChange={(e) => handleQuizChange('passing_score', parseInt(e.target.value) || 70)}
+                          value={editedLesson.quiz.passing_score ?? 70}
+                          onChange={(e) => handleQuizChange('passing_score', Number(e.target.value))}
                           className="bg-white"
                           min="0"
                           max="100"
@@ -2049,7 +1871,7 @@ const LessonEditModal = ({
                               <SelectValue placeholder="Выберите правильный ответ" />
                             </SelectTrigger>
                             <SelectContent>
-                              {question.options?.map((option, idx) => (
+                              {question.options?.filter(option => typeof option === 'string' && option.trim()).map((option, idx) => (
                                 <SelectItem key={idx} value={option}>
                                   {option || `Вариант ${idx + 1}`}
                                 </SelectItem>
@@ -2096,6 +1918,8 @@ const LessonEditModal = ({
 
             {/* АНАЛИТИКА */}
             <TabsContent value="analytics" className="space-y-4 mt-0">
+              {analyticsError && <div role="alert" className="text-red-700">{analyticsError} <Button variant="outline" onClick={loadAnalytics}>Повторить загрузку аналитики</Button></div>}
+
               {loadingAnalytics ? (
                 <div className="flex justify-center items-center py-12">
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
@@ -2474,12 +2298,13 @@ const LessonEditModal = ({
                               </div>
                             )}
                             
-                            {!response.reviewed && (
+                            {(!response.reviewed || (reviewPending && reviewingResponse === response.id)) && (
                               <div className="mt-3">
                                 {reviewingResponse === response.id ? (
                                   <div className="space-y-3">
                                     <Textarea
                                       value={adminComment}
+                                      disabled={reviewPending || busy}
                                       onChange={(e) => setAdminComment(e.target.value)}
                                       placeholder="Введите комментарий для студента..."
                                       rows={3}
@@ -2494,6 +2319,7 @@ const LessonEditModal = ({
                                         min="0"
                                         max="100"
                                         value={exercisePoints}
+                                        disabled={reviewPending || busy}
                                         onChange={(e) => setExercisePoints(parseInt(e.target.value) || 0)}
                                         className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
                                         placeholder="0"
@@ -2506,12 +2332,14 @@ const LessonEditModal = ({
                                         onClick={() => handleReviewResponse(response.id)}
                                         className="bg-green-600 hover:bg-green-700"
                                       >
-                                        Сохранить комментарий{exercisePoints > 0 ? ` и ${exercisePoints} баллов` : ''}
+                                        {reviewPending ? 'Проверить сохранение' : `Сохранить комментарий${exercisePoints > 0 ? ` и ${exercisePoints} баллов` : ''}`}
                                       </Button>
                                       <Button 
                                         size="sm" 
                                         variant="outline"
+                                        disabled={reviewPending || busy}
                                         onClick={() => {
+                                          if (reviewAttempt.current) return;
                                           setReviewingResponse(null);
                                           setAdminComment('');
                                           setExercisePoints(0);
@@ -2526,7 +2354,9 @@ const LessonEditModal = ({
                                   <Button 
                                     size="sm" 
                                     variant="outline"
+                                    disabled={reviewPending || busy}
                                     onClick={() => {
+                                      if (reviewAttempt.current) return;
                                       setReviewingResponse(response.id);
                                       setReviewStartTime(new Date());
                                     }}
@@ -2674,17 +2504,19 @@ const LessonEditModal = ({
               ) : (
                 <div className="bg-gray-50 p-8 rounded-lg border border-gray-200 text-center">
                   <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-600">Нажмите на вкладку "Аналитика" для загрузки данных</p>
+                  <p className="text-gray-600">Данные аналитики пока не загружены</p>
                 </div>
               )}
             </TabsContent>
           </div>
         </Tabs>
 
+        </fieldset>
         <DialogFooter className="border-t border-gray-200 px-8 py-6 bg-gray-50 flex-shrink-0">
           <Button
             variant="outline"
-            onClick={onClose}
+            onClick={close}
+            disabled={busy || reviewPending}
             className="border-gray-300 hover:bg-gray-100 h-12 px-6 text-base"
           >
             <X className="w-5 h-5 mr-2" />
@@ -2692,7 +2524,7 @@ const LessonEditModal = ({
           </Button>
           <Button
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={busy || reviewPending}
             className="bg-blue-600 hover:bg-blue-700 text-white h-12 px-8 text-base"
           >
             {isSaving ? (
@@ -2712,7 +2544,7 @@ const LessonEditModal = ({
 
       {/* Модальное окно просмотра файлов */}
       {fileViewerOpen && viewingFile && (
-        <Dialog open={fileViewerOpen} onOpenChange={setFileViewerOpen}>
+        <Dialog open={fileViewerOpen} onOpenChange={open => { if (!open) handleCloseFileViewer(); }}>
           <DialogContent className="max-w-4xl w-[90vw] max-h-[90vh] h-[90vh] p-0 overflow-hidden bg-white flex flex-col">
             <DialogHeader className="border-b border-gray-200 px-6 py-4 bg-gradient-to-r from-blue-50 to-indigo-50 flex-shrink-0">
               <DialogTitle className="flex items-center gap-3 text-xl">
@@ -2725,72 +2557,7 @@ const LessonEditModal = ({
             </DialogHeader>
 
             <div className="flex-1 overflow-auto p-6 bg-gray-50">
-              {/* Изображения */}
-              {viewingFile.mime_type?.startsWith('image/') && (
-                <div className="flex items-center justify-center h-full">
-                  <img
-                    src={`${backendUrl}/api/download-file/${viewingFile.id}`}
-                    alt={viewingFile.original_name}
-                    className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
-                  />
-                </div>
-              )}
-
-              {/* Видео */}
-              {viewingFile.mime_type?.startsWith('video/') && (
-                <div className="flex items-center justify-center h-full">
-                  <video
-                    controls
-                    className="max-w-full max-h-full rounded-lg shadow-lg"
-                    src={`${backendUrl}/api/download-file/${viewingFile.id}`}
-                  >
-                    Ваш браузер не поддерживает воспроизведение видео.
-                  </video>
-                </div>
-              )}
-
-              {/* PDF */}
-              {viewingFile.extension === 'pdf' && (
-                <iframe
-                  src={`${backendUrl}/api/download-file/${viewingFile.id}`}
-                  className="w-full h-full rounded-lg shadow-lg"
-                  title={viewingFile.original_name}
-                />
-              )}
-
-              {/* Текстовые файлы */}
-              {viewingFile.mime_type?.startsWith('text/') && (
-                <div className="bg-white p-6 rounded-lg shadow-lg h-full overflow-auto">
-                  <iframe
-                    src={`${backendUrl}/api/download-file/${viewingFile.id}`}
-                    className="w-full h-full border-0"
-                    title={viewingFile.original_name}
-                  />
-                </div>
-              )}
-
-              {/* Документы Word, Excel - предложение скачать */}
-              {(viewingFile.extension === 'doc' || 
-                viewingFile.extension === 'docx' || 
-                viewingFile.extension === 'xls' || 
-                viewingFile.extension === 'xlsx') && (
-                <div className="flex flex-col items-center justify-center h-full gap-4">
-                  <FileText className="w-24 h-24 text-gray-400" />
-                  <p className="text-lg font-semibold text-gray-700">
-                    Просмотр {viewingFile.extension.toUpperCase()} файлов в браузере не поддерживается
-                  </p>
-                  <p className="text-sm text-gray-500 mb-4">
-                    Скачайте файл для просмотра в соответствующем приложении
-                  </p>
-                  <Button
-                    onClick={() => handleDownloadFile(viewingFile)}
-                    className="bg-green-600 hover:bg-green-700 text-white"
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    Скачать файл
-                  </Button>
-                </div>
-              )}
+              <AdminFilePreview key={viewingFile.id} file={viewingFile} />
             </div>
 
             <DialogFooter className="border-t border-gray-200 px-6 py-4 bg-gray-50 flex-shrink-0">
@@ -2809,15 +2576,7 @@ const LessonEditModal = ({
                 <Download className="w-4 h-4 mr-2" />
                 Скачать
               </Button>
-              <Button
-                onClick={() => {
-                  window.open(`${backendUrl}/api/download-file/${viewingFile.id}`, '_blank');
-                }}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                <ExternalLink className="w-4 h-4 mr-2" />
-                Открыть в новой вкладке
-              </Button>
+
             </DialogFooter>
           </DialogContent>
         </Dialog>

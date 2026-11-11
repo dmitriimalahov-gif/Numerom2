@@ -2,45 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Анимация плавного мерцания для кнопки "Обучение" */
-@keyframes pulse-blue {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
-    background-color: rgba(59, 130, 246, 0.1);
-  }
-  50% {
-    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
-    background-color: rgba(59, 130, 246, 0.2);
-  }
-}
-
-/* Анимация плавного мерцания зеленым для кнопки "Личные консультации" */
-@keyframes pulse-green {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
-    background-color: rgba(34, 197, 94, 0.1);
-  }
-  50% {
-    box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
-    background-color: rgba(34, 197, 94, 0.2);
-  }
-}
-
-.animate-pulse-blue {
-  animation: pulse-blue 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-.animate-pulse-green {
-  animation: pulse-green 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
 body {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-        "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans",
-        "Helvetica Neue", sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.6;
 }
 
 code {
@@ -50,26 +17,26 @@ code {
 
 @layer base {
   :root {
-        /* Soft pastel color scheme */
-        --background: 40 25% 97%;
-        --foreground: 20 14% 15%;
-        --card: 40 25% 95%;
-        --card-foreground: 20 14% 15%;
-        --popover: 40 25% 95%;
-        --popover-foreground: 20 14% 15%;
-        --primary: 160 50% 70%; /* Soft sage green */
+        /* NumerOM shared design tokens */
+        --background: 220 33% 97%;
+        --foreground: 214 44% 23%;
+        --card: 0 0% 100%;
+        --card-foreground: 214 44% 23%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 214 44% 23%;
+        --primary: 220 50% 43%; /* NumerOM blue */
         --primary-foreground: 0 0% 100%;
-        --secondary: 200 30% 85%; /* Soft blue-grey */
-        --secondary-foreground: 20 14% 15%;
-        --muted: 40 20% 92%;
-        --muted-foreground: 25 10% 45%;
-        --accent: 300 40% 85%; /* Soft lavender */
-        --accent-foreground: 20 14% 15%;
-        --destructive: 0 65% 75%; /* Soft coral */
+        --secondary: 219 50% 94%; /* Soft blue-grey */
+        --secondary-foreground: 214 44% 23%;
+        --muted: 217 28% 94%;
+        --muted-foreground: 217 17% 42%;
+        --accent: 219 50% 94%; /* Soft lavender */
+        --accent-foreground: 214 44% 23%;
+        --destructive: 0 64% 45%; /* Soft coral */
         --destructive-foreground: 0 0% 100%;
-        --border: 40 20% 88%;
-        --input: 40 20% 90%;
-        --ring: 160 50% 70%;
+        --border: 218 32% 90%;
+        --input: 218 25% 84%;
+        --ring: 220 50% 43%;
         --numerology-1: 15 75% 85%; /* Soft coral */
         --numerology-2: 45 70% 85%; /* Soft peach */
         --numerology-3: 60 65% 85%; /* Soft yellow */
@@ -80,7 +47,7 @@ code {
         --numerology-8: 280 50% 85%; /* Soft magenta */
         --numerology-9: 320 55% 85%; /* Soft pink */
         --chart-1: 15 75% 75%;
-        --chart-2: 160 50% 70%;
+        --chart-2: 220 50% 43%;
         --chart-3: 200 60% 75%;
         --chart-4: 250 45% 75%;
         --chart-5: 300 40% 75%;
@@ -89,25 +56,25 @@ code {
     
   .dark {
         /* Dark mode with muted pastels */
-        --background: 20 14% 8%;
-        --foreground: 40 25% 95%;
-        --card: 20 14% 10%;
-        --card-foreground: 40 25% 95%;
-        --popover: 20 14% 10%;
-        --popover-foreground: 40 25% 95%;
-        --primary: 160 30% 50%;
-        --primary-foreground: 40 25% 95%;
-        --secondary: 20 10% 20%;
-        --secondary-foreground: 40 25% 95%;
-        --muted: 20 10% 15%;
-        --muted-foreground: 25 10% 65%;
-        --accent: 300 20% 25%;
-        --accent-foreground: 40 25% 95%;
+        --background: 215 45% 12%;
+        --foreground: 0 0% 100%;
+        --card: 216 41% 17%;
+        --card-foreground: 0 0% 100%;
+        --popover: 216 41% 17%;
+        --popover-foreground: 0 0% 100%;
+        --primary: 220 50% 43%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 216 29% 27%;
+        --secondary-foreground: 0 0% 100%;
+        --muted: 216 35% 20%;
+        --muted-foreground: 217 26% 72%;
+        --accent: 216 35% 23%;
+        --accent-foreground: 0 0% 100%;
         --destructive: 0 45% 45%;
-        --destructive-foreground: 40 25% 95%;
-        --border: 20 10% 20%;
-        --input: 20 10% 18%;
-        --ring: 160 30% 50%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 216 29% 27%;
+        --input: 216 29% 29%;
+        --ring: 220 65% 67%;
         --numerology-1: 15 45% 35%;
         --numerology-2: 45 40% 35%;
         --numerology-3: 60 35% 35%;
@@ -134,34 +101,16 @@ code {
   }
   body {
     @apply bg-background text-foreground;
-    background: linear-gradient(135deg, hsl(var(--background)) 0%, hsl(40 30% 95%) 100%);
+    background: hsl(var(--background));
     min-height: 100vh;
     }
 }
 
-/* Custom gradient backgrounds for sections */
 .numerology-gradient {
-  background: linear-gradient(135deg,
-    hsl(var(--numerology-5)) 0%,
-    hsl(var(--numerology-6)) 50%,
-    hsl(var(--numerology-7)) 100%);
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
 }
-
-/* Animated placeholder */
-@keyframes shimmer {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
-}
-
-input::placeholder {
-  animation: shimmer 2s ease-in-out infinite;
-}
-
-.payment-gradient {
-  background: linear-gradient(135deg, 
-    hsl(var(--numerology-3)) 0%, 
-    hsl(var(--numerology-4)) 100%);
-}
+.payment-gradient { background: hsl(var(--secondary)); }
 
 /* Numerology number colors */
 .num-1 { background-color: hsl(var(--numerology-1)); }
@@ -173,97 +122,6 @@ input::placeholder {
 .num-7 { background-color: hsl(var(--numerology-7)); }
 .num-8 { background-color: hsl(var(--numerology-8)); }
 .num-9 { background-color: hsl(var(--numerology-9)); }
-
-/* Mobile adaptations for iPhone 16 Pro Max and other devices */
-@media screen and (max-width: 480px) {
-  /* Better text scaling for mobile */
-  body {
-    font-size: 14px;
-    line-height: 1.4;
-  }
-  
-  /* Cards and components spacing */
-  .container {
-    padding: 0 12px;
-  }
-  
-  /* Dashboard quick actions - 2x2 grid on mobile */
-  .mobile-grid-2x2 {
-    grid-template-columns: repeat(2, 1fr) !important;
-    gap: 12px;
-  }
-  
-  /* Navigation improvements for mobile */
-  .mobile-nav-scroll {
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-  
-  .mobile-nav-scroll::-webkit-scrollbar {
-    display: none;
-  }
-  
-  /* Form inputs on mobile */
-  input, select, textarea {
-    font-size: 16px; /* Prevents zoom on iOS */
-    padding: 12px;
-  }
-  
-  /* Touch targets */
-  button, .clickable {
-    min-height: 44px; /* iOS recommended touch target */
-    min-width: 44px;
-  }
-  
-  /* Modal and drawer improvements */
-  .mobile-modal {
-    margin: 0;
-    min-height: 100vh;
-    border-radius: 0;
-  }
-}
-
-/* iPhone 16 Pro Max specific (430x932) */
-@media screen and (max-width: 430px) and (min-height: 850px) {
-  /* Utilize the full height for content */
-  .min-h-screen {
-    min-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-  }
-  
-  /* Safe area padding */
-  .safe-area-padding {
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
-  }
-  
-  /* Header adjustments */
-  header {
-    padding-top: calc(env(safe-area-inset-top) + 12px);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
-  }
-  
-  /* Bottom navigation if needed */
-  .bottom-nav {
-    padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
-  }
-}
-
-/* Landscape mode improvements */
-@media screen and (orientation: landscape) and (max-height: 430px) {
-  /* Compact header in landscape */
-  .landscape-compact {
-    padding: 8px 16px;
-  }
-  
-  /* Single column layout in landscape for better usability */
-  .landscape-single-col {
-    grid-template-columns: 1fr !important;
-  }
-}
 
 /* Enhanced Pythagorean Square mobile styling */
 .pythagorean-mobile {

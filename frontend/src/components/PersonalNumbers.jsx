@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import NarrationPanel from '../features/learning/NarrationPanel';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Alert, AlertDescription } from './ui/alert';
@@ -68,6 +69,9 @@ const PersonalNumbers = ({ fullScreen = false, onBack, theme = 'dark' }) => {
   };
 
   const getNumberFormula = (type, value, birthDate) => {
+    const detail = results?.report?.numbers?.find(item => item.key === type);
+    if (detail) return {title:detail.title, calculation:detail.steps.join(' → ') || 'Недостаточно данных',
+      method:detail.method, explanation:[detail.meaning, detail.interpretation, detail.note].filter(Boolean).join(' ')};
     const date = birthDate || user?.birth_date || '';
     const cleanDate = date.replace(/\D/g, '');
     
@@ -145,6 +149,7 @@ const PersonalNumbers = ({ fullScreen = false, onBack, theme = 'dark' }) => {
         </div>
         
         <div className="p-6 space-y-5">
+          {formula.narrationId&&<NarrationPanel clipId={formula.narrationId}/>}
           <div className={`p-5 rounded-xl ${themeConfig.isDark ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-blue-50'}`}>
             <h4 
               className={`font-semibold mb-3 text-lg ${themeConfig.isDark ? 'text-blue-300' : 'text-blue-800'}`}
@@ -211,6 +216,8 @@ const PersonalNumbers = ({ fullScreen = false, onBack, theme = 'dark' }) => {
 
   // Detailed interpretations for personal numbers
   const getNumberInterpretation = (type, number) => {
+    const detail = results?.report?.numbers?.find(item => item.key === `${type}_number`);
+    if (detail) return [detail.meaning, detail.interpretation, detail.note].filter(Boolean).join('\n\n');
     const interpretations = {
       soul: {
         description: 'Число Души (ЧД) рассчитывается по дню рождения и показывает вашу истинную сущность, внутреннюю природу и то, кем вы являетесь на самом глубоком уровне.',
@@ -417,13 +424,14 @@ ${typeInfo.details[number] || 'Интерпретация не найдена'}`
         style={{ color: planetLabelColor(value) }}
         onClick={() => openDetail(title, getNumberInterpretation(type, value))}
       >
-        {value}
+        {value ?? '—'}
       </div>
       <div className={`text-xs leading-tight mb-2 ${themeConfig.isDark ? 'text-slate-300' : 'text-gray-600'}`}>{shortDescription}</div>
+      {value == null && <p className="text-xs mb-2">Для расчёта укажите имя и фамилию латиницей в профиле.</p>}
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => setShowFormula(getNumberFormula(type + '_number', value, user?.birth_date))}
+        onClick={() => setShowFormula({...getNumberFormula(type + '_number', value, user?.birth_date),narrationId:type})}
         className={`text-xs p-1 h-auto ${themeConfig.isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-800'}`}
       >
         <Calculator className="w-3 h-3 mr-1" />

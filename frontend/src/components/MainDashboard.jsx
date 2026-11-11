@@ -1,325 +1,110 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { ArrowDown, ArrowUpRight, BookOpen, Check, ChevronRight, Compass, Heart, Grid3X3, FileText } from 'lucide-react';
 import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { Calculator, Compass, Heart, Star, Grid3X3, Clock, BarChart3, FileText, Sparkles, Users, TrendingUp, Shield } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import AuthModal from './AuthModal';
+import { Brand } from './NumeromIdentity';
+import NumerologyIllustrations, { Illustration } from './NumerologyIllustrations';
 
-let buildVersion = '1.0.0';
-let buildDate = new Date().toISOString();
-try {
-  const { getBuildVersion, getBuildDate } = require('../utils/buildInfo');
-  buildVersion = getBuildVersion();
-  buildDate = getBuildDate();
-} catch (e) {
-  console.warn('Build info not available');
-}
+const features = [
+  { icon: FileText, tone: 'green', title: 'Полный разбор · 6,66 €', text: 'Расчёты по дате рождения, объяснения, схемы и персональная озвучка в одном отчёте. Отдельная разовая оплата.', action: 'Открыть полный разбор' },
+  { icon: Grid3X3, tone: 'blue', title: 'Ваша карта чисел', text: 'Персональные числа, квадрат Пифагора и нумерология имени в одном пространстве.', action: 'Перейти к расчётам' },
+  { icon: Heart, tone: 'rose', title: 'Лучше понимать друг друга', text: 'Исследуйте совместимость по датам рождения и особенности ваших отношений.', action: 'Изучить совместимость' },
+  { icon: Compass, tone: 'green', title: 'Ритм вашего дня', text: 'Планетарные маршруты, ведические времена и графики энергий для вашей практики.', action: 'Посмотреть инструменты' },
+];
+
+const plans = [
+  { name: 'Стартовый', price: '0,99', credits: '10 кредитов', description: 'Познакомиться с расчётами', items: ['Персональные числа', 'Квадрат Пифагора', 'Отчёты', 'Месяц доступа'] },
+  { name: 'Базовый', price: '9,99', credits: '150 кредитов', description: 'Для регулярной практики', items: ['Все расчёты', 'Графики энергий', 'Совместимость', 'Месяц доступа'], featured: true },
+  { name: 'Профессиональный', price: '66,60', credits: '1 000 кредитов', description: 'Для глубокого изучения', items: ['Все расчёты', 'Групповая совместимость', 'Методические материалы', 'Год доступа'] },
+];
 
 const MainDashboard = () => {
   const { user, loading, isInitialized } = useAuth();
+  const [authMode, setAuthMode] = useState('login');
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [, forceUpdate] = useState({});
+  useEffect(() => { document.documentElement.classList.remove('dark'); }, []);
 
-  // Отладочное логирование и принудительное обновление
-  useEffect(() => {
-    console.log('MainDashboard render:', {
-      user: user ? `${user.email} (ID: ${user.id})` : 'null',
-      loading,
-      isInitialized,
-      hasToken: !!localStorage.getItem('token')
-    });
-    
-    // Принудительное обновление при изменении пользователя
-    if (user) {
-      console.log('MainDashboard: форсируем обновление после логина');
-      forceUpdate({});
-      
-      // Автоматически закрываем модал авторизации если пользователь авторизован
-      if (showAuthModal) {
-        console.log('MainDashboard: закрываем модал авторизации');
-        setShowAuthModal(false);
-      }
-    }
-  }, [user, loading, isInitialized, showAuthModal]);
-
-  // Показываем загрузку только при первой инициализации
+  const openAuth = (mode = 'register') => {
+    setAuthMode(mode);
+    setShowAuthModal(true);
+  };
   if (loading && !isInitialized && !user) {
-    console.log('MainDashboard: показываем загрузку, loading:', loading, 'isInitialized:', isInitialized);
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-sage-50 via-lavender-50 to-numerology-50">
-        <Card className="w-96">
-          <CardContent className="text-center py-8">
-            <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-            <p>Инициализируем систему...</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
+    return <div className="nm-loading" role="status"><Brand /><span>Открываем NumerOM…</span></div>;
   }
-
-  // If user is logged in, redirect to main dashboard
-  if (user) {
-    console.log('MainDashboard: пользователь найден, перенаправляем на /dashboard для:', user.email);
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  console.log('MainDashboard: пользователь не найден, показываем лендинг');
-  console.log('Токен в localStorage:', localStorage.getItem('token') ? 'есть' : 'нет');
-
-  const features = [
-    { icon: <Calculator className="w-6 h-6 text-white" />, title: 'Персональные числа', description: 'Число судьбы, души, управляющее число и их влияние на вашу жизнь', gradient: 'bg-gradient-to-br from-blue-500 to-cyan-500' },
-    { icon: <Compass className="w-6 h-6 text-white" />, title: 'Нумерология', description: 'Квадрат Пифагора + Персональные числа (Объединенный раздел)', gradient: 'bg-gradient-to-br from-teal-500 to-emerald-500' },
-    { icon: <Clock className="w-6 h-6 text-white" />, title: 'Раху кала и мухурты', description: 'Ведическое расписание дня по городу и дате', gradient: 'bg-gradient-to-br from-orange-500 to-red-500' },
-    { icon: <BarChart3 className="w-6 h-6 text-white" />, title: 'Графики энергий', description: 'Планетарные энергии и рекомендации на период', gradient: 'bg-gradient-to-br from-purple-500 to-indigo-600' },
-    { icon: <FileText className="w-6 h-6 text-white" />, title: 'HTML отчёты', description: 'Скачивание брендированных HTML‑отчётов', gradient: 'bg-gradient-to-br from-emerald-500 to-teal-600' },
-    { icon: <Users className="w-6 h-6 text-white" />, title: 'Пополнить баланс', description: 'Выберите пакет кредитов по удобной цене в евро', gradient: 'bg-gradient-to-br from-green-500 to-emerald-600' },
-    { icon: <FileText className="w-6 h-6 text-white" />, title: 'Методические материалы', description: 'PDF‑материалы для обучения (для студентов)', gradient: 'bg-gradient-to-br from-rose-500 to-pink-600' },
-    { icon: <Heart className="w-6 h-6 text-white" />, title: 'Совместимость', description: 'Анализ совместимости на основе дат рождения', gradient: 'bg-gradient-to-br from-yellow-500 to-orange-500' },
-    { icon: <Star className="w-6 h-6 text-white" />, title: 'Тест самопознания', description: '10 вопросов для глубокого понимания вашей личности', gradient: 'bg-gradient-to-br from-violet-500 to-purple-500' }
-  ];
-
-  const pricingPlans = [
-    {
-      name: 'Стартовый',
-      price: '0.99€',
-      credits: '10 кредитов',
-      features: ['Базовые расчеты', 'Квадрат Пифагора', 'Персональные числа', 'HTML отчёты', '+ месяц доступа'],
-      gradient: 'bg-gradient-to-br from-sage-200 to-sage-300',
-      popular: false
-    },
-    {
-      name: 'Базовый',
-      price: '9.99€',
-      credits: '150 кредитов',
-      features: ['Все функции', 'Ведические расчеты', 'Графики энергий', 'HTML отчеты', 'Совместимость', '+ месяц доступа'],
-      gradient: 'bg-gradient-to-br from-lavender-200 to-lavender-300',
-      popular: true
-    },
-    {
-      name: 'Профессиональный',
-      price: '66.6€',
-      credits: '1000 кредитов',
-      features: ['Все функции', 'Приоритетная поддержка', 'Эксклюзивные материалы', 'Групповая совместимость', '+ год доступа'],
-      gradient: 'bg-gradient-to-br from-numerology-1 to-numerology-2',
-      popular: false
-    }
-  ];
+  if (user) return <Navigate to="/dashboard" replace />;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sage-50 via-lavender-50 to-numerology-50">
-      {/* Header */}
-      <header className="bg-white/80 backdrop-blur-sm border-b border-sage-200 sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-full numerology-gradient flex items-center justify-center">
-              <Sparkles className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">NUMEROM</h1>
-              <p className="text-sm text-gray-600">Инструмент самопознания</p>
-            </div>
-          </div>
-          <Button
-            onClick={() => setShowAuthModal(true)}
-            className="numerology-gradient hover:shadow-xl hover:brightness-90 transition-all duration-200"
-          >
-            Войти
-          </Button>
+    <div className="nm-landing">
+      <a className="nm-skip-link" href="#main-content">Перейти к содержимому</a>
+      <header className="nm-site-header">
+        <div className="nm-container nm-header-inner">
+          <a href="#" aria-label="NumerOM — главная"><Brand /></a>
+          <nav className="nm-site-nav" aria-label="Основная навигация">
+            <a href="#possibilities">Возможности</a><a href="#learning">Обучение</a><a href="#plans">Тарифы</a>
+          </nav>
+          <Button variant="outline" onClick={() => openAuth('login')}>Войти в кабинет <ArrowUpRight aria-hidden="true" /></Button>
         </div>
       </header>
-
-      {/* Hero Section */}
-      <section className="py-20 px-4">
-        <div className="container mx-auto text-center max-w-4xl">
-          <div className="mb-8">
-            <Badge className="mb-4 bg-sage-100 text-sage-800 border-sage-200">
-              Пошаговый инструмент самопознания
-            </Badge>
-            <h2 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6 leading-tight">
-              Откройте свой
-              <span className="block numerology-text-gradient">потенциал</span>
-            </h2>
-            <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-              Персонализированные нумерологические расчеты, ведические временные циклы и глубокий анализ личности на основе вашей даты рождения
-            </p>
-          </div>
-          
-          <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-            <Button
-              size="lg"
-              onClick={() => setShowAuthModal(true)}
-              className="numerology-gradient hover:shadow-xl hover:brightness-90 transition-all duration-200 text-lg px-8 py-3"
-            >
-              Начать путешествие
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className="relative border-2 border-[hsl(180,55%,45%)] text-[hsl(180,55%,45%)] hover:bg-[hsl(180,55%,45%)]/10 hover:shadow-lg transition-all text-lg px-8 py-3 font-semibold"
-            >
-              Узнать больше
-            </Button>
-          </div>
-
-          {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-2xl mx-auto">
-            <div className="text-center">
-              <div className="text-3xl font-bold text-gray-900 mb-2">10,000+</div>
-              <div className="text-gray-600">Пользователей</div>
+      <main id="main-content">
+        <section className="nm-container nm-hero">
+          <div className="nm-hero-copy">
+            <span className="nm-topic"><span /> Пространство самопознания</span>
+            <h1>У каждого числа<br />есть своя история.<br />Откройте вашу.</h1>
+            <p>Знакомьтесь с собой через нумерологию. Персональные расчёты, обучение и осознанная практика — в вашем ритме.</p>
+            <div className="nm-hero-actions">
+              <Button size="lg" onClick={() => openAuth()}>Создать свою карту <ArrowUpRight aria-hidden="true" /></Button>
+              <a href="#possibilities" className="nm-text-link">Как это работает <ArrowDown size={16} aria-hidden="true" /></a>
             </div>
-            <div className="text-center">
-              <div className="text-3xl font-bold text-gray-900 mb-2">50,000+</div>
-              <div className="text-gray-600">Расчетов</div>
-            </div>
-            <div className="text-center">
-              <div className="text-3xl font-bold text-gray-900 mb-2">99%</div>
-              <div className="text-gray-600">Точность</div>
-            </div>
+            <div className="nm-hero-note"><Grid3X3 size={16} aria-hidden="true" /><span>Начните с вашей даты рождения</span></div>
           </div>
-        </div>
-      </section>
-
-      {/* Features Section */}
-      <section className="py-20 px-4 bg-white/50">
-        <div className="container mx-auto max-w-6xl">
-          <div className="text-center mb-16">
-            <h3 className="text-4xl font-bold text-gray-900 mb-4">
-              Возможности платформы
-            </h3>
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-              Комплексный анализ личности через древние знания и современные технологии
-            </p>
+          <div className="nm-hero-visual">
+            <div className="nm-hero-matrix"><div className="nm-matrix-label">В основе — ваша уникальность</div><Illustration name="KVADRAT" alt="Квадрат NumerOM: числа от 1 до 9" loading="eager" /><div className="nm-matrix-footer"><span>Дата рождения</span><span>Характер</span><span>Потенциал</span></div></div>
+            <div className="nm-orbit-caption"><span className="nm-small-star" aria-hidden="true">✳</span><div><strong>Разные грани одного «я»</strong><span>Девять чисел. Пространство для открытий.</span></div></div>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((feature, index) => (
-              <Card key={index} className="group hover:shadow-lg transition-all duration-300 border-0 bg-white/80 backdrop-blur-sm">
-                <CardHeader>
-                  <div className={`w-12 h-12 rounded-lg ${feature.gradient} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                    {feature.icon}
-                  </div>
-                  <CardTitle className="text-xl text-gray-900">{feature.title}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CardDescription className="text-gray-600 text-base">
-                    {feature.description}
-                  </CardDescription>
-                </CardContent>
-              </Card>
+        </section>
+        <div className="nm-container nm-intro-line"><span>Знакомьтесь с собой</span><span>Замечайте взаимосвязи</span><span>Учитесь новому</span></div>
+        <section id="possibilities" className="nm-container nm-section">
+          <div className="nm-section-heading"><div><span className="nm-section-label">Возможности NumerOM</span><h2>Больше способов<br />узнать себя</h2></div><p>От первого расчёта до собственной практики.<br />Выберите то, что интересно вам сейчас.</p></div>
+          <div className="nm-feature-grid">
+            {features.map(({ icon: Icon, tone, title, text, action }) => (
+              <article className={`nm-feature nm-tone-${tone}`} key={title}>
+                <span className="nm-feature-icon"><Icon size={25} strokeWidth={1.5} aria-hidden="true" /></span>
+                <h3>{title}</h3><p>{text}</p>
+                <button className="nm-text-link" onClick={() => openAuth()}>{action}<ArrowUpRight size={17} aria-hidden="true" /></button>
+              </article>
             ))}
           </div>
-        </div>
-      </section>
-
-      {/* Pricing Section */}
-      <section className="py-20 px-4 sm:px-6 md:px-8">
-        <div className="container mx-auto max-w-5xl px-0">
-          <div className="text-center mb-16">
-            <h3 className="text-4xl font-bold text-gray-900 mb-4">
-              Выберите свой план
-            </h3>
-            <p className="text-xl text-gray-600">
-              Гибкие тарифы для любых потребностей
-            </p>
+        </section>
+        <section id="learning" className="nm-container nm-learning-section">
+          <div className="nm-learning-art" aria-hidden="true"><Illustration name="SU" alt="" /><span className="nm-art-note">Пример учебной схемы NumerOM</span></div>
+          <div className="nm-learning-copy"><span className="nm-section-label"><BookOpen size={16} aria-hidden="true" /> Обучение и практика</span><h2>Знания, к которым<br />хочется возвращаться</h2><p>Изучайте нумерологию последовательно: теория, примеры, задания и тесты. Сохраняйте материалы и возвращайтесь к ним в удобное время.</p><Button onClick={() => openAuth()}>Открыть обучение <ChevronRight aria-hidden="true" /></Button></div>
+        </section>
+        <div className="nm-container nm-section"><NumerologyIllustrations embedded /></div>
+        <section className="nm-container nm-section nm-start-section" aria-labelledby="start-title">
+          <div><span className="nm-section-label">Просто начать</span><h2 id="start-title">Ваш первый шаг<br />к новым открытиям</h2></div>
+          <ol className="nm-steps">
+            <li><span>1</span><div><h3>Создайте профиль</h3><p>Укажите имя и дату рождения для персональных расчётов.</p></div></li>
+            <li><span>2</span><div><h3>Исследуйте свою карту</h3><p>Познакомьтесь с числами и их нумерологическими трактовками.</p></div></li>
+            <li><span>3</span><div><h3>Продолжайте в своём темпе</h3><p>Выбирайте уроки, инструменты и консультации по вашим интересам.</p></div></li>
+          </ol>
+        </section>
+        <section id="plans" className="nm-plans-section">
+          <div className="nm-container nm-section">
+            <div className="nm-section-heading"><div><span className="nm-section-label">Доступ к платформе</span><h2>Выберите свой ритм</h2></div><p>Кредиты используются для расчётов.<br />Баланс и история всегда доступны в кабинете.</p></div>
+            <div className="nm-plans-grid">{plans.map(plan => <article key={plan.name} className={`nm-plan ${plan.featured ? 'nm-plan-featured' : ''}`}>
+              <div className="nm-plan-title"><h3>{plan.name}</h3>{plan.featured && <span>Для практики</span>}</div><p>{plan.description}</p>
+              <div className="nm-price">{plan.price}<span>€</span></div><span className="nm-credits-label">{plan.credits}</span>
+              <ul>{plan.items.map(item => <li key={item}><Check size={16} aria-hidden="true" />{item}</li>)}</ul>
+              <Button variant={plan.featured ? 'default' : 'outline'} onClick={() => openAuth()} className="w-full">Начать с этого пакета</Button>
+            </article>)}</div>
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 md:gap-8">
-            {pricingPlans.map((plan, index) => (
-              <Card key={index} className={`relative w-full mt-6 flex flex-col ${plan.popular ? 'shadow-xl border-2 border-lavender-400' : ''} hover:shadow-lg transition-all duration-300 border-0 bg-white/80 backdrop-blur-sm`}>
-                {plan.popular && (
-                  <Badge className="absolute -top-4 left-1/2 transform -translate-x-1/2 text-white font-bold px-4 py-1.5 shadow-xl text-sm z-10" style={{ backgroundColor: 'hsl(180, 55%, 45%)' }}>
-                    Популярный
-                  </Badge>
-                )}
-                <CardHeader className="text-center p-4 sm:p-6">
-                  <div className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full ${plan.gradient} flex items-center justify-center mx-auto mb-3 sm:mb-4`}>
-                    <Shield className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
-                  </div>
-                  <CardTitle className="text-lg sm:text-xl md:text-2xl text-gray-900">{plan.name}</CardTitle>
-                  <div className="text-2xl sm:text-3xl font-bold text-gray-900 mt-2">{plan.price}</div>
-                  <CardDescription className="text-base sm:text-lg text-gray-600">{plan.credits}</CardDescription>
-                </CardHeader>
-                <CardContent className="p-4 sm:p-6 flex flex-col flex-1">
-                  <ul className="space-y-2 sm:space-y-3 mb-4 sm:mb-6 flex-1">
-                    {plan.features.map((feature, featureIndex) => (
-                      <li key={featureIndex} className="flex items-start text-gray-600 text-sm sm:text-base">
-                        <div className="w-2 h-2 rounded-full bg-sage-400 mr-3 mt-2 flex-shrink-0"></div>
-                        <span className="leading-relaxed">{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <Button
-                    className="w-full numerology-gradient hover:shadow-xl hover:brightness-90 transition-all duration-200 text-sm sm:text-base py-2 sm:py-3 mt-auto"
-                    onClick={() => setShowAuthModal(true)}
-                  >
-                    Выбрать план
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="py-20 px-4 bg-gradient-to-r from-sage-100 to-lavender-100">
-        <div className="container mx-auto text-center max-w-3xl">
-          <h3 className="text-4xl font-bold text-gray-900 mb-6">
-            Готовы начать свое путешествие к самопознанию?
-          </h3>
-          <p className="text-xl text-gray-600 mb-8">
-            Присоединяйтесь к тысячам людей, которые уже открыли свой потенциал с помощью NUMEROM
-          </p>
-          <Button
-            size="lg"
-            onClick={() => setShowAuthModal(true)}
-            className="numerology-gradient hover:shadow-xl hover:brightness-90 transition-all duration-200 text-lg px-12 py-4"
-          >
-            Начать сейчас
-          </Button>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="bg-gray-900 text-white py-12 px-4 border-t border-gray-800">
-        <div className="container mx-auto text-center">
-          <div className="flex items-center justify-center space-x-3 mb-6">
-            <div className="w-8 h-8 rounded-full numerology-gradient flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-xl font-bold">NUMEROM</span>
-          </div>
-          <p className="text-gray-400 mb-4">
-            Инструмент самопознания на основе древних знаний
-          </p>
-          <div className="space-y-2">
-            <div className="text-xs text-gray-500 font-mono">
-              📦 Build: <span className="text-purple-400 font-semibold">{buildVersion}</span>
-              {' · '}
-              🕐 {new Date(buildDate).toLocaleString('ru-RU', { 
-                day: '2-digit', 
-                month: '2-digit', 
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-              })}
-            </div>
-            <div className="text-sm text-gray-500">
-              © 2025 NUMEROM. Все права защищены.
-            </div>
-          </div>
-        </div>
-      </footer>
-
-      {/* Auth Modal */}
-      <AuthModal 
-        isOpen={showAuthModal} 
-        onClose={() => setShowAuthModal(false)} 
-      />
+        </section>
+      </main>
+      <footer className="nm-container nm-footer"><Brand /><p>Нумерология для самопознания и личной практики.</p><span>© {new Date().getFullYear()} NumerOM</span></footer>
+      <AuthModal initialMode={authMode} isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
     </div>
   );
 };
-
 export default MainDashboard;

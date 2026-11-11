@@ -737,6 +737,13 @@ const PlanetaryDailyRouteNew = () => {
             </TabsTrigger>
           </TabsList>
 
+          {/* Число мудрости, с которым посчитан открытый маршрут: судьба + полное число имени из профиля */}
+          {({ day: routeData, week: weeklyData, month: monthlyData, quarter: quarterlyData })[activeTab]?.wisdom_note && (
+            <p className={`mt-4 text-sm ${themeConfig.mutedText}`}>
+              {({ day: routeData, week: weeklyData, month: monthlyData, quarter: quarterlyData })[activeTab].wisdom_note}
+            </p>
+          )}
+
           {/* Контент для дня */}
           <TabsContent value="day" className="mt-6 space-y-6">
             {/* Селектор даты и кнопка загрузки */}

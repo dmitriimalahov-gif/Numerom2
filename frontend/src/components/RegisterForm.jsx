@@ -65,13 +65,13 @@ const RegisterForm = ({ onSwitchToLogin, onClose }) => {
   };
 
   return (
-    <Card className="w-full max-w-md mx-auto">
+    <Card className="nm-auth-card">
       <CardHeader className="text-center">
-        <CardTitle className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-          Присоединяйтесь к NUMEROM
+        <CardTitle className="nm-auth-title">
+          Ваше пространство NumerOM
         </CardTitle>
         <CardDescription>
-          Создайте аккаунт для персонального самопознания через числа
+          Создайте профиль для персональных расчётов и обучения.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -87,6 +87,7 @@ const RegisterForm = ({ onSwitchToLogin, onClose }) => {
             <Input
               id="full_name"
               name="full_name"
+              autoComplete="name"
               type="text"
               value={formData.full_name}
               onChange={handleChange}
@@ -101,6 +102,7 @@ const RegisterForm = ({ onSwitchToLogin, onClose }) => {
               id="email"
               name="email"
               type="email"
+              autoComplete="email"
               value={formData.email}
               onChange={handleChange}
               required
@@ -129,10 +131,11 @@ const RegisterForm = ({ onSwitchToLogin, onClose }) => {
             <Input
               id="phone_number"
               name="phone_number"
-              type="text"
+              autoComplete="tel"
+              type="tel"
               value={formData.phone_number}
               onChange={handleChange}
-              placeholder="+37369183398"
+              placeholder="+373 …"
             />
             <p className="text-sm text-muted-foreground">
               Формат: +код_страны номер (для нумерологических расчётов)
@@ -145,6 +148,7 @@ const RegisterForm = ({ onSwitchToLogin, onClose }) => {
               id="password"
               name="password"
               type="password"
+              autoComplete="new-password"
               value={formData.password}
               onChange={handleChange}
               required
@@ -158,6 +162,7 @@ const RegisterForm = ({ onSwitchToLogin, onClose }) => {
               id="confirmPassword"
               name="confirmPassword"
               type="password"
+              autoComplete="new-password"
               value={formData.confirmPassword}
               onChange={handleChange}
               required

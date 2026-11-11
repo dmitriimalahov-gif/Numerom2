@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -13,12 +13,33 @@ import { Brain, Upload, FileText, BookOpen, Users, Settings, Edit, Save, X, Plus
 import { useAuth } from './AuthContext';
 import { getBackendUrl } from '../utils/backendUrl';
 import LessonEditModal from './LessonEditModal';
+import { api } from '../services/api';
+import { readAdminResponse } from '../features/admin/requestHelpers';
 
-const AdminPanelV2 = () => {
+
+function reviewRequestId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  if (!window.crypto?.getRandomValues) throw new Error('Откройте кабинет по защищённой ссылке HTTPS.');
+  const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+  return Array.from(bytes, (byte, i) => `${[4, 6, 8, 10].includes(i) ? '-' : ''}${byte.toString(16).padStart(2, '0')}`).join('');
+}
+
+const lessonTemplate = `УРОК 1. ЧИСЛО 1
+───────────────────────────────────────────────
+ВВЕДЕНИЕ
+Краткое описание занятия.
+───────────────────────────────────────────────
+КЛЮЧЕВЫЕ КОНЦЕПЦИИ
+Текст первого блока теории.
+`;
+
+const AdminPanelV2Content = ({ embedded = false }) => {
   const { user, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('lessons-v2');
   const [lessonsV2, setLessonsV2] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [lessonsError, setLessonsError] = useState('');
   const [uploadingFile, setUploadingFile] = useState(false);
   const [editingLesson, setEditingLesson] = useState(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -35,6 +56,12 @@ const AdminPanelV2 = () => {
   const [reviewNotes, setReviewNotes] = useState({});
   const [reviewPoints, setReviewPoints] = useState({}); // Баллы за проверку
   const [reviewSavingState, setReviewSavingState] = useState({});
+  const writes = useRef(new Set());
+  const reviewAttempts = useRef(new Map());
+  const [reviewRetryState, setReviewRetryState] = useState({});
+  const [actionFeedback, setActionFeedback] = useState(null);
+  const [saveError, setSaveError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
 
   // Используем основной backend
   const backendUrl = getBackendUrl();
@@ -77,8 +104,11 @@ const AdminPanelV2 = () => {
 
       const data = await response.json();
       setDashboardStats(data);
-      setPendingReviews(data.pending_reviews_details || []);
-      setReviewNotes({});
+      setPendingReviews(previous => {
+        const remote = data.pending_reviews_details || [];
+        return [...remote, ...previous.filter(item => reviewAttempts.current.has(item.response_id) && !remote.some(row => row.response_id === item.response_id))];
+      });
+      setReviewNotes(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => reviewAttempts.current.has(id))));
     } catch (error) {
       console.error('Error loading dashboard overview:', error);
       setDashboardError('Не удалось загрузить дашборд. Попробуйте обновить страницу.');
@@ -95,56 +125,49 @@ const AdminPanelV2 = () => {
   };
 
   const submitReviewResponse = async (responseId) => {
-    const comment = (reviewNotes[responseId] || '').trim();
-    if (!comment) {
-      alert('Введите комментарий перед отправкой ответа студенту.');
-      return;
-    }
-
-    const points = parseInt(reviewPoints[responseId] || '0', 10) || 0;
-
+    if (writes.current.has(responseId)) return;
+    let attempt = reviewAttempts.current.get(responseId);
+    const comment = attempt?.body.admin_comment ?? (reviewNotes[responseId] || '').trim();
+    const points = attempt?.body.points_earned ?? Number(reviewPoints[responseId] ?? 0);
+    if (!comment) { setActionFeedback({ error: true, message: 'Введите комментарий перед отправкой ответа студенту.' }); return; }
+    if (!Number.isInteger(points) || points < 0 || points > 100) { setActionFeedback({ error: true, message: 'Укажите целое число баллов от 0 до 100.' }); return; }
+    writes.current.add(responseId); setActionFeedback(null);
+    let status = 0;
     try {
+      if (!attempt) {
+        attempt = { token: localStorage.getItem('token'), body: { request_id: reviewRequestId(), admin_comment: comment, points_earned: points } };
+        reviewAttempts.current.set(responseId, attempt);
+      }
+      if (attempt.token !== localStorage.getItem('token')) { status = 401; throw new Error('Аккаунт изменился. Обновите список ответов.'); }
+      setReviewRetryState(previous => ({ ...previous, [responseId]: true }));
       setReviewSavingState(prev => ({ ...prev, [responseId]: true }));
       const response = await fetch(`${backendUrl}/api/admin/review-response/${responseId}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ 
-          admin_comment: comment,
-          points_earned: points
-        })
+        method: 'POST', headers: { Authorization: `Bearer ${attempt.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(attempt.body),
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      status = response.status;
+      const data = await readAdminResponse(response);
+      if (typeof data?.award_pending !== 'boolean') throw new Error('Не удалось подтвердить результат проверки.');
+      if (data.award_pending) {
+        setActionFeedback({ error: false, message: 'Проверка сохранена, начисление ожидает подтверждения. Нажмите «Проверить сохранение»; параметры отправки сохранены.' });
+        return;
       }
-
+      reviewAttempts.current.delete(responseId);
+      setReviewRetryState(previous => ({ ...previous, [responseId]: false }));
       setPendingReviews(prev => prev.filter(item => item.response_id !== responseId));
-      setReviewNotes(prev => {
-        const updated = { ...prev };
-        delete updated[responseId];
-        return updated;
-      });
-      setReviewPoints(prev => {
-        const updated = { ...prev };
-        delete updated[responseId];
-        return updated;
-      });
+      setReviewNotes(prev => { const updated = { ...prev }; delete updated[responseId]; return updated; });
+      setReviewPoints(prev => { const updated = { ...prev }; delete updated[responseId]; return updated; });
       setDashboardStats(prev => prev ? {
-        ...prev,
-        pending_reviews: Math.max((prev.pending_reviews || 1) - 1, 0),
-        pending_reviews_details: prev.pending_reviews_details
-          ? prev.pending_reviews_details.filter(item => item.response_id !== responseId)
-          : prev.pending_reviews_details
+        ...prev, pending_reviews: Math.max((prev.pending_reviews || 1) - 1, 0),
+        pending_reviews_details: prev.pending_reviews_details ? prev.pending_reviews_details.filter(item => item.response_id !== responseId) : prev.pending_reviews_details,
       } : prev);
-
-      alert('Комментарий отправлен. Ответ помечен как проверенный.');
+      setActionFeedback({ error: false, message: 'Комментарий сохранён. Ответ проверен.' });
     } catch (error) {
-      console.error('Error reviewing response:', error);
-      alert('Не удалось отправить комментарий. Попробуйте ещё раз.');
+      const rejected = [400, 401, 403, 404, 409, 422].includes(status);
+      if (rejected) { reviewAttempts.current.delete(responseId); setReviewRetryState(previous => ({ ...previous, [responseId]: false })); }
+      setActionFeedback({ error: true, message: rejected || !attempt ? error.message : `${error.message} Результат отправки пока не подтверждён. Повторите проверку сохранения с прежними параметрами.` });
     } finally {
+      writes.current.delete(responseId);
       setReviewSavingState(prev => ({ ...prev, [responseId]: false }));
     }
   };
@@ -152,6 +175,7 @@ const AdminPanelV2 = () => {
   const loadLessonsV2 = async () => {
     try {
       setLoading(true);
+      setLessonsError('');
       const response = await fetch(`${backendUrl}/api/admin/lessons-v2`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -170,7 +194,7 @@ const AdminPanelV2 = () => {
       await loadFilesStats(data.lessons);
     } catch (error) {
       console.error('Error loading lessons V2:', error);
-      alert('Ошибка загрузки уроков V2');
+      setLessonsError('Не удалось загрузить уроки. Повторите загрузку.');
     } finally {
       setLoading(false);
     }
@@ -194,8 +218,8 @@ const AdminPanelV2 = () => {
               }
             );
             
-            if (response.ok) {
-              const data = await response.json();
+            {
+              const data = await readAdminResponse(response);
               const mediaCount = data.files.filter(f => f.file_type === 'media').length;
               const docCount = data.files.filter(f => f.file_type === 'document').length;
               
@@ -207,7 +231,7 @@ const AdminPanelV2 = () => {
             }
           } catch (error) {
             console.error(`Error loading files for lesson ${lesson.id}:`, error);
-            stats[lesson.id] = { media: 0, documents: 0, total: 0 };
+            stats[lesson.id] = { media: null, documents: null, total: null };
           }
         })
       );
@@ -219,45 +243,29 @@ const AdminPanelV2 = () => {
   };
 
   const uploadLessonFile = async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-
+    const input = event.target;
+    const file = input.files[0];
+    if (!file || writes.current.has('upload')) return;
+    writes.current.add('upload'); setUploadingFile(true); setActionFeedback(null);
+    const body = new FormData(); body.append('file', file);
     try {
-      setUploadingFile(true);
-      const response = await fetch(`${backendUrl}/api/admin/lessons-v2/upload-from-file`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: formData
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      alert(`Урок успешно загружен!\n${result.sections.theory_blocks} блоков теории\n${result.sections.exercises} упражнений`);
-      loadLessonsV2(); // Перезагрузить список
-    } catch (error) {
-      console.error('Error uploading lesson:', error);
-      alert('Ошибка загрузки урока: ' + error.message);
-    } finally {
-      setUploadingFile(false);
-      // Очистить input
-      event.target.value = '';
-    }
+      await readAdminResponse(await fetch(`${backendUrl}/api/admin/lessons-v2/upload-from-file`, {
+        method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, body,
+      }));
+      setActionFeedback({ error: false, message: 'Урок загружен. Его содержание доступно в редакторе.' });
+      await loadLessonsV2();
+    } catch (error) { setActionFeedback({ error: true, message: error.message }); }
+    finally { writes.current.delete('upload'); setUploadingFile(false); input.value = ''; }
   };
 
   const openEditDialog = (lesson) => {
+    setSaveError('');
     setEditingLesson({ ...lesson }); // Создаем копию объекта
     setEditDialogOpen(true);
   };
 
   const closeEditDialog = () => {
+    if (writes.current.has('save')) return;
     setEditingLesson(null);
     setEditDialogOpen(false);
   };
@@ -270,72 +278,39 @@ const AdminPanelV2 = () => {
   };
 
   const saveLessonChanges = async (lessonData) => {
-    if (!lessonData) return;
-
+    if (!lessonData || writes.current.has('save')) return;
+    writes.current.add('save'); setSavingLesson(true); setSaveError('');
     try {
-      setSavingLesson(true);
-      const response = await fetch(`${backendUrl}/api/admin/lessons-v2/${lessonData.id}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(lessonData)
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      alert('Урок успешно обновлен!');
-      loadLessonsV2(); // Перезагрузить список
-      closeEditDialog();
-    } catch (error) {
-      console.error('Error updating lesson:', error);
-      alert('Ошибка обновления урока: ' + error.message);
-    } finally {
-      setSavingLesson(false);
-    }
+      await api.request(`/admin/lessons-v2/${lessonData.id}`, { method: 'PUT', body: lessonData });
+      setEditDialogOpen(false); setEditingLesson(null);
+      setActionFeedback({ error: false, message: 'Изменения урока сохранены.' });
+      await loadLessonsV2();
+    } catch (error) { setSaveError(error.message); }
+    finally { writes.current.delete('save'); setSavingLesson(false); }
   };
 
   const openDeleteDialog = (lesson) => {
+    setDeleteError('');
     setLessonToDelete(lesson);
     setDeleteDialogOpen(true);
   };
 
   const closeDeleteDialog = () => {
+    if (writes.current.has('delete')) return;
     setLessonToDelete(null);
     setDeleteDialogOpen(false);
   };
 
   const confirmDeleteLesson = async () => {
-    if (!lessonToDelete) return;
-
+    if (!lessonToDelete || writes.current.has('delete')) return;
+    writes.current.add('delete'); setDeletingLesson(true); setDeleteError('');
     try {
-      setDeletingLesson(true);
-      const response = await fetch(`${backendUrl}/api/admin/lessons-v2/${lessonToDelete.id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      alert('Урок и все связанные данные успешно удалены!');
-      loadLessonsV2(); // Перезагрузить список
-      closeDeleteDialog();
-    } catch (error) {
-      console.error('Error deleting lesson:', error);
-      alert('Ошибка удаления урока: ' + error.message);
-    } finally {
-      setDeletingLesson(false);
-    }
+      await api.request(`/admin/lessons-v2/${lessonToDelete.id}`, { method: 'DELETE' });
+      setDeleteDialogOpen(false); setLessonToDelete(null);
+      setActionFeedback({ error: false, message: 'Урок удалён.' });
+      await loadLessonsV2();
+    } catch (error) { setDeleteError(error.message); }
+    finally { writes.current.delete('delete'); setDeletingLesson(false); }
   };
 
   if (authLoading) {
@@ -395,6 +370,7 @@ const AdminPanelV2 = () => {
           ) : dashboardError ? (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 text-sm">
               {dashboardError}
+              <Button variant="outline" className="ml-3" onClick={loadDashboardOverview}>Повторить</Button>
             </div>
           ) : dashboardStats ? (
             <>
@@ -408,7 +384,7 @@ const AdminPanelV2 = () => {
                       Студенты
                     </Badge>
                   </div>
-                  <p className="text-3xl font-bold text-blue-700">{dashboardStats.total_students || 0}</p>
+                  <p className="text-3xl font-bold text-blue-700">{dashboardStats.total_students ?? '—'}</p>
                   <p className="text-sm text-blue-900 mt-1">Всего студентов в системе</p>
                 </div>
 
@@ -421,7 +397,7 @@ const AdminPanelV2 = () => {
                       Уроки
                     </Badge>
                   </div>
-                  <p className="text-3xl font-bold text-emerald-700">{dashboardStats.total_lessons || 0}</p>
+                  <p className="text-3xl font-bold text-emerald-700">{dashboardStats.total_lessons ?? '—'}</p>
                   <p className="text-sm text-emerald-900 mt-1">
                     Активных уроков в системе
                   </p>
@@ -436,7 +412,7 @@ const AdminPanelV2 = () => {
                       Баллы
                     </Badge>
                   </div>
-                  <p className="text-3xl font-bold text-yellow-600">{dashboardStats.points?.total || 0}</p>
+                  <p className="text-3xl font-bold text-yellow-600">{dashboardStats.points?.total ?? '—'}</p>
                   <p className="text-sm text-yellow-700 mt-1">
                     Баллов начислено студентам
                   </p>
@@ -451,7 +427,7 @@ const AdminPanelV2 = () => {
                       Проверить
                     </Badge>
                   </div>
-                  <p className="text-3xl font-bold text-rose-600">{dashboardStats.pending_reviews || 0}</p>
+                  <p className="text-3xl font-bold text-rose-600">{dashboardStats.pending_reviews ?? '—'}</p>
                   <p className="text-sm text-rose-700 mt-1">
                     Непроверенных домашних заданий
                   </p>
@@ -470,19 +446,19 @@ const AdminPanelV2 = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                       <div className="bg-purple-50 rounded-lg p-4 border border-purple-100">
                         <p className="text-xs uppercase tracking-wide text-purple-600 mb-1">Челленджи</p>
-                        <p className="text-2xl font-bold text-purple-700">{dashboardStats.points?.challenges || 0}</p>
+                        <p className="text-2xl font-bold text-purple-700">{dashboardStats.points?.challenges ?? '—'}</p>
                       </div>
                       <div className="bg-green-50 rounded-lg p-4 border border-green-100">
                         <p className="text-xs uppercase tracking-wide text-green-600 mb-1">Тесты</p>
-                        <p className="text-2xl font-bold text-green-700">{dashboardStats.points?.quizzes || 0}</p>
+                        <p className="text-2xl font-bold text-green-700">{dashboardStats.points?.quizzes ?? '—'}</p>
                       </div>
                       <div className="bg-sky-50 rounded-lg p-4 border border-sky-100">
                         <p className="text-xs uppercase tracking-wide text-sky-600 mb-1">Время</p>
-                        <p className="text-2xl font-bold text-sky-700">{dashboardStats.points?.time || 0}</p>
+                        <p className="text-2xl font-bold text-sky-700">{dashboardStats.points?.time ?? '—'}</p>
                       </div>
                       <div className="bg-orange-50 rounded-lg p-4 border border-orange-100">
                         <p className="text-xs uppercase tracking-wide text-orange-600 mb-1">Видео</p>
-                        <p className="text-2xl font-bold text-orange-700">{dashboardStats.points?.videos || 0}</p>
+                        <p className="text-2xl font-bold text-orange-700">{dashboardStats.points?.videos ?? '—'}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -498,11 +474,11 @@ const AdminPanelV2 = () => {
                   <CardContent className="space-y-4">
                     <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
                       <p className="text-xs uppercase tracking-wide text-blue-600 mb-1">Активность за 7 дней</p>
-                      <p className="text-2xl font-bold text-blue-700">{dashboardStats.recent_activity_7days || 0}</p>
+                      <p className="text-2xl font-bold text-blue-700">{dashboardStats.recent_activity_7days ?? '—'}</p>
                     </div>
                     <div className="bg-indigo-50 rounded-lg p-4 border border-indigo-100">
                       <p className="text-xs uppercase tracking-wide text-indigo-600 mb-1">Активные студенты</p>
-                      <p className="text-2xl font-bold text-indigo-700">{dashboardStats.active_students || 0}</p>
+                      <p className="text-2xl font-bold text-indigo-700">{dashboardStats.active_students ?? '—'}</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -583,6 +559,7 @@ const AdminPanelV2 = () => {
                           <Textarea
                             rows={3}
                             value={reviewNotes[item.response_id] ?? ''}
+                            disabled={reviewSavingState[item.response_id] || reviewRetryState[item.response_id]}
                             onChange={(e) => handleReviewNoteChange(item.response_id, e.target.value)}
                             placeholder="Введите комментарий для студента..."
                             className="mt-3 bg-white border border-rose-200 focus:border-rose-400 focus:ring-rose-400 text-sm"
@@ -597,6 +574,7 @@ const AdminPanelV2 = () => {
                               min="0"
                               max="100"
                               value={reviewPoints[item.response_id] ?? '0'}
+                              disabled={reviewSavingState[item.response_id] || reviewRetryState[item.response_id]}
                               onChange={(e) => setReviewPoints(prev => ({
                                 ...prev,
                                 [item.response_id]: e.target.value
@@ -618,7 +596,7 @@ const AdminPanelV2 = () => {
                                 }));
                               }}
                               className="border-rose-200 text-rose-600 hover:bg-rose-100"
-                              disabled={reviewSavingState[item.response_id]}
+                              disabled={reviewSavingState[item.response_id] || reviewRetryState[item.response_id]}
                             >
                               Очистить
                             </Button>
@@ -628,7 +606,7 @@ const AdminPanelV2 = () => {
                               disabled={reviewSavingState[item.response_id]}
                               className="bg-rose-600 hover:bg-rose-700 text-white"
                             >
-                              {reviewSavingState[item.response_id] ? 'Отправка...' : 'Отправить ответ'}
+                              {reviewSavingState[item.response_id] ? 'Отправка...' : reviewRetryState[item.response_id] ? 'Проверить сохранение' : 'Отправить ответ'}
                             </Button>
                           </div>
                         </div>
@@ -649,10 +627,10 @@ const AdminPanelV2 = () => {
         <CardHeader>
           <CardTitle className="flex items-center">
             <Brain className="w-5 h-5 mr-2 text-blue-600" />
-            Система обучения V2 - Админ панель
+            Добавить учебный материал
           </CardTitle>
           <CardDescription>
-            Управление новой системой обучения с 5 разделами
+            Импорт занятия с теорией, упражнениями и тестами
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -670,8 +648,9 @@ const AdminPanelV2 = () => {
                 className="cursor-pointer"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Поддерживаются файлы в формате TXT с разметкой разделов
+                Поддерживаются файлы TXT в UTF-8. После импорта откройте редактор и проверьте содержание.
               </p>
+              <a className="inline-block mt-2 text-sm text-blue-700 underline" href={`data:text/plain;charset=utf-8,${encodeURIComponent(lessonTemplate)}`} download="numerom-lesson-example.txt">Скачать пример TXT</a>
             </div>
 
             {uploadingFile && (
@@ -687,7 +666,7 @@ const AdminPanelV2 = () => {
       {/* Список уроков V2 */}
       <Card>
         <CardHeader>
-          <CardTitle>Уроки V2 ({lessonsV2.length})</CardTitle>
+          <CardTitle>Уроки и материалы{!loading && !lessonsError ? ` (${lessonsV2.length})` : ''}</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -695,10 +674,12 @@ const AdminPanelV2 = () => {
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
               <p className="text-gray-600">Загрузка уроков...</p>
             </div>
+          ) : lessonsError ? (
+            <Alert role="alert"><AlertDescription>{lessonsError} <Button variant="outline" onClick={loadLessonsV2}>Повторить</Button></AlertDescription></Alert>
           ) : lessonsV2.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p className="text-lg">Нет уроков V2</p>
+              <p className="text-lg">Уроков пока нет</p>
               <p className="text-sm">Загрузите первый урок из текстового файла</p>
             </div>
           ) : (
@@ -720,13 +701,13 @@ const AdminPanelV2 = () => {
                       {filesStats[lesson.id] && (
                         <div className="flex flex-wrap gap-2 mt-2">
                           <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-300">
-                            🎬 Медиа: {filesStats[lesson.id].media || 0}
+                            🎬 Медиа: {filesStats[lesson.id].media ?? '—'}
                           </Badge>
                           <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">
-                            📄 Документы: {filesStats[lesson.id].documents || 0}
+                            📄 Документы: {filesStats[lesson.id].documents ?? '—'}
                           </Badge>
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">
-                            📁 Всего: {filesStats[lesson.id].total || 0}
+                            📁 Всего: {filesStats[lesson.id].total ?? '—'}
                           </Badge>
                         </div>
                       )}
@@ -786,7 +767,7 @@ const AdminPanelV2 = () => {
                     <div className="bg-indigo-50 rounded-lg p-3">
                       <Settings className="w-6 h-6 mx-auto mb-1 text-indigo-600" />
                       <div className="text-lg font-semibold">
-                        {filesStats[lesson.id]?.total || 0}
+                        {filesStats[lesson.id]?.total ?? '—'}
                       </div>
                       <div className="text-xs text-gray-600">Файлы</div>
                     </div>
@@ -817,20 +798,23 @@ const AdminPanelV2 = () => {
   );
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-8 text-center">
+    <div className={embedded ? 'space-y-6' : 'container mx-auto px-4 py-8'}>
+      {!embedded && <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          🧠 Система обучения V2 - Тестирование
+          Уроки и учебные материалы
         </h1>
         <p className="text-gray-600">
-          Отдельная версия для тестирования новой системы обучения
+          Управление занятиями, файлами и ответами учеников
         </p>
-      </div>
+      </div>}
 
+      {actionFeedback && <Alert role={actionFeedback.error ? 'alert' : 'status'} variant={actionFeedback.error ? 'destructive' : 'default'}><AlertDescription>{actionFeedback.message}</AlertDescription></Alert>}
       {renderLessonsV2Tab()}
 
       {/* Модальное окно редактирования урока */}
       <LessonEditModal
+        key={editingLesson?.id || 'closed'}
+        saveError={saveError}
         lesson={editingLesson}
         isOpen={editDialogOpen}
         onClose={closeEditDialog}
@@ -839,7 +823,7 @@ const AdminPanelV2 = () => {
       />
 
       {/* Диалог подтверждения удаления */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <Dialog open={deleteDialogOpen} onOpenChange={open => { if (!open) closeDeleteDialog(); }}>
         <DialogContent className="max-w-md bg-white">
           <DialogHeader className="border-b border-gray-200 pb-4">
             <DialogTitle className="flex items-center gap-2 text-red-600">
@@ -851,6 +835,7 @@ const AdminPanelV2 = () => {
             </DialogDescription>
           </DialogHeader>
 
+          {deleteError && <p role="alert" className="text-red-700">{deleteError}</p>}
           {lessonToDelete && (
             <div className="py-4">
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
@@ -1085,6 +1070,13 @@ const AdminPanelV2 = () => {
       </Dialog>
     </div>
   );
+};
+
+const AdminPanelV2 = (props) => {
+  const { user, loading } = useAuth();
+  if (loading) return <p role="status">Проверяем доступ…</p>;
+  if (!user || user.is_disabled || !(user.is_super_admin || user.is_admin)) return <Alert role="alert"><AlertDescription>Доступ ограничен. Требуются права администратора.</AlertDescription></Alert>;
+  return <AdminPanelV2Content key={user.id} {...props} />;
 };
 
 export default AdminPanelV2;

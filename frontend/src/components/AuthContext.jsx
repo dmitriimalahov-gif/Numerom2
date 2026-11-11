@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import { api } from '../services/api';
 import { getBackendUrl, getApiBaseUrl } from '../utils/backendUrl';
 
 const AuthContext = createContext();
@@ -58,19 +59,21 @@ export const AuthProvider = ({ children }) => {
           // НЕ пытаемся загрузить профиль автоматически - это может сбрасывать пользователя
           // Вместо этого делаем простую проверку токена
           try {
-            const response = await axios.get('/user/profile-v2', {
-              timeout: 5000,
-              headers: {
-                'Authorization': `Bearer ${token}`
-              }
-            });
+            const response = { data: await api.profile() };
             
-            if (mounted && response.data) {
+            if (mounted && response.data && localStorage.getItem('token') === token) {
               console.log('AuthContext: профиль загружен успешно:', response.data.email);
               setUser(response.data);
             }
           } catch (profileError) {
             console.error('AuthContext: ошибка загрузки профиля:', profileError.message);
+            if (profileError.status === 401 && mounted && localStorage.getItem('token') === token) {
+              localStorage.removeItem('token');
+              localStorage.removeItem('login_timestamp');
+              delete axios.defaults.headers.common['Authorization'];
+              setToken(null);
+              setUser(null);
+            }
             // НЕ делаем logout при ошибке загрузки профиля
             // Пользователь может использовать приложение с сохраненным токеном
           }
@@ -105,31 +108,27 @@ export const AuthProvider = ({ children }) => {
     profileFetchAttempts.current++;
     console.log(`Попытка загрузки профиля ${profileFetchAttempts.current}/${maxProfileFetchAttempts}`);
 
+    const currentToken = localStorage.getItem('token');
     try {
-      const currentToken = localStorage.getItem('token');
       if (!currentToken) {
         console.warn('Токен отсутствует в localStorage');
         setLoading(false);
         return;
       }
 
-      const response = await axios.get('/user/profile-v2', {
-        timeout: 10000,
-        headers: {
-          'Authorization': `Bearer ${currentToken}` // Явно указываем токен
-        },
-        validateStatus: (status) => status === 200
-      });
+      const response = { data: await api.profile() };
+      if (localStorage.getItem('token') !== currentToken) return;
       
       console.log('Профиль успешно загружен:', response.data.email);
       setUser(response.data);
       profileFetchAttempts.current = 0;
       setLoading(false);
     } catch (error) {
+      if (localStorage.getItem('token') !== currentToken) return;
       console.error(`Ошибка загрузки профиля (попытка ${profileFetchAttempts.current}):`, error.message);
       
       // Логаут только при критических ошибках, НЕ при сетевых проблемах
-      if (error.response?.status === 401 || error.response?.status === 403) {
+      if ((error.status || error.response?.status) === 401) {
         console.warn('Токен недействителен (401/403), выполняем logout');
         logout();
       } else if (profileFetchAttempts.current < maxProfileFetchAttempts) {

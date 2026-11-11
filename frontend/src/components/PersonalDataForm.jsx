@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -9,11 +9,13 @@ import { useAuth } from './AuthContext';
 import { User, Phone, MapPin, Car, Home, Edit3, Calendar, Mail, CheckCircle2, Sparkles, Save, X } from 'lucide-react';
 import { getBackendUrl } from '../utils/backendUrl';
 import { useTheme } from '../hooks/useTheme';
+import CityField from './CityField';
 
 const PersonalDataForm = () => {
   const { theme } = useOutletContext();
   const themeConfig = useTheme(theme);
   const { user, updateUser } = useAuth();
+  const owner=useRef(user?.id);owner.current=user?.id;
   const [formData, setFormData] = useState({
     full_name: '',
     name: '',
@@ -21,6 +23,8 @@ const PersonalDataForm = () => {
     birth_date: '',
     phone_number: '',
     city: '',
+    birth_city: '',
+    birth_city_id: '',
     car_number: '',
     street: '',
     house_number: '',
@@ -42,6 +46,8 @@ const PersonalDataForm = () => {
         birth_date: user.birth_date || '',
         phone_number: user.phone_number || '',
         city: user.city || '',
+        birth_city: user.birth_city || '',
+        birth_city_id: user.birth_city_id || '',
         car_number: user.car_number || '',
         street: user.street || '',
         house_number: user.house_number || '',
@@ -63,6 +69,7 @@ const PersonalDataForm = () => {
     setIsLoading(true);
     setMessage('');
 
+    const savingOwner=user?.id,savingToken=localStorage.getItem('token');
     const payload = { ...formData };
 
     if (typeof payload.birth_date === 'string') {
@@ -96,11 +103,7 @@ const PersonalDataForm = () => {
     Object.keys(payload).forEach((key) => {
       if (typeof payload[key] === 'string') {
         const trimmed = payload[key].trim();
-        if (trimmed) {
-          payload[key] = trimmed;
-        } else {
-          delete payload[key];
-        }
+        payload[key] = trimmed;
       }
     });
 
@@ -122,6 +125,7 @@ const PersonalDataForm = () => {
 
       if (response.ok) {
         const updatedUser = await response.json();
+        if(owner.current!==savingOwner||localStorage.getItem('token')!==savingToken)return;
         updateUser(updatedUser);
         setMessage('Данные успешно обновлены!');
         setIsEditing(false);
@@ -225,6 +229,7 @@ const PersonalDataForm = () => {
                 <InfoCard icon={Calendar} label="Дата рождения" value={user?.birth_date} />
                 <InfoCard icon={Phone} label="Телефон" value={user?.phone_number} />
                 <InfoCard icon={MapPin} label="Город" value={user?.city} />
+                <InfoCard icon={MapPin} label="Город рождения" value={user?.birth_city} />
               </div>
             </div>
 
@@ -435,7 +440,7 @@ const PersonalDataForm = () => {
 
               <div className="space-y-3">
                 <Label htmlFor="city" className={`text-sm font-semibold ${themeConfig.text}`}>
-                  Город
+                  Текущий город
                 </Label>
                 <Input
                   id="city"
@@ -447,6 +452,7 @@ const PersonalDataForm = () => {
                   className={`h-12 ${themeConfig.input}`}
                 />
               </div>
+              <CityField key={user?.id} value={formData.birth_city} disabled={isLoading} onChange={(birth_city,birth_city_id)=>setFormData(current=>({...current,birth_city,birth_city_id}))}/>
             </div>
           </div>
 
@@ -458,6 +464,7 @@ const PersonalDataForm = () => {
               </div>
               Дополнительная информация
             </h2>
+            <p className={`${themeConfig.mutedText} mb-6`}>Поля необязательны. Они добавляют разделы дома, автомобиля и телефона в полный разбор за 6,66 € без доплаты. Для дома достаточно номера; улицу можно не указывать.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-3">
                 <Label htmlFor="car_number" className={`text-sm font-semibold ${themeConfig.text}`}>

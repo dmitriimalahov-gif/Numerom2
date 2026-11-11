@@ -1,0 +1,12 @@
+.nm-recovery-page { min-height:100dvh; display:grid; place-items:center; padding:32px 20px; background:var(--nm-canvas); color:var(--nm-ink); }
+.nm-recovery-card { width:100%; max-width:480px; display:grid; gap:28px; padding:32px; background:var(--nm-surface); border:1px solid var(--nm-line); border-radius:24px; }
+.nm-recovery-card h1 { font-size:30px; line-height:1.2; letter-spacing:-.03em; margin-bottom:14px; font-weight:600; }
+.nm-recovery-card p { color:var(--nm-muted); font-size:14px; line-height:1.7; }
+.nm-recovery-form { display:grid; gap:20px; }
+.nm-recovery-form > div { display:grid; gap:9px; }
+.nm-recovery-form small,.nm-recovery-back { color:var(--nm-muted); font-size:12px; }
+.nm-recovery-error { color:#a93c43; padding:14px; border:1px solid #e7b8bf; border-radius:12px; font-size:14px; }
+.nm-recovery-error a { text-decoration:underline; }
+.nm-recovery-success { display:grid; gap:14px; padding:20px; background:var(--nm-soft-green); border-radius:14px; }
+.nm-recovery-success h2 { font-size:18px; }
+@media(max-width:480px){.nm-recovery-card{padding:24px;}.nm-recovery-card h1{font-size:27px;}}

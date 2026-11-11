@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -7,6 +7,8 @@ import { Badge } from './ui/badge';
 import { Alert, AlertDescription } from './ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import AdminPanelV2 from './AdminPanelV2';
+import AdminFilePreview from '../features/admin/AdminFilePreview';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { 
   Upload, 
   FileText, 
@@ -41,18 +43,22 @@ import { useAuth } from './AuthContext';
 import EnhancedVideoViewer from './EnhancedVideoViewer';
 import ConsultationPDFViewer from './ConsultationPDFViewer';
 import { getBackendUrl } from '../utils/backendUrl';
+import { api } from '../services/api';
+import { readAdminResponse } from '../features/admin/requestHelpers';
 
-const AdminPanel = () => {
+const AdminPanelContent = ({ embedded = false, selectedSection }) => {
   const { user } = useAuth();
 
-  // Проверка доступа к управлению уроками V2 (только для суперадминистратора)
-  const canManageLessonsV2 = user?.email === 'dmitrii.malahov@gmail.com';
-  const [activeTab, setActiveTab] = useState(() => {
+  // Доступ определяется текущей ролью, а не адресом электронной почты.
+  const canManageLessonsV2 = Boolean(user?.is_super_admin || user?.is_admin);
+  const [localTab, setActiveTab] = useState(() => {
     // Восстановить последнюю активную вкладку из localStorage
-    const savedTab = localStorage.getItem('adminPanel_activeTab') || 'users';
+    const previousTab = selectedSection || localStorage.getItem('adminPanel_activeTab') || 'users';
+    const savedTab = previousTab === 'scoring' ? 'settings' : previousTab;
     // Если сохраненная вкладка - lessons-v2, но пользователь не имеет доступа, выбрать users
     return (savedTab === 'lessons-v2' && !canManageLessonsV2) ? 'users' : savedTab;
   });
+  const activeTab = selectedSection || localTab;
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [editingCredits, setEditingCredits] = useState({});
@@ -116,18 +122,22 @@ const AdminPanel = () => {
   // State for consultations management
   const [consultations, setConsultations] = useState([]);
   const [loadingConsultations, setLoadingConsultations] = useState(false);
+  const [consultationsError, setConsultationsError] = useState('');
+  const [consultationAction, setConsultationAction] = useState(null);
+  const [savingConsultation, setSavingConsultation] = useState(false);
+  const consultationBusy = useRef(false);
+  const consultationUpload = useRef(false);
   const [editingConsultation, setEditingConsultation] = useState(null);
+  const [consultationPreview, setConsultationPreview] = useState(null);
+  const previewConsultationFile = (consultation, kind) => setConsultationPreview({ id: consultation[`${kind}_file_id`], original_name: consultation[`${kind}_filename`] || consultation.title, mime_type: kind === 'pdf' ? 'application/pdf' : 'video/mp4' });
   
   // State for modal viewers (как в PersonalConsultations)
   const [selectedLessonVideo, setSelectedLessonVideo] = useState(null);
   const [selectedLessonPDF, setSelectedLessonPDF] = useState(null);
 
-  // State for scoring configuration
-  const [scoringConfig, setScoringConfig] = useState(null);
-  const [loadingScoringConfig, setLoadingScoringConfig] = useState(false);
-  const [savingScoringConfig, setSavingScoringConfig] = useState(false);
-  const [editedScoringConfig, setEditedScoringConfig] = useState(null);
-  
+  // Independent settings requests retain their own feedback and write lock.
+  const configWrites = useRef(new Set());
+  const [configFeedback, setConfigFeedback] = useState({});
   // State for learning points configuration
   const [learningPointsConfig, setLearningPointsConfig] = useState(null);
   const [loadingLearningPointsConfig, setLoadingLearningPointsConfig] = useState(false);
@@ -178,8 +188,9 @@ const AdminPanel = () => {
   const backendUrl = getBackendUrl();
 
   // Загрузка пользователей
+  const [usersLoadError, setUsersLoadError] = useState('');
   const fetchUsers = async () => {
-    setLoading(true);
+    setLoading(true); setUsersLoadError('');
     try {
       const response = await fetch(`${backendUrl}/api/admin/users`, {
         headers: {
@@ -187,12 +198,10 @@ const AdminPanel = () => {
         }
       });
       
-      if (response.ok) {
-        const data = await response.json();
-        setUsers(data.users);
-      }
+      const data = await readAdminResponse(response);
+      setUsers(data.users);
     } catch (error) {
-      console.error('Ошибка загрузки пользователей:', error);
+      setUsersLoadError(error.message);
     } finally {
       setLoading(false);
     }
@@ -223,362 +232,39 @@ const AdminPanel = () => {
   };
 
   // Загрузка конфигурации системы баллов
-  const fetchScoringConfig = async () => {
-    setLoadingScoringConfig(true);
+  const readConfiguration = async (name, setSaved, setEdited, setLoading) => {
+    setLoading(true);
+    setConfigFeedback(previous => ({ ...previous, [name]: null }));
     try {
-      const response = await fetch(`${backendUrl}/api/admin/scoring-config`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setScoringConfig(data);
-        setEditedScoringConfig(data);
-      }
-    } catch (error) {
-      console.error('Ошибка загрузки конфигурации баллов:', error);
-    } finally {
-      setLoadingScoringConfig(false);
-    }
+      const data = await api.request(`/admin/${name}`);
+      if (!data?.config) throw new Error('Сервер не вернул настройки. Повторите загрузку.');
+      setSaved(data.config); setEdited(data.config);
+    } catch (error) { setConfigFeedback(previous => ({ ...previous, [name]: { error: true, message: error.message } })); }
+    finally { setLoading(false); }
   };
-
-  // Сохранение конфигурации системы баллов
-  const saveScoringConfig = async () => {
-    setSavingScoringConfig(true);
+  const writeConfiguration = async (name, config, setSaved, setEdited, setSaving) => {
+    if (!config || configWrites.current.has(name)) return;
+    configWrites.current.add(name); setSaving(true);
+    setConfigFeedback(previous => ({ ...previous, [name]: null }));
     try {
-      const response = await fetch(`${backendUrl}/api/admin/scoring-config`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(editedScoringConfig)
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setScoringConfig(data.config);
-        setEditedScoringConfig(data.config);
-        alert('Конфигурация успешно сохранена!');
-      }
-    } catch (error) {
-      console.error('Ошибка сохранения конфигурации баллов:', error);
-      alert('Ошибка сохранения конфигурации');
-    } finally {
-      setSavingScoringConfig(false);
-    }
+      const data = await api.request(`/admin/${name}`, { method: 'PUT', body: config });
+      if (!data?.config) throw new Error('Сервер не подтвердил настройки. Повторите загрузку.');
+      setSaved(data.config); setEdited(data.config);
+      setConfigFeedback(previous => ({ ...previous, [name]: { message: 'Настройки сохранены.' } }));
+    } catch (error) { setConfigFeedback(previous => ({ ...previous, [name]: { error: true, message: error.message } })); }
+    finally { configWrites.current.delete(name); setSaving(false); }
   };
-
-  // Сброс конфигурации к дефолтным значениям
-  const resetScoringConfig = async () => {
-    if (!window.confirm('Вы уверены, что хотите сбросить конфигурацию к дефолтным значениям?')) {
-      return;
-    }
-    
-    setSavingScoringConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/scoring-config/reset`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setScoringConfig(data.config);
-        setEditedScoringConfig(data.config);
-        alert('Конфигурация сброшена к дефолтным значениям!');
-      }
-    } catch (error) {
-      console.error('Ошибка сброса конфигурации баллов:', error);
-      alert('Ошибка сброса конфигурации');
-    } finally {
-      setSavingScoringConfig(false);
-    }
-  };
-
-  // Загрузка конфигурации начисления баллов за обучение
-  const fetchLearningPointsConfig = async () => {
-    setLoadingLearningPointsConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/learning-points-config`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setLearningPointsConfig(data.config);
-        setEditedLearningPointsConfig(data.config);
-      } else {
-        console.error('Ошибка загрузки конфигурации баллов за обучение');
-      }
-    } catch (error) {
-      console.error('Ошибка загрузки конфигурации баллов за обучение:', error);
-    } finally {
-      setLoadingLearningPointsConfig(false);
-    }
-  };
-
-  // Сохранение конфигурации начисления баллов за обучение
-  const saveLearningPointsConfig = async () => {
-    if (!editedLearningPointsConfig) return;
-    
-    setSavingLearningPointsConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/learning-points-config`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(editedLearningPointsConfig)
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setLearningPointsConfig(data.config);
-        setEditedLearningPointsConfig(data.config);
-        alert('Конфигурация начисления баллов за обучение успешно сохранена!');
-      } else {
-        const errorData = await response.json();
-        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
-      }
-    } catch (error) {
-      console.error('Ошибка сохранения конфигурации баллов за обучение:', error);
-      alert('Ошибка сохранения конфигурации');
-    } finally {
-      setSavingLearningPointsConfig(false);
-    }
-  };
-
-  // Загрузка конфигурации стоимости услуг нумерологии
-  const fetchNumerologyCreditsConfig = async () => {
-    setLoadingNumerologyCreditsConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/numerology-credits-config`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setNumerologyCreditsConfig(data.config);
-        setEditedNumerologyCreditsConfig(data.config);
-      } else {
-        console.error('Ошибка загрузки конфигурации стоимости услуг нумерологии');
-      }
-    } catch (error) {
-      console.error('Ошибка загрузки конфигурации стоимости услуг нумерологии:', error);
-    } finally {
-      setLoadingNumerologyCreditsConfig(false);
-    }
-  };
-
-  // Сохранение конфигурации стоимости услуг нумерологии
-  const saveNumerologyCreditsConfig = async () => {
-    if (!editedNumerologyCreditsConfig) return;
-    
-    setSavingNumerologyCreditsConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/numerology-credits-config`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(editedNumerologyCreditsConfig)
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setNumerologyCreditsConfig(data.config);
-        setEditedNumerologyCreditsConfig(data.config);
-        alert('Конфигурация стоимости услуг нумерологии успешно сохранена!');
-      } else {
-        const errorData = await response.json();
-        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
-      }
-    } catch (error) {
-      console.error('Ошибка сохранения конфигурации стоимости услуг нумерологии:', error);
-      alert('Ошибка сохранения конфигурации');
-    } finally {
-      setSavingNumerologyCreditsConfig(false);
-    }
-  };
-
-  // Загрузка единой конфигурации списания баллов
-  const fetchCreditsDeductionConfig = async () => {
-    setLoadingCreditsDeductionConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/credits-deduction-config`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setCreditsDeductionConfig(data.config);
-        setEditedCreditsDeductionConfig(data.config);
-      } else {
-        console.error('Ошибка загрузки конфигурации списания баллов');
-      }
-    } catch (error) {
-      console.error('Ошибка загрузки конфигурации списания баллов:', error);
-    } finally {
-      setLoadingCreditsDeductionConfig(false);
-    }
-  };
-
-  // Сохранение единой конфигурации списания баллов
-  const saveCreditsDeductionConfig = async () => {
-    if (!editedCreditsDeductionConfig) return;
-    
-    setSavingCreditsDeductionConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/credits-deduction-config`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(editedCreditsDeductionConfig)
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setCreditsDeductionConfig(data.config);
-        setEditedCreditsDeductionConfig(data.config);
-        alert('Конфигурация списания баллов успешно сохранена!');
-      } else {
-        const errorData = await response.json();
-        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
-      }
-    } catch (error) {
-      console.error('Ошибка сохранения конфигурации списания баллов:', error);
-      alert('Ошибка сохранения конфигурации');
-    } finally {
-      setSavingCreditsDeductionConfig(false);
-    }
-  };
-
-  // Загрузка конфигурации модификаторов энергии планет
-  const fetchPlanetaryEnergyModifiersConfig = async () => {
-    setLoadingPlanetaryEnergyModifiersConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/planetary-energy-modifiers-config`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setPlanetaryEnergyModifiersConfig(data.config);
-        setEditedPlanetaryEnergyModifiersConfig(data.config);
-      } else {
-        console.error('Ошибка загрузки конфигурации модификаторов энергии планет');
-      }
-    } catch (error) {
-      console.error('Ошибка загрузки конфигурации модификаторов энергии планет:', error);
-    } finally {
-      setLoadingPlanetaryEnergyModifiersConfig(false);
-    }
-  };
-
-  // Загрузка конфигурации месячного маршрута
-  const fetchMonthlyRouteConfig = async () => {
-    setLoadingMonthlyRouteConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/monthly-route-config`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setMonthlyRouteConfig(data.config);
-        setEditedMonthlyRouteConfig(data.config);
-      } else {
-        console.error('Ошибка загрузки конфигурации месячного маршрута');
-      }
-    } catch (error) {
-      console.error('Ошибка загрузки конфигурации месячного маршрута:', error);
-    } finally {
-      setLoadingMonthlyRouteConfig(false);
-    }
-  };
-
-  // Сохранение конфигурации месячного маршрута
-  const saveMonthlyRouteConfig = async () => {
-    if (!editedMonthlyRouteConfig) return;
-    
-    setSavingMonthlyRouteConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/monthly-route-config`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(editedMonthlyRouteConfig)
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setMonthlyRouteConfig(data.config);
-        setEditedMonthlyRouteConfig(data.config);
-        alert('Конфигурация месячного маршрута успешно сохранена!');
-      } else {
-        const errorData = await response.json();
-        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
-      }
-    } catch (error) {
-      console.error('Ошибка сохранения конфигурации месячного маршрута:', error);
-      alert('Ошибка сохранения конфигурации');
-    } finally {
-      setSavingMonthlyRouteConfig(false);
-    }
-  };
-
-  // Сохранение конфигурации модификаторов энергии планет
-  const savePlanetaryEnergyModifiersConfig = async () => {
-    if (!editedPlanetaryEnergyModifiersConfig) return;
-    
-    setSavingPlanetaryEnergyModifiersConfig(true);
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/planetary-energy-modifiers-config`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(editedPlanetaryEnergyModifiersConfig)
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setPlanetaryEnergyModifiersConfig(data.config);
-        setEditedPlanetaryEnergyModifiersConfig(data.config);
-        alert('Конфигурация модификаторов энергии планет успешно сохранена!');
-      } else {
-        const errorData = await response.json();
-        alert(`Ошибка сохранения: ${errorData.detail || 'Неизвестная ошибка'}`);
-      }
-    } catch (error) {
-      console.error('Ошибка сохранения конфигурации модификаторов энергии планет:', error);
-      alert('Ошибка сохранения конфигурации');
-    } finally {
-      setSavingPlanetaryEnergyModifiersConfig(false);
-    }
-  };
+  const renderConfigFeedback = name => configFeedback[name] && <Alert role={configFeedback[name].error ? 'alert' : 'status'}><AlertDescription>{configFeedback[name].message}</AlertDescription></Alert>;
+  const fetchLearningPointsConfig = () => readConfiguration('learning-points-config', setLearningPointsConfig, setEditedLearningPointsConfig, setLoadingLearningPointsConfig);
+  const saveLearningPointsConfig = () => writeConfiguration('learning-points-config', editedLearningPointsConfig, setLearningPointsConfig, setEditedLearningPointsConfig, setSavingLearningPointsConfig);
+  const fetchNumerologyCreditsConfig = () => readConfiguration('numerology-credits-config', setNumerologyCreditsConfig, setEditedNumerologyCreditsConfig, setLoadingNumerologyCreditsConfig);
+  const saveNumerologyCreditsConfig = () => writeConfiguration('numerology-credits-config', editedNumerologyCreditsConfig, setNumerologyCreditsConfig, setEditedNumerologyCreditsConfig, setSavingNumerologyCreditsConfig);
+  const fetchCreditsDeductionConfig = () => readConfiguration('credits-deduction-config', setCreditsDeductionConfig, setEditedCreditsDeductionConfig, setLoadingCreditsDeductionConfig);
+  const saveCreditsDeductionConfig = () => writeConfiguration('credits-deduction-config', editedCreditsDeductionConfig, setCreditsDeductionConfig, setEditedCreditsDeductionConfig, setSavingCreditsDeductionConfig);
+  const fetchPlanetaryEnergyModifiersConfig = () => readConfiguration('planetary-energy-modifiers-config', setPlanetaryEnergyModifiersConfig, setEditedPlanetaryEnergyModifiersConfig, setLoadingPlanetaryEnergyModifiersConfig);
+  const savePlanetaryEnergyModifiersConfig = () => writeConfiguration('planetary-energy-modifiers-config', editedPlanetaryEnergyModifiersConfig, setPlanetaryEnergyModifiersConfig, setEditedPlanetaryEnergyModifiersConfig, setSavingPlanetaryEnergyModifiersConfig);
+  const fetchMonthlyRouteConfig = () => readConfiguration('monthly-route-config', setMonthlyRouteConfig, setEditedMonthlyRouteConfig, setLoadingMonthlyRouteConfig);
+  const saveMonthlyRouteConfig = () => writeConfiguration('monthly-route-config', editedMonthlyRouteConfig, setMonthlyRouteConfig, setEditedMonthlyRouteConfig, setSavingMonthlyRouteConfig);
 
   // Загрузка прогресса уроков пользователя
   const fetchUserProgress = async (userId) => {
@@ -738,98 +424,29 @@ const AdminPanel = () => {
     }
   };
 
-  // Загрузка видео для консультации
-  const handleConsultationVideoUpload = async (event) => {
-    const file = event.target.files[0];
-
-    console.log('=== FRONTEND: НАЧАЛО ЗАГРУЗКИ ВИДЕО ===');
-    console.log('Файл:', file);
-    console.log('Имя файла:', file?.name);
-    console.log('Тип файла:', file?.type);
-    console.log('Размер файла:', file?.size, 'байт', file ? `(${(file.size / 1024 / 1024).toFixed(2)} MB)` : '');
-
-    if (!file) {
-      console.error('ОШИБКА: Файл не выбран!');
-      return;
-    }
-
+  const uploadConsultationAttachment = async (event, kind) => {
+    const input = event.target;
+    const file = input.files[0];
+    if (!file || consultationUpload.current || consultationBusy.current) return;
+    consultationUpload.current = true;
     setUploadingVideo(true);
-
+    setConsultationAction(null);
+    const editorId = editingConsultation?.id;
     try {
       const formData = new FormData();
       formData.append('file', file);
-
-      console.log('FormData создан, файл добавлен');
-      console.log('Отправляем запрос на:', `${backendUrl}/api/admin/consultations/upload-video`);
-
-      const response = await fetch(`${backendUrl}/api/admin/consultations/upload-video`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: formData
+      const response = await fetch(`${backendUrl}/api/admin/consultations/upload-${kind}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }, body: formData,
       });
-
-      console.log('Ответ получен. Статус:', response.status, response.statusText);
-
-      if (response.ok) {
-        const result = await response.json();
-        console.log('✅ УСПЕХ! Результат:', result);
-        setEditingConsultation(prev => ({
-          ...prev,
-          video_file_id: result.file_id,
-          video_filename: result.filename
-        }));
-        alert(`Видео успешно загружено: ${result.filename}`);
-      } else {
-        const errorText = await response.text();
-        console.error('❌ ОШИБКА от сервера:', errorText);
-        alert(`Ошибка загрузки видео: ${errorText}`);
-      }
-    } catch (error) {
-      console.error('❌ КРИТИЧЕСКАЯ ОШИБКА при загрузке:', error);
-      alert(`Ошибка загрузки видео: ${error.message}`);
-    } finally {
-      setUploadingVideo(false);
-      console.log('=== FRONTEND: ЗАВЕРШЕНИЕ ЗАГРУЗКИ ===');
-    }
+      const result = await readAdminResponse(response);
+      if (!result?.file_id) throw new Error('Сервер не вернул загруженный файл. Повторите попытку.');
+      setEditingConsultation(previous => previous && previous.id === editorId ? { ...previous, [`${kind}_file_id`]: result.file_id, [`${kind}_filename`]: result.filename } : previous);
+      setConsultationAction({ message: 'Файл загружен. Сохраните консультацию, чтобы прикрепить его.' });
+    } catch (error) { setConsultationAction({ error: true, message: error.message }); }
+    finally { consultationUpload.current = false; setUploadingVideo(false); input.value = ''; }
   };
-
-  // Загрузка PDF для консультации
-  const handleConsultationPDFUpload = async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    setUploadingVideo(true); // Используем тот же флаг для loading состояния
-
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(`${backendUrl}/api/admin/consultations/upload-pdf`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: formData
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        setEditingConsultation(prev => ({
-          ...prev,
-          pdf_file_id: result.file_id,
-          pdf_filename: result.filename
-        }));
-      } else {
-        alert('Ошибка загрузки PDF');
-      }
-    } catch (error) {
-      console.error('Ошибка загрузки PDF консультации:', error);
-    } finally {
-      setUploadingVideo(false);
-    }
-  };
+  const handleConsultationVideoUpload = event => uploadConsultationAttachment(event, 'video');
+  const handleConsultationPDFUpload = event => uploadConsultationAttachment(event, 'pdf');
 
   // Загрузка субтитров для консультации
   const handleConsultationSubtitlesUpload = async (event) => {
@@ -1854,21 +1471,11 @@ const AdminPanel = () => {
 
   // Сохранять активную вкладку в localStorage при изменении
   useEffect(() => {
-    localStorage.setItem('adminPanel_activeTab', activeTab);
-    
-    // Загружаем конфигурацию баллов при переключении на вкладку
-    if (activeTab === 'scoring' && !scoringConfig) {
-      fetchScoringConfig();
-    }
+    if (!embedded) localStorage.setItem('adminPanel_activeTab', activeTab);
     
     // Загружаем конфигурацию баллов за обучение при переключении на вкладку настроек
     if (activeTab === 'settings' && !learningPointsConfig && !loadingLearningPointsConfig) {
       fetchLearningPointsConfig();
-    }
-    
-    // Загружаем конфигурацию стоимости услуг нумерологии при переключении на вкладку настроек
-    if (activeTab === 'settings' && !numerologyCreditsConfig && !loadingNumerologyCreditsConfig) {
-      fetchNumerologyCreditsConfig();
     }
     
     // Загружаем единую конфигурацию списания баллов при переключении на вкладку настроек
@@ -1885,20 +1492,15 @@ const AdminPanel = () => {
     if (activeTab === 'settings' && !monthlyRouteConfig && !loadingMonthlyRouteConfig) {
       fetchMonthlyRouteConfig();
     }
-  }, [activeTab, scoringConfig, learningPointsConfig, loadingLearningPointsConfig, numerologyCreditsConfig, loadingNumerologyCreditsConfig, creditsDeductionConfig, loadingCreditsDeductionConfig, planetaryEnergyModifiersConfig, loadingPlanetaryEnergyModifiersConfig, monthlyRouteConfig, loadingMonthlyRouteConfig]);
+  // Fetch each section on entry. Loading/error state changes must not trigger retry loops.
+  }, [activeTab, embedded]);
 
   useEffect(() => {
     if (activeTab === 'users') {
       fetchUsers();
     } else if (activeTab === 'consultations') {
       fetchConsultations();
-    } else if (activeTab === 'settings' && !learningPointsConfig) {
-      fetchLearningPointsConfig();
-      fetchNumerologyCreditsConfig();
-      fetchCreditsDeductionConfig();
-      fetchPlanetaryEnergyModifiersConfig();
-      fetchMonthlyRouteConfig();
-      fetchUsers(); // Загружаем пользователей для выбора в консультациях
+      fetchUsers(); // Выбор ученика при создании консультации.
     }
   }, [activeTab]);
 
@@ -2045,6 +1647,7 @@ const AdminPanel = () => {
   // Functions for consultations management
   const fetchConsultations = async () => {
     setLoadingConsultations(true);
+    setConsultationsError('');
     try {
       const response = await fetch(`${backendUrl}/api/admin/consultations`, {
         headers: {
@@ -2054,85 +1657,50 @@ const AdminPanel = () => {
       if (response.ok) {
         const data = await response.json();
         setConsultations(data);
+      } else {
+        throw new Error('Не удалось загрузить консультации');
       }
     } catch (error) {
+      setConsultationsError('Не удалось загрузить консультации. Повторите загрузку.');
       console.error('Error fetching consultations:', error);
     } finally {
       setLoadingConsultations(false);
     }
   };
 
-  const createConsultation = async (consultationData) => {
-    try {
-      const response = await fetch(`${backendUrl}/api/admin/consultations`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(consultationData)
-      });
-      
-      if (response.ok) {
-        fetchConsultations();
-        setEditingConsultation(null);
-        alert('Консультация успешно создана!');
-      } else {
-        alert('Ошибка при создании консультации');
-      }
-    } catch (error) {
-      console.error('Error creating consultation:', error);
-      alert('Ошибка при создании консультации');
+  const saveConsultation = async (consultationData, consultationId) => {
+    if (consultationBusy.current || consultationUpload.current) return;
+    if (!consultationData.title?.trim() || !consultationData.assigned_user_id || !Number.isSafeInteger(consultationData.cost_credits) || consultationData.cost_credits < 0) {
+      setConsultationAction({ error: true, message: 'Укажите название, ученика и целую стоимость от 0 кредитов.' });
+      return;
     }
-  };
-
-  // ДОБАВЛЯЮ функцию обновления консультации - КРИТИЧНО ДЛЯ ИСПРАВЛЕНИЯ БАГА!
-  const updateConsultation = async (consultationId, consultationData) => {
+    consultationBusy.current = true;
+    setSavingConsultation(true);
+    setConsultationAction(null);
     try {
-      const response = await fetch(`${backendUrl}/api/admin/consultations/${consultationId}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(consultationData)
+      await api.request(`/admin/consultations${consultationId ? `/${encodeURIComponent(consultationId)}` : ''}`, {
+        method: consultationId ? 'PUT' : 'POST', body: { ...consultationData, title: consultationData.title.trim() },
       });
-      
-      if (response.ok) {
-        fetchConsultations(); // Обновляем список консультаций
-        setEditingConsultation(null);
-        alert('Консультация успешно обновлена! Студент увидит новые материалы.');
-      } else {
-        const errorData = await response.json();
-        alert(`Ошибка при обновлении консультации: ${errorData.detail || 'Неизвестная ошибка'}`);
-      }
-    } catch (error) {
-      console.error('Error updating consultation:', error);
-      alert('Ошибка при обновлении консультации');
-    }
+      setEditingConsultation(null);
+      setConsultationAction({ message: consultationId ? 'Консультация сохранена.' : 'Консультация создана.' });
+      await fetchConsultations();
+    } catch (error) { setConsultationAction({ error: true, message: error.message }); }
+    finally { consultationBusy.current = false; setSavingConsultation(false); }
   };
+  const createConsultation = data => saveConsultation(data);
+  const updateConsultation = (id, data) => saveConsultation(data, id);
 
   const deleteConsultation = async (consultationId) => {
-    if (!confirm('Удалить эту консультацию?')) return;
-    
+    if (consultationBusy.current || consultationUpload.current || !window.confirm('Удалить эту консультацию?')) return;
+    consultationBusy.current = true;
+    setSavingConsultation(true);
+    setConsultationAction(null);
     try {
-      const response = await fetch(`${backendUrl}/api/admin/consultations/${consultationId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        fetchConsultations();
-        alert('Консультация удалена!');
-      } else {
-        alert('Ошибка при удалении консультации');
-      }
-    } catch (error) {
-      console.error('Error deleting consultation:', error);
-      alert('Ошибка при удалении консультации');
-    }
+      await api.request(`/admin/consultations/${encodeURIComponent(consultationId)}`, { method: 'DELETE' });
+      setConsultationAction({ message: 'Консультация удалена.' });
+      await fetchConsultations();
+    } catch (error) { setConsultationAction({ error: true, message: error.message }); }
+    finally { consultationBusy.current = false; setSavingConsultation(false); }
   };
 
   // Функция для получения детальных данных пользователя
@@ -2166,258 +1734,14 @@ const AdminPanel = () => {
   };
 
   // Function to render consultations tab
-  const renderScoringTab = () => {
-    if (loadingScoringConfig) {
-      return (
-        <Card>
-          <CardContent className="p-12 text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Загрузка конфигурации...</p>
-          </CardContent>
-        </Card>
-      );
-    }
-
-    if (!editedScoringConfig) {
-      return (
-        <Card>
-          <CardContent className="p-12 text-center">
-            <p className="text-gray-600">Конфигурация не загружена</p>
-            <Button onClick={fetchScoringConfig} className="mt-4">
-              Загрузить конфигурацию
-            </Button>
-          </CardContent>
-        </Card>
-      );
-    }
-
-    const scoringFields = [
-      {
-        category: '⚙️ Базовые настройки',
-        fields: [
-          { key: 'base_score', label: 'Базовый счёт', description: 'Начальное количество баллов для каждого дня' }
-        ]
-      },
-      {
-        category: '⚡ Личная энергия планеты дня (DDMM × YYYY)',
-        fields: [
-          { key: 'personal_energy_high', label: 'Высокая энергия (≥7)', description: 'Бонус за высокую личную энергию' },
-          { key: 'personal_energy_low', label: 'Низкая энергия (1-3)', description: 'Штраф за низкую личную энергию' },
-          { key: 'personal_energy_zero', label: 'Нулевая энергия (0)', description: 'Штраф за отсутствие энергии' }
-        ]
-      },
-      {
-        category: '💫 Резонанс числа души',
-        fields: [
-          { key: 'soul_resonance', label: 'Полное совпадение', description: 'Число души = планета дня' },
-          { key: 'soul_friendship', label: 'Дружественные планеты', description: 'Планета души дружественна планете дня' },
-          { key: 'soul_hostility', label: 'Враждебные планеты', description: 'Планета души враждебна планете дня' }
-        ]
-      },
-      {
-        category: '🧠 Резонанс числа ума',
-        fields: [
-          { key: 'mind_resonance', label: 'Полное совпадение', description: 'Число ума = планета дня' },
-          { key: 'mind_friendship', label: 'Дружественные планеты', description: 'Планета ума дружественна планете дня' },
-          { key: 'mind_hostility', label: 'Враждебные планеты', description: 'Планета ума враждебна планете дня' }
-        ]
-      },
-      {
-        category: '🎯 Резонанс числа судьбы',
-        fields: [
-          { key: 'destiny_resonance', label: 'Полное совпадение', description: 'Число судьбы = планета дня' },
-          { key: 'destiny_hostility', label: 'Враждебные планеты', description: 'Планета судьбы враждебна планете дня' }
-        ]
-      },
-      {
-        category: '🔢 Сила планеты в квадрате Пифагора',
-        fields: [
-          { key: 'planet_strength_high', label: 'Высокая сила (≥4)', description: 'Планета сильно представлена в карте' },
-          { key: 'planet_strength_medium', label: 'Средняя сила (2-3)', description: 'Планета умеренно представлена' },
-          { key: 'planet_strength_low', label: 'Низкая сила (0)', description: 'Планета отсутствует в карте' }
-        ]
-      },
-      {
-        category: '🎁 Специальные бонусы',
-        fields: [
-          { key: 'birthday_bonus', label: 'День рождения', description: 'День недели совпадает с днём рождения' },
-          { key: 'planet_friendship', label: 'Дружественность планет', description: 'Общая дружественность планет' },
-          { key: 'planet_hostility', label: 'Враждебность планет', description: 'Общая враждебность планет' }
-        ]
-      },
-      {
-        category: '📝 Нумерология имени/адреса/машины',
-        fields: [
-          { key: 'name_resonance', label: 'Резонанс', description: 'Совпадение с планетой дня' },
-          { key: 'name_conflict', label: 'Конфликт', description: 'Конфликт с планетой дня' }
-        ]
-      },
-      {
-        category: '🕐 Ведические периоды',
-        fields: [
-          { key: 'rahu_kaal_penalty', label: 'Раху Каал', description: 'Штраф за неблагоприятный период' },
-          { key: 'favorable_period_bonus', label: 'Благоприятный период', description: 'Бонус за благоприятное время' }
-        ]
-      },
-      {
-        category: '🌍 Глобальная гармония',
-        fields: [
-          { key: 'global_harmony_bonus', label: 'Гармония', description: 'Больше дружественных планет' },
-          { key: 'global_harmony_penalty', label: 'Дисгармония', description: 'Больше враждебных планет' }
-        ]
-      },
-      {
-        category: '📅 Число дня',
-        fields: [
-          { key: 'day_number_bonus', label: 'Совпадение числа дня', description: 'Число дня совпадает с личными числами' }
-        ]
-      }
-    ];
-
-    return (
-      <div className="space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <div className="flex items-center">
-                <Target className="w-6 h-6 mr-2" />
-                Конфигурация системы баллов
-              </div>
-              <div className="flex gap-2">
-                <Button 
-                  onClick={resetScoringConfig} 
-                  variant="outline"
-                  disabled={savingScoringConfig}
-                  className="text-orange-600 border-orange-300 hover:bg-orange-50"
-                >
-                  🔄 Сбросить
-                </Button>
-                <Button 
-                  onClick={saveScoringConfig} 
-                  disabled={savingScoringConfig}
-                  className="bg-green-600 hover:bg-green-700"
-                >
-                  {savingScoringConfig ? '💾 Сохранение...' : '💾 Сохранить изменения'}
-                </Button>
-              </div>
-            </CardTitle>
-            <CardDescription>
-              Настройте баллы для каждого фактора, влияющего на оценку дня. 
-              Изменения применятся ко всем расчётам после сохранения.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Alert className="mb-6 bg-blue-50 border-blue-200">
-              <AlertDescription className="text-sm">
-                <strong>💡 Как это работает:</strong> Каждый день анализируется по множеству факторов. 
-                Положительные факторы добавляют баллы, негативные - вычитают. 
-                Итоговая оценка определяет, насколько день благоприятен для пользователя.
-              </AlertDescription>
-            </Alert>
-
-            <div className="space-y-8">
-              {scoringFields.map((category, idx) => (
-                <div key={idx} className="border-l-4 border-blue-500 pl-4">
-                  <h3 className="text-lg font-bold mb-4 text-gray-800">{category.category}</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {category.fields.map((field) => (
-                      <div key={field.key} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                        <Label htmlFor={field.key} className="text-sm font-semibold text-gray-700">
-                          {field.label}
-                        </Label>
-                        <p className="text-xs text-gray-500 mb-2">{field.description}</p>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            id={field.key}
-                            type="number"
-                            value={editedScoringConfig[field.key] || 0}
-                            onChange={(e) => setEditedScoringConfig({
-                              ...editedScoringConfig,
-                              [field.key]: parseInt(e.target.value) || 0
-                            })}
-                            className="w-24 text-center font-bold text-lg"
-                          />
-                          <Badge 
-                            variant={editedScoringConfig[field.key] > 0 ? 'default' : 'destructive'}
-                            className={editedScoringConfig[field.key] > 0 ? 'bg-green-500' : 'bg-red-500'}
-                          >
-                            {editedScoringConfig[field.key] > 0 ? '+' : ''}{editedScoringConfig[field.key]}
-                          </Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <Alert className="mt-6 bg-yellow-50 border-yellow-200">
-              <AlertDescription className="text-sm">
-                <strong>⚠️ Внимание:</strong> Изменения в конфигурации повлияют на все расчёты планетарного маршрута. 
-                Рекомендуется тестировать изменения перед применением в продакшене.
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
-
-        {/* Предпросмотр диапазона баллов */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <TrendingUp className="w-5 h-5 mr-2" />
-              Предпросмотр диапазона баллов
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-red-50 p-4 rounded-lg border-2 border-red-300">
-                <h4 className="font-bold text-red-700 mb-2">❌ Критически сложный день</h4>
-                <p className="text-3xl font-bold text-red-600">
-                  ~{editedScoringConfig.base_score + 
-                     editedScoringConfig.personal_energy_zero + 
-                     editedScoringConfig.soul_hostility + 
-                     editedScoringConfig.mind_hostility + 
-                     editedScoringConfig.destiny_hostility + 
-                     editedScoringConfig.planet_strength_low}
-                </p>
-                <p className="text-xs text-gray-600 mt-1">Минимальная оценка</p>
-              </div>
-              
-              <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-300">
-                <h4 className="font-bold text-blue-700 mb-2">📊 Обычный день</h4>
-                <p className="text-3xl font-bold text-blue-600">
-                  {editedScoringConfig.base_score} - {editedScoringConfig.base_score + 20}
-                </p>
-                <p className="text-xs text-gray-600 mt-1">Нормальная оценка</p>
-              </div>
-              
-              <div className="bg-green-50 p-4 rounded-lg border-2 border-green-300">
-                <h4 className="font-bold text-green-700 mb-2">✨ Идеальный день</h4>
-                <p className="text-3xl font-bold text-green-600">
-                  ~{editedScoringConfig.base_score + 
-                     editedScoringConfig.personal_energy_high + 
-                     editedScoringConfig.soul_friendship + 
-                     editedScoringConfig.mind_friendship + 
-                     editedScoringConfig.planet_strength_high + 
-                     editedScoringConfig.birthday_bonus + 
-                     editedScoringConfig.planet_friendship + 
-                     editedScoringConfig.global_harmony_bonus}
-                </p>
-                <p className="text-xs text-gray-600 mt-1">Максимальная оценка</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  };
-
   const renderConsultationsTab = () => (
     <div className="space-y-6">
+      {consultationAction && <Alert role={consultationAction.error ? 'alert' : 'status'}><AlertDescription>{consultationAction.message}</AlertDescription></Alert>}
       {/* Header with Create Button */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <h3 className="text-base sm:text-lg font-semibold">Личные консультации</h3>
         <Button
+          disabled={savingConsultation || uploadingVideo}
           onClick={() => {
             setEditingConsultation({
               isNew: true,
@@ -2445,6 +1769,7 @@ const AdminPanel = () => {
             <CardTitle className="flex items-center justify-between text-blue-800">
               <span>{editingConsultation.isNew ? 'Создание консультации' : 'Редактирование консультации'}</span>
               <Button
+          disabled={savingConsultation || uploadingVideo}
                 variant="ghost"
                 size="sm"
                 onClick={() => setEditingConsultation(null)}
@@ -2454,30 +1779,34 @@ const AdminPanel = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 p-6">
+            <fieldset disabled={savingConsultation || uploadingVideo} className="space-y-4 min-w-0">
             {/* Поля формы */}
             <div>
-              <Label>Название консультации</Label>
+              <Label htmlFor="consultation-title">Название консультации</Label>
               <Input
                 type="text"
-                placeholder="Введите название консультации"
+                id="consultation-title" placeholder="Введите название консультации"
                 value={editingConsultation.title || ''}
                 onChange={(e) => setEditingConsultation({...editingConsultation, title: e.target.value})}
               />
             </div>
 
             <div>
-              <Label>Стоимость (в кредитах)</Label>
+              <Label htmlFor="consultation-cost">Стоимость (в кредитах)</Label>
               <Input
                 type="number"
-                placeholder="10000"
-                value={editingConsultation.cost_credits || 10000}
-                onChange={(e) => setEditingConsultation({...editingConsultation, cost_credits: parseInt(e.target.value)})}
+                id="consultation-cost" placeholder="10000"
+                min="0" step="1"
+                value={editingConsultation.cost_credits ?? ''}
+                onChange={(e) => setEditingConsultation({...editingConsultation, cost_credits: e.target.value === '' ? '' : Number(e.target.value)})}
               />
             </div>
 
             {/* Выбор ученика с поиском */}
             <div>
-              <Label>Назначить ученику</Label>
+              <Label htmlFor="consultation-user">Назначить ученику</Label>
+              {usersLoadError && <p role="alert">{usersLoadError} <Button variant="outline" onClick={fetchUsers}>Повторить загрузку учеников</Button></p>}
+              {loading && <p role="status">Загрузка учеников…</p>}
               <div className="space-y-2">
                 <Input
                   type="text"
@@ -2487,7 +1816,7 @@ const AdminPanel = () => {
                   className="mb-2"
                 />
                 
-                <select
+                <select id="consultation-user"
                   className="w-full p-2 border rounded-md"
                   value={editingConsultation.assigned_user_id || ''}
                   onChange={(e) => {
@@ -2512,8 +1841,8 @@ const AdminPanel = () => {
             </div>
 
             <div>
-              <Label>Описание консультации</Label>
-              <textarea
+              <Label htmlFor="consultation-description">Описание консультации</Label>
+              <textarea id="consultation-description"
                 className="w-full p-2 border rounded-md"
                 rows="4"
                 placeholder="Описание консультации для студента"
@@ -2521,6 +1850,8 @@ const AdminPanel = () => {
                 onChange={(e) => setEditingConsultation({...editingConsultation, description: e.target.value})}
               />
             </div>
+
+            <label className="flex items-center gap-2"><input id="consultation-active" type="checkbox" checked={editingConsultation.is_active !== false} onChange={event => setEditingConsultation(previous => ({ ...previous, is_active: event.target.checked }))} />Консультация активна</label>
 
             {/* Video Upload */}
             <div>
@@ -2534,21 +1865,15 @@ const AdminPanel = () => {
                   disabled={uploadingVideo}
                 />
                 {uploadingVideo && <p className="text-sm text-blue-600 mt-2">Загружается видео...</p>}
-                {editingConsultation.video_filename && (
+                {editingConsultation.video_file_id && (
                   <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded flex justify-between items-center">
-                    <p className="text-sm text-green-600">✓ Видео: {editingConsultation.video_filename}</p>
+                    <p className="text-sm text-green-600">✓ Видео: {editingConsultation.video_filename || 'Файл прикреплён'}</p>
                     <Button 
+          disabled={savingConsultation || uploadingVideo}
                       size="sm" 
                       variant="outline"
                       onClick={() => {
-                        const videoUrl = editingConsultation.video_file_id 
-                          ? `${backendUrl}/api/consultations/video/${editingConsultation.video_file_id}`
-                          : editingConsultation.video_url;
-                        setSelectedLessonVideo({
-                          url: videoUrl,
-                          title: `Предпросмотр: ${editingConsultation.title || 'Консультация'}`,
-                          consultation: editingConsultation
-                        });
+                        previewConsultationFile(editingConsultation, 'video');
                       }}
                     >
                       <Eye className="w-3 h-3 mr-1" />
@@ -2571,18 +1896,15 @@ const AdminPanel = () => {
                   disabled={uploadingVideo}
                 />
                 {uploadingVideo && <p className="text-sm text-blue-600 mt-2">Загружается PDF...</p>}
-                {editingConsultation.pdf_filename && (
+                {editingConsultation.pdf_file_id && (
                   <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded flex justify-between items-center">
-                    <p className="text-sm text-green-600">✓ PDF: {editingConsultation.pdf_filename}</p>
+                    <p className="text-sm text-green-600">✓ PDF: {editingConsultation.pdf_filename || 'Файл прикреплён'}</p>
                     <Button 
+          disabled={savingConsultation || uploadingVideo}
                       size="sm" 
                       variant="outline"
                       onClick={() => {
-                        setSelectedLessonPDF({
-                          url: `${backendUrl}/api/consultations/pdf/${editingConsultation.pdf_file_id}`,
-                          title: `PDF: ${editingConsultation.title || 'Консультация'}`,
-                          consultation: editingConsultation
-                        });
+                        previewConsultationFile(editingConsultation, 'pdf');
                       }}
                     >
                       <Eye className="w-3 h-3 mr-1" />
@@ -2596,12 +1918,14 @@ const AdminPanel = () => {
             {/* Кнопки действий */}
             <div className="flex justify-between">
               <Button 
+          disabled={savingConsultation || uploadingVideo}
                 variant="outline"
                 onClick={() => setEditingConsultation(null)}
               >
                 Отмена
               </Button>
               <Button 
+          disabled={savingConsultation || uploadingVideo}
                 onClick={() => {
                   const consultationData = {
                     title: editingConsultation.title,
@@ -2623,17 +1947,19 @@ const AdminPanel = () => {
                     updateConsultation(editingConsultation.id, consultationData);
                   }
                 }}
-                disabled={!editingConsultation.title || !editingConsultation.assigned_user_id}
+
               >
                 <Save className="w-4 h-4 mr-2" />
-                {editingConsultation.isNew ? 'Создать консультацию' : 'Сохранить изменения'}
+                {savingConsultation ? 'Сохранение…' : editingConsultation.isNew ? 'Создать консультацию' : 'Сохранить изменения'}
               </Button>
             </div>
+            </fieldset>
           </CardContent>
         </Card>
       )}
 
       {/* Consultations List */}
+      {consultationsError && <Alert role="alert"><AlertDescription>{consultationsError} <Button variant="outline" onClick={fetchConsultations}>Повторить</Button></AlertDescription></Alert>}
       {loadingConsultations ? (
         <div className="text-center py-8">Загрузка консультаций...</div>
       ) : (
@@ -2687,14 +2013,11 @@ const AdminPanel = () => {
                         <div className="flex gap-2">
                           {consultation.video_file_id && (
                             <Button
+          disabled={savingConsultation || uploadingVideo}
                               size="sm"
                               variant="outline"
                               onClick={() => {
-                                setSelectedLessonVideo({
-                                  url: `${backendUrl}/api/consultations/video/${consultation.video_file_id}`,
-                                  title: `Видео: ${consultation.title}`,
-                                  consultation: consultation
-                                });
+                                previewConsultationFile(consultation, 'video');
                               }}
                               className="flex-1"
                             >
@@ -2704,14 +2027,11 @@ const AdminPanel = () => {
                           )}
                           {consultation.pdf_file_id && (
                             <Button
+          disabled={savingConsultation || uploadingVideo}
                               size="sm"
                               variant="outline"
                               onClick={() => {
-                                setSelectedLessonPDF({
-                                  url: `${backendUrl}/api/consultations/pdf/${consultation.pdf_file_id}`,
-                                  title: `PDF: ${consultation.title}`,
-                                  consultation: consultation
-                                });
+                                previewConsultationFile(consultation, 'pdf');
                               }}
                               className="flex-1"
                             >
@@ -2741,6 +2061,7 @@ const AdminPanel = () => {
                     {/* Кнопки управления */}
                     <div className="flex gap-2">
                       <Button
+          disabled={savingConsultation || uploadingVideo}
                         size="sm"
                         variant="outline"
                         onClick={() => {
@@ -2751,6 +2072,7 @@ const AdminPanel = () => {
                         <Edit3 className="w-3 h-3" />
                       </Button>
                       <Button
+          disabled={savingConsultation || uploadingVideo}
                         size="sm"
                         variant="outline"
                         onClick={() => deleteConsultation(consultation.id)}
@@ -2764,7 +2086,7 @@ const AdminPanel = () => {
                     {/* Индикатор стоимости */}
                     <div className="text-right">
                       <Badge variant="secondary" className="text-xs">
-                        {consultation.cost_credits.toLocaleString()} баллов
+                        {Number.isFinite(consultation.cost_credits) ? consultation.cost_credits.toLocaleString() : '—'} баллов
                       </Badge>
                     </div>
                   </div>
@@ -2773,7 +2095,7 @@ const AdminPanel = () => {
             </Card>
           ))}
           
-          {consultations.length === 0 && (
+          {consultations.length === 0 && !consultationsError && (
             <div className="text-center py-8 text-gray-500">
               <Video className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p className="text-lg">Консультаций пока нет</p>
@@ -5302,7 +4624,7 @@ const AdminPanel = () => {
 
   return (
     <div className="space-y-6">
-      <Card>
+      {!embedded && <Card>
         <CardHeader>
           <CardTitle className="text-lg sm:text-2xl flex items-center">
             <Settings className="w-5 h-5 sm:w-6 sm:h-6 mr-2" />
@@ -5312,10 +4634,10 @@ const AdminPanel = () => {
             Управление пользователями, кредитами и учебными материалами
           </CardDescription>
         </CardHeader>
-      </Card>
+      </Card>}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className={`grid w-full ${canManageLessonsV2 ? 'grid-cols-5' : 'grid-cols-4'}`}>
+        {!embedded && <TabsList className={`grid w-full ${canManageLessonsV2 ? 'grid-cols-4' : 'grid-cols-3'}`}>
           <TabsTrigger value="users" className="flex items-center justify-center px-1 sm:px-3" title="Ученики">
             <Users className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Ученики</span>
@@ -5330,15 +4652,11 @@ const AdminPanel = () => {
               <span className="hidden sm:inline">Уроки V2</span>
             </TabsTrigger>
           )}
-          <TabsTrigger value="scoring" className="flex items-center justify-center px-1 sm:px-3" title="Система баллов">
-            <Target className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">Баллы</span>
-          </TabsTrigger>
           <TabsTrigger value="settings" className="flex items-center justify-center px-1 sm:px-3" title="Настройки">
             <Settings className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Настройки</span>
           </TabsTrigger>
-        </TabsList>
+        </TabsList>}
 
         <TabsContent value="users" className="space-y-6">
           {renderUsersTab()}
@@ -5355,13 +4673,10 @@ const AdminPanel = () => {
 
         {canManageLessonsV2 && (
           <TabsContent value="lessons-v2" className="space-y-6">
-            <AdminPanelV2 />
+            <AdminPanelV2 embedded={embedded} />
           </TabsContent>
         )}
 
-        <TabsContent value="scoring" className="space-y-6">
-          {renderScoringTab()}
-        </TabsContent>
 
         <TabsContent value="settings" className="space-y-6">
           <Card>
@@ -5374,7 +4689,7 @@ const AdminPanel = () => {
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Управление начислением баллов за обучение */}
-              <Card className="bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-200">
+              <Card data-admin-config="learning-points-config" className="bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-200">
                 <CardHeader>
                   <CardTitle className="flex items-center text-yellow-900">
                     <Award className="w-5 h-5 mr-2" />
@@ -5383,6 +4698,8 @@ const AdminPanel = () => {
                   <CardDescription>Настройте количество баллов, начисляемых за различные действия студентов</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <fieldset disabled={savingLearningPointsConfig} className="space-y-4 min-w-0">
+                  {renderConfigFeedback('learning-points-config')}
                   {loadingLearningPointsConfig ? (
                     <div className="text-center py-4">Загрузка настроек...</div>
                   ) : !editedLearningPointsConfig ? (
@@ -5410,7 +4727,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedLearningPointsConfig?.video_points_per_minute || 1}
+                                  value={editedLearningPointsConfig?.video_points_per_minute ?? 1}
                                   onChange={(e) => setEditedLearningPointsConfig({
                                     ...editedLearningPointsConfig,
                                     video_points_per_minute: parseInt(e.target.value) || 0
@@ -5426,7 +4743,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedLearningPointsConfig?.pdf_points_per_view || 5}
+                                  value={editedLearningPointsConfig?.pdf_points_per_view ?? 5}
                                   onChange={(e) => setEditedLearningPointsConfig({
                                     ...editedLearningPointsConfig,
                                     pdf_points_per_view: parseInt(e.target.value) || 0
@@ -5442,7 +4759,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedLearningPointsConfig?.media_points_per_view || 10}
+                                  value={editedLearningPointsConfig?.media_points_per_view ?? 10}
                                   onChange={(e) => setEditedLearningPointsConfig({
                                     ...editedLearningPointsConfig,
                                     media_points_per_view: parseInt(e.target.value) || 0
@@ -5458,7 +4775,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedLearningPointsConfig?.time_points_per_minute || 1}
+                                  value={editedLearningPointsConfig?.time_points_per_minute ?? 1}
                                   onChange={(e) => setEditedLearningPointsConfig({
                                     ...editedLearningPointsConfig,
                                     time_points_per_minute: parseInt(e.target.value) || 0
@@ -5474,7 +4791,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedLearningPointsConfig?.challenge_points_per_day || 10}
+                                  value={editedLearningPointsConfig?.challenge_points_per_day ?? 10}
                                   onChange={(e) => setEditedLearningPointsConfig({
                                     ...editedLearningPointsConfig,
                                     challenge_points_per_day: parseInt(e.target.value) || 0
@@ -5490,7 +4807,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedLearningPointsConfig?.challenge_bonus_points || 50}
+                                  value={editedLearningPointsConfig?.challenge_bonus_points ?? 50}
                                   onChange={(e) => setEditedLearningPointsConfig({
                                     ...editedLearningPointsConfig,
                                     challenge_bonus_points: parseInt(e.target.value) || 0
@@ -5506,7 +4823,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedLearningPointsConfig?.quiz_points_per_attempt || 10}
+                                  value={editedLearningPointsConfig?.quiz_points_per_attempt ?? 10}
                                   onChange={(e) => setEditedLearningPointsConfig({
                                     ...editedLearningPointsConfig,
                                     quiz_points_per_attempt: parseInt(e.target.value) || 0
@@ -5514,7 +4831,7 @@ const AdminPanel = () => {
                                   className="h-8 w-24 text-sm"
                                 />
                               </td>
-                              <td className="p-2 text-xs text-gray-600">Сколько баллов начисляется за успешное прохождение теста</td>
+                              <td className="p-2 text-xs text-gray-600">Начисляются за первое успешное прохождение теста урока; повторные попытки не дают новых баллов</td>
                             </tr>
                             <tr className="border-b hover:bg-gray-50">
                               <td className="p-2">Баллы за выполнение упражнения</td>
@@ -5522,7 +4839,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedLearningPointsConfig?.exercise_points_per_submission || 10}
+                                  value={editedLearningPointsConfig?.exercise_points_per_submission ?? 10}
                                   onChange={(e) => setEditedLearningPointsConfig({
                                     ...editedLearningPointsConfig,
                                     exercise_points_per_submission: parseInt(e.target.value) || 0
@@ -5557,435 +4874,12 @@ const AdminPanel = () => {
                       </div>
                     </>
                   )}
-                </CardContent>
-              </Card>
-
-              {/* Управление стоимостью услуг нумерологии */}
-              <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
-                <CardHeader>
-                  <CardTitle className="flex items-center text-purple-900">
-                    <Sparkles className="w-5 h-5 mr-2" />
-                    Управление стоимостью услуг нумерологии
-                  </CardTitle>
-                  <CardDescription>Настройте количество баллов, списываемых за все типы услуг (нумерология, ведическое время, тесты, обучение, отчёты)</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {loadingCreditsDeductionConfig ? (
-                    <div className="text-center py-4">Загрузка настроек...</div>
-                  ) : !editedCreditsDeductionConfig ? (
-                    <div className="text-center py-4">
-                      <p className="text-gray-500 mb-2">Конфигурация не загружена</p>
-                      <Button onClick={fetchCreditsDeductionConfig} variant="outline">
-                        Загрузить конфигурацию
-                      </Button>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm border-collapse">
-                          <thead>
-                            <tr className="bg-purple-50 border-b-2 border-purple-200">
-                              <th className="text-left p-2 font-semibold text-purple-900">Параметр</th>
-                              <th className="text-left p-2 font-semibold text-purple-900">Значение</th>
-                              <th className="text-left p-2 font-semibold text-purple-900">Описание</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {/* Нумерология */}
-                            <tr className="bg-gray-50">
-                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Нумерология</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Нумерология имени</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.name_numerology || 1}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    name_numerology: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта нумерологии имени</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Расчёт персональных чисел</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.personal_numbers || 1}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    personal_numbers: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта персональных чисел</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Квадрат Пифагора</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.pythagorean_square || 1}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    pythagorean_square: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта квадрата Пифагора</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Совместимость пары</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.compatibility_pair || 1}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    compatibility_pair: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта совместимости пары</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Групповая совместимость</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.group_compatibility || 5}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    group_compatibility: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость расчёта групповой совместимости</td>
-                            </tr>
-
-                            {/* Ведическое время */}
-                            <tr className="bg-gray-50">
-                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Ведическое время</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Ведическое время на день</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.vedic_daily || 1}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    vedic_daily: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость ведического времени на день</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Планетарный маршрут на день</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_daily || 1}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    planetary_daily: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на день</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Планетарный маршрут на неделю</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_weekly || 10}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    planetary_weekly: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на неделю</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Планетарный маршрут на месяц</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_monthly || 30}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    planetary_monthly: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на месяц</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Планетарный маршрут на квартал</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_quarterly || 100}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    planetary_quarterly: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость планетарного маршрута на квартал</td>
-                            </tr>
-
-                            {/* Динамика энергии планет */}
-                            <tr className="bg-gray-50">
-                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Динамика энергии планет</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Динамика энергии на неделю</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_energy_weekly || 10}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    planetary_energy_weekly: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость динамики энергии на неделю</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Динамика энергии на месяц</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_energy_monthly || 30}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    planetary_energy_monthly: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость динамики энергии на месяц</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Динамика энергии на квартал</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_energy_quarterly || 100}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    planetary_energy_quarterly: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость динамики энергии на квартал</td>
-                            </tr>
-
-                            {/* Тесты/Квизы */}
-                            <tr className="bg-gray-50">
-                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Тесты/Квизы</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Тест личности</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.personality_test || 1}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    personality_test: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость прохождения теста личности</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Прохождение Quiz</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.quiz_completion || 1}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    quiz_completion: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость прохождения Quiz</td>
-                            </tr>
-
-                            {/* Обучение */}
-                            <tr className="bg-gray-50">
-                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Обучение</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Просмотр урока</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.lesson_viewing || 10}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    lesson_viewing: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость просмотра урока</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">Просмотр материалов</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.material_viewing || 1}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    material_viewing: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость просмотра материалов</td>
-                            </tr>
-
-                            {/* Отчёты */}
-                            <tr className="bg-gray-50">
-                              <td colSpan="3" className="p-2 font-semibold text-purple-800">Отчёты</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">PDF отчёт по нумерологии</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.pdf_report_numerology || 5}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    pdf_report_numerology: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость PDF отчёта по нумерологии</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">HTML отчёт по нумерологии</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.html_report_numerology || 3}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    html_report_numerology: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость HTML отчёта по нумерологии</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">PDF отчёт по совместимости</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.pdf_report_compatibility || 5}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    pdf_report_compatibility: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость PDF отчёта по совместимости</td>
-                            </tr>
-                            <tr className="border-b hover:bg-gray-50">
-                              <td className="p-2">HTML отчёт по совместимости</td>
-                              <td className="p-2">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  value={editedCreditsDeductionConfig?.html_report_compatibility || 3}
-                                  onChange={(e) => setEditedCreditsDeductionConfig({
-                                    ...editedCreditsDeductionConfig,
-                                    html_report_compatibility: parseInt(e.target.value) || 0
-                                  })}
-                                  className="h-8 w-24 text-sm"
-                                />
-                              </td>
-                              <td className="p-2 text-xs text-gray-600">Стоимость HTML отчёта по совместимости</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-
-                      <div className="flex justify-end gap-2 pt-4 border-t">
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            setEditedCreditsDeductionConfig(creditsDeductionConfig);
-                          }}
-                          disabled={savingCreditsDeductionConfig}
-                        >
-                          Отмена
-                        </Button>
-                        <Button
-                          onClick={saveCreditsDeductionConfig}
-                          disabled={savingCreditsDeductionConfig}
-                          className="bg-purple-600 hover:bg-purple-700"
-                        >
-                          {savingCreditsDeductionConfig ? 'Сохранение...' : 'Сохранить настройки'}
-                          <Save className="w-4 h-4 ml-2" />
-                        </Button>
-                      </div>
-                    </>
-                  )}
+                                  </fieldset>
                 </CardContent>
               </Card>
 
               {/* Единая конфигурация списания баллов */}
-              <Card className="bg-gradient-to-r from-indigo-50 to-cyan-50 border-indigo-200">
+              <Card data-admin-config="credits-deduction-config" className="bg-gradient-to-r from-indigo-50 to-cyan-50 border-indigo-200">
                 <CardHeader>
                   <CardTitle className="flex items-center text-indigo-900">
                     <CreditCard className="w-5 h-5 mr-2" />
@@ -5994,6 +4888,8 @@ const AdminPanel = () => {
                   <CardDescription>Управление всеми списаниями баллов в единой системе (нумерология, ведическое время, тесты, обучение, отчёты)</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <fieldset disabled={savingCreditsDeductionConfig} className="space-y-4 min-w-0">
+                  {renderConfigFeedback('credits-deduction-config')}
                   {loadingCreditsDeductionConfig ? (
                     <div className="text-center py-4">Загрузка настроек...</div>
                   ) : !editedCreditsDeductionConfig ? (
@@ -6025,7 +4921,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.name_numerology || 1}
+                                  value={editedCreditsDeductionConfig?.name_numerology ?? 1}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     name_numerology: parseInt(e.target.value) || 0
@@ -6035,13 +4931,23 @@ const AdminPanel = () => {
                               </td>
                               <td className="p-2 text-xs text-gray-600">Стоимость расчёта нумерологии имени</td>
                             </tr>
+                            {[['address_numerology', 'Нумерология адреса'], ['car_numerology', 'Нумерология автомобиля']].map(([key, label]) => (
+                              <tr key={key} className="border-b hover:bg-gray-50">
+                                <td className="p-2">{label}</td>
+                                <td className="p-2"><Input aria-label={`Стоимость: ${label}`} type="number" min="0" max="1000000" step="1"
+                                  value={editedCreditsDeductionConfig?.[key] ?? 1}
+                                  onChange={(e) => setEditedCreditsDeductionConfig({...editedCreditsDeductionConfig, [key]: Number(e.target.value)})}
+                                  className="h-8 w-24 text-sm" /></td>
+                                <td className="p-2 text-xs text-gray-600">Стоимость нового расчёта; история и озвучка бесплатны</td>
+                              </tr>
+                            ))}
                             <tr className="border-b hover:bg-gray-50">
                               <td className="p-2">Расчёт персональных чисел</td>
                               <td className="p-2">
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.personal_numbers || 1}
+                                  value={editedCreditsDeductionConfig?.personal_numbers ?? 1}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     personal_numbers: parseInt(e.target.value) || 0
@@ -6057,7 +4963,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.pythagorean_square || 1}
+                                  value={editedCreditsDeductionConfig?.pythagorean_square ?? 1}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     pythagorean_square: parseInt(e.target.value) || 0
@@ -6073,7 +4979,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.compatibility_pair || 1}
+                                  value={editedCreditsDeductionConfig?.compatibility_pair ?? 1}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     compatibility_pair: parseInt(e.target.value) || 0
@@ -6089,7 +4995,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.group_compatibility || 5}
+                                  value={editedCreditsDeductionConfig?.group_compatibility ?? 5}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     group_compatibility: parseInt(e.target.value) || 0
@@ -6110,7 +5016,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.vedic_daily || 1}
+                                  value={editedCreditsDeductionConfig?.vedic_daily ?? 1}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     vedic_daily: parseInt(e.target.value) || 0
@@ -6126,7 +5032,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_daily || 1}
+                                  value={editedCreditsDeductionConfig?.planetary_daily ?? 1}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     planetary_daily: parseInt(e.target.value) || 0
@@ -6142,7 +5048,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_weekly || 10}
+                                  value={editedCreditsDeductionConfig?.planetary_weekly ?? 10}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     planetary_weekly: parseInt(e.target.value) || 0
@@ -6158,7 +5064,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_monthly || 30}
+                                  value={editedCreditsDeductionConfig?.planetary_monthly ?? 30}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     planetary_monthly: parseInt(e.target.value) || 0
@@ -6174,7 +5080,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_quarterly || 100}
+                                  value={editedCreditsDeductionConfig?.planetary_quarterly ?? 100}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     planetary_quarterly: parseInt(e.target.value) || 0
@@ -6195,7 +5101,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_energy_weekly || 10}
+                                  value={editedCreditsDeductionConfig?.planetary_energy_weekly ?? 10}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     planetary_energy_weekly: parseInt(e.target.value) || 0
@@ -6211,7 +5117,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_energy_monthly || 30}
+                                  value={editedCreditsDeductionConfig?.planetary_energy_monthly ?? 30}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     planetary_energy_monthly: parseInt(e.target.value) || 0
@@ -6227,7 +5133,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.planetary_energy_quarterly || 100}
+                                  value={editedCreditsDeductionConfig?.planetary_energy_quarterly ?? 100}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     planetary_energy_quarterly: parseInt(e.target.value) || 0
@@ -6248,7 +5154,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.personality_test || 1}
+                                  value={editedCreditsDeductionConfig?.personality_test ?? 1}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     personality_test: parseInt(e.target.value) || 0
@@ -6264,7 +5170,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.quiz_completion || 1}
+                                  value={editedCreditsDeductionConfig?.quiz_completion ?? 1}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     quiz_completion: parseInt(e.target.value) || 0
@@ -6285,7 +5191,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.lesson_viewing || 10}
+                                  value={editedCreditsDeductionConfig?.lesson_viewing ?? 10}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     lesson_viewing: parseInt(e.target.value) || 0
@@ -6301,7 +5207,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.material_viewing || 1}
+                                  value={editedCreditsDeductionConfig?.material_viewing ?? 1}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     material_viewing: parseInt(e.target.value) || 0
@@ -6322,7 +5228,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.pdf_report_numerology || 5}
+                                  value={editedCreditsDeductionConfig?.pdf_report_numerology ?? 5}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     pdf_report_numerology: parseInt(e.target.value) || 0
@@ -6338,7 +5244,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.html_report_numerology || 3}
+                                  value={editedCreditsDeductionConfig?.html_report_numerology ?? 3}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     html_report_numerology: parseInt(e.target.value) || 0
@@ -6354,7 +5260,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.pdf_report_compatibility || 5}
+                                  value={editedCreditsDeductionConfig?.pdf_report_compatibility ?? 5}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     pdf_report_compatibility: parseInt(e.target.value) || 0
@@ -6370,7 +5276,7 @@ const AdminPanel = () => {
                                 <Input
                                   type="number"
                                   min="0"
-                                  value={editedCreditsDeductionConfig?.html_report_compatibility || 3}
+                                  value={editedCreditsDeductionConfig?.html_report_compatibility ?? 3}
                                   onChange={(e) => setEditedCreditsDeductionConfig({
                                     ...editedCreditsDeductionConfig,
                                     html_report_compatibility: parseInt(e.target.value) || 0
@@ -6405,11 +5311,12 @@ const AdminPanel = () => {
                       </div>
                     </>
                   )}
+                                  </fieldset>
                 </CardContent>
               </Card>
 
               {/* Настройки модификаторов энергии планет */}
-              <Card className="bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200">
+              <Card data-admin-config="planetary-energy-modifiers-config" className="bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200">
                 <CardHeader>
                   <CardTitle className="flex items-center text-emerald-900">
                     <Sparkles className="w-5 h-5 mr-2" />
@@ -6418,6 +5325,8 @@ const AdminPanel = () => {
                   <CardDescription>Управление процентными соотношениями для расчёта энергии планет в динамике</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <fieldset disabled={savingPlanetaryEnergyModifiersConfig} className="space-y-4 min-w-0">
+                  {renderConfigFeedback('planetary-energy-modifiers-config')}
                   {loadingPlanetaryEnergyModifiersConfig ? (
                     <div className="text-center py-4">Загрузка настроек...</div>
                   ) : !editedPlanetaryEnergyModifiersConfig ? (
@@ -6966,11 +5875,12 @@ const AdminPanel = () => {
                       </div>
                     </>
                   )}
+                                  </fieldset>
                 </CardContent>
               </Card>
 
               {/* Настройки месячного планетарного маршрута */}
-              <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
+              <Card data-admin-config="monthly-route-config" className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
                 <CardHeader>
                   <CardTitle className="flex items-center text-purple-900">
                     <CalendarRange className="w-5 h-5 mr-2" />
@@ -6979,6 +5889,8 @@ const AdminPanel = () => {
                   <CardDescription>Настройка порогов и параметров для классификации дней, недель, сфер жизни и трендов</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <fieldset disabled={savingMonthlyRouteConfig} className="space-y-4 min-w-0">
+                  {renderConfigFeedback('monthly-route-config')}
                   {loadingMonthlyRouteConfig ? (
                     <div className="text-center py-4">Загрузка настроек...</div>
                   ) : !editedMonthlyRouteConfig ? (
@@ -7025,7 +5937,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.favorable_day_threshold || 60.0}
+                                  value={editedMonthlyRouteConfig.favorable_day_threshold ?? 60.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     favorable_day_threshold: parseFloat(e.target.value) || 60.0
@@ -7043,7 +5955,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.best_day_threshold || 70.0}
+                                  value={editedMonthlyRouteConfig.best_day_threshold ?? 70.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     best_day_threshold: parseFloat(e.target.value) || 70.0
@@ -7061,7 +5973,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.challenging_day_threshold || 40.0}
+                                  value={editedMonthlyRouteConfig.challenging_day_threshold ?? 40.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     challenging_day_threshold: parseFloat(e.target.value) || 40.0
@@ -7084,7 +5996,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.high_energy_week_threshold || 70.0}
+                                  value={editedMonthlyRouteConfig.high_energy_week_threshold ?? 70.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     high_energy_week_threshold: parseFloat(e.target.value) || 70.0
@@ -7102,7 +6014,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.low_energy_week_threshold || 40.0}
+                                  value={editedMonthlyRouteConfig.low_energy_week_threshold ?? 40.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     low_energy_week_threshold: parseFloat(e.target.value) || 40.0
@@ -7120,7 +6032,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.favorable_week_threshold || 60.0}
+                                  value={editedMonthlyRouteConfig.favorable_week_threshold ?? 60.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     favorable_week_threshold: parseFloat(e.target.value) || 60.0
@@ -7138,7 +6050,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.challenging_week_threshold || 40.0}
+                                  value={editedMonthlyRouteConfig.challenging_week_threshold ?? 40.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     challenging_week_threshold: parseFloat(e.target.value) || 40.0
@@ -7155,7 +6067,7 @@ const AdminPanel = () => {
                                   type="number"
                                   min="1"
                                   max="7"
-                                  value={editedMonthlyRouteConfig.many_favorable_days_threshold || 5}
+                                  value={editedMonthlyRouteConfig.many_favorable_days_threshold ?? 5}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     many_favorable_days_threshold: parseInt(e.target.value) || 5
@@ -7172,7 +6084,7 @@ const AdminPanel = () => {
                                   type="number"
                                   min="1"
                                   max="7"
-                                  value={editedMonthlyRouteConfig.several_challenging_days_threshold || 3}
+                                  value={editedMonthlyRouteConfig.several_challenging_days_threshold ?? 3}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     several_challenging_days_threshold: parseInt(e.target.value) || 3
@@ -7195,7 +6107,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.sphere_excellent_threshold || 70.0}
+                                  value={editedMonthlyRouteConfig.sphere_excellent_threshold ?? 70.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     sphere_excellent_threshold: parseFloat(e.target.value) || 70.0
@@ -7213,7 +6125,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.sphere_good_threshold || 55.0}
+                                  value={editedMonthlyRouteConfig.sphere_good_threshold ?? 55.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     sphere_good_threshold: parseFloat(e.target.value) || 55.0
@@ -7231,7 +6143,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.sphere_satisfactory_threshold || 40.0}
+                                  value={editedMonthlyRouteConfig.sphere_satisfactory_threshold ?? 40.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     sphere_satisfactory_threshold: parseFloat(e.target.value) || 40.0
@@ -7249,7 +6161,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.sphere_best_days_threshold || 70.0}
+                                  value={editedMonthlyRouteConfig.sphere_best_days_threshold ?? 70.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     sphere_best_days_threshold: parseFloat(e.target.value) || 70.0
@@ -7267,7 +6179,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.sphere_challenging_days_threshold || 40.0}
+                                  value={editedMonthlyRouteConfig.sphere_challenging_days_threshold ?? 40.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     sphere_challenging_days_threshold: parseFloat(e.target.value) || 40.0
@@ -7290,7 +6202,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.optimal_start_energy_threshold || 65.0}
+                                  value={editedMonthlyRouteConfig.optimal_start_energy_threshold ?? 65.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     optimal_start_energy_threshold: parseFloat(e.target.value) || 65.0
@@ -7307,7 +6219,7 @@ const AdminPanel = () => {
                                   type="number"
                                   min="1"
                                   max="10"
-                                  value={editedMonthlyRouteConfig.optimal_start_min_days || 3}
+                                  value={editedMonthlyRouteConfig.optimal_start_min_days ?? 3}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     optimal_start_min_days: parseInt(e.target.value) || 3
@@ -7325,7 +6237,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.completion_energy_min || 40.0}
+                                  value={editedMonthlyRouteConfig.completion_energy_min ?? 40.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     completion_energy_min: parseFloat(e.target.value) || 40.0
@@ -7343,7 +6255,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.completion_energy_max || 55.0}
+                                  value={editedMonthlyRouteConfig.completion_energy_max ?? 55.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     completion_energy_max: parseFloat(e.target.value) || 55.0
@@ -7360,7 +6272,7 @@ const AdminPanel = () => {
                                   type="number"
                                   min="1"
                                   max="10"
-                                  value={editedMonthlyRouteConfig.completion_min_days || 2}
+                                  value={editedMonthlyRouteConfig.completion_min_days ?? 2}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     completion_min_days: parseInt(e.target.value) || 2
@@ -7378,7 +6290,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="50"
-                                  value={editedMonthlyRouteConfig.trend_rising_threshold || 5.0}
+                                  value={editedMonthlyRouteConfig.trend_rising_threshold ?? 5.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     trend_rising_threshold: parseFloat(e.target.value) || 5.0
@@ -7396,7 +6308,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="50"
-                                  value={editedMonthlyRouteConfig.trend_declining_threshold || 5.0}
+                                  value={editedMonthlyRouteConfig.trend_declining_threshold ?? 5.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     trend_declining_threshold: parseFloat(e.target.value) || 5.0
@@ -7419,7 +6331,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.transit_peak_threshold || 85.0}
+                                  value={editedMonthlyRouteConfig.transit_peak_threshold ?? 85.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     transit_peak_threshold: parseFloat(e.target.value) || 85.0
@@ -7437,7 +6349,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.transit_low_threshold || 15.0}
+                                  value={editedMonthlyRouteConfig.transit_low_threshold ?? 15.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     transit_low_threshold: parseFloat(e.target.value) || 15.0
@@ -7454,7 +6366,7 @@ const AdminPanel = () => {
                                   type="number"
                                   min="1"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.max_transits_per_month || 20}
+                                  value={editedMonthlyRouteConfig.max_transits_per_month ?? 20}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     max_transits_per_month: parseInt(e.target.value) || 20
@@ -7477,7 +6389,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.month_high_energy_threshold || 65.0}
+                                  value={editedMonthlyRouteConfig.month_high_energy_threshold ?? 65.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     month_high_energy_threshold: parseFloat(e.target.value) || 65.0
@@ -7495,7 +6407,7 @@ const AdminPanel = () => {
                                   step="0.1"
                                   min="0"
                                   max="100"
-                                  value={editedMonthlyRouteConfig.month_low_energy_threshold || 45.0}
+                                  value={editedMonthlyRouteConfig.month_low_energy_threshold ?? 45.0}
                                   onChange={(e) => setEditedMonthlyRouteConfig({
                                     ...editedMonthlyRouteConfig,
                                     month_low_energy_threshold: parseFloat(e.target.value) || 45.0
@@ -7530,6 +6442,7 @@ const AdminPanel = () => {
                       </div>
                     </>
                   )}
+                                  </fieldset>
                 </CardContent>
               </Card>
 
@@ -7544,8 +6457,8 @@ const AdminPanel = () => {
                       Настройки уроков доступны в разделах:
                     </p>
                     <ul className="text-sm text-gray-600 space-y-1 ml-4">
-                      <li>• <strong>Материалы</strong> - редактор первого урока</li>
-                      <li>• Создание и редактирование всех уроков через API</li>
+                      <li>• <strong>Уроки и материалы</strong> — список занятий, редактор и загрузка файлов</li>
+                      <li>• Импорт урока из файла и редактирование его содержания</li>
                     </ul>
                   </CardContent>
                 </Card>
@@ -7573,7 +6486,7 @@ const AdminPanel = () => {
                       Управление пользователями
                     </h3>
                     <p className="text-sm text-gray-700 mb-3">
-                      Настройки пользователей находятся во вкладке <strong>Ученики</strong>
+                      Настройки пользователей находятся во вкладке <strong>Пользователи</strong>
                     </p>
                     <ul className="text-sm text-gray-600 space-y-1 ml-4">
                       <li>• Управление баллами и кредитами</li>
@@ -7583,7 +6496,7 @@ const AdminPanel = () => {
                   </CardContent>
                 </Card>
 
-                {user?.is_super_admin && (
+                {!embedded && user?.is_super_admin && (
                   <Card className="bg-red-50 border-red-200">
                     <CardContent className="p-4">
                       <h3 className="font-semibold text-lg mb-2 text-red-800">
@@ -7641,6 +6554,14 @@ const AdminPanel = () => {
         )}
       </Tabs>
       
+      {consultationPreview && <Dialog open onOpenChange={open => { if (!open) setConsultationPreview(null); }}>
+        <DialogContent className="max-w-4xl w-[94vw] h-[85vh] bg-white flex flex-col">
+          <DialogHeader><DialogTitle>Материалы консультации</DialogTitle><DialogDescription>{consultationPreview.original_name}</DialogDescription></DialogHeader>
+          <div className="flex-1 min-h-0 overflow-auto"><AdminFilePreview file={consultationPreview} endpoint={`/api/admin/consultations/files/${encodeURIComponent(consultationPreview.id)}`} /></div>
+          <Button variant="outline" onClick={() => setConsultationPreview(null)}>Закрыть</Button>
+        </DialogContent>
+      </Dialog>}
+
       {/* Enhanced Video Player Modal - ТОЧНО КАК В PERSONALCONSULTATIONS */}
       {selectedLessonVideo && (
         <EnhancedVideoViewer
@@ -7660,27 +6581,18 @@ const AdminPanel = () => {
         />
       )}
 
-      {/* Модальные окна для предпросмотра материалов администратором */}
-      {selectedLessonVideo && (
-        <EnhancedVideoViewer
-          videoUrl={selectedLessonVideo.url}
-          title={selectedLessonVideo.title}
-          description={`Предпросмотр администратора: ${selectedLessonVideo.consultation?.description || 'Консультация'}`}
-          onClose={() => setSelectedLessonVideo(null)}
-          backendUrl={backendUrl}
-        />
-      )}
 
-      {selectedLessonPDF && (
-        <ConsultationPDFViewer
-          pdfUrl={selectedLessonPDF.url}
-          title={selectedLessonPDF.title}
-          onClose={() => setSelectedLessonPDF(null)}
-        />
-      )}
     </div>
   );
 };
 
+
+// Keep authorization outside the editor so denied visitors never mount its effects.
+const AdminPanel = (props) => {
+  const { user, loading } = useAuth();
+  if (loading) return <p role="status">Проверяем доступ…</p>;
+  if (!user || user.is_disabled || !(user.is_super_admin || user.is_admin)) return <Alert role="alert"><AlertDescription>Доступ ограничен. Требуются права администратора.</AlertDescription></Alert>;
+  return <AdminPanelContent key={user.id} {...props} />;
+};
 
 export default AdminPanel;

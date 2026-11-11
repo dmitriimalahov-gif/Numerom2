@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
     <head>
         <meta charset="utf-8" />
+        <meta name="referrer" content="no-referrer" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content="#7c3aed" />
+        <meta name="theme-color" content="#385da5" />
         <meta name="description" content="Нумерологическая платформа для самопознания" />
         <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
         <meta http-equiv="Pragma" content="no-cache" />
@@ -13,7 +14,7 @@
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="NumerOM" />
-        <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+        <link rel="icon" type="image/svg+xml" href="%PUBLIC_URL%/favicon.svg" />
         <!--
       manifest.json provides metadata used when your web app is installed on a
       user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
@@ -30,7 +31,7 @@
         <title>Numerom | Нумерологическая платформа</title>
     </head>
     <body>
-        <noscript>You need to enable JavaScript to run this app.</noscript>
+        <noscript>Включите JavaScript, чтобы открыть NumerOM.</noscript>
         <div id="root"></div>
         <!--
       This HTML file is a template.
@@ -43,6 +44,8 @@
       To create a production bundle, use `npm run build` or `yarn build`.
     -->
         <script>
+            // Recovery URLs and password fields must never enter analytics/session replay.
+            if (!/\/(forgot-password|reset-password)\/?$/.test(window.location.pathname)) {
             !(function (t, e) {
                 var o, n, p, r;
                 e.__SV ||
@@ -108,6 +111,7 @@
                 api_host: "https://us.i.posthog.com",
                 person_profiles: "identified_only", // or 'always' to create profiles for anonymous users as well
             });
+            }
         </script>
     </body>
 </html>

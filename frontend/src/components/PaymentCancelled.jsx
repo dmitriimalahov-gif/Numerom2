@@ -1,18 +1,20 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { XCircle, ArrowLeft, CreditCard } from 'lucide-react';
 
 const PaymentCancelled = () => {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  if (params.get('service') === 'full-report') return <Navigate replace to={'/dashboard/full-report' + (params.get('order_id') ? '?order_id=' + encodeURIComponent(params.get('order_id')) : '')} />;
 
   const handleGoBack = () => {
     navigate('/');
   };
 
   const handleTryAgain = () => {
-    navigate('/', { state: { openPaymentModal: true } });
+    navigate('/payment-success');
   };
 
   return (
@@ -24,7 +26,7 @@ const PaymentCancelled = () => {
           </div>
           <CardTitle className="text-2xl">Платёж отменён</CardTitle>
           <CardDescription>
-            Вы отменили процесс оплаты. Никаких средств не было списано.
+            Вы вернулись из оплаты. Проверьте её статус в NumerOM.
           </CardDescription>
         </CardHeader>
         
@@ -32,15 +34,14 @@ const PaymentCancelled = () => {
           <div className="bg-muted/50 rounded-lg p-4">
             <h3 className="font-medium mb-2">Что произошло?</h3>
             <p className="text-sm text-muted-foreground">
-              Платёж был отменён до завершения. Возможно, вы передумали или 
-              произошла техническая ошибка в процессе оплаты.
+              Возврат на эту страницу сам по себе не подтверждает отмену. Статус платежа и начисление баллов определяет сервер после ответа Stripe.
             </p>
           </div>
 
           <div className="space-y-2">
             <Button onClick={handleTryAgain} className="w-full numerology-gradient">
               <CreditCard className="w-4 h-4 mr-2" />
-              Попробовать снова
+              Проверить оплату
             </Button>
             
             <Button onClick={handleGoBack} variant="outline" className="w-full">
