@@ -10,8 +10,10 @@ const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 
 test('nine selected-voice recordings match their source, oral transcript and bytes',()=>{
   const manifest=JSON.parse(fs.readFileSync(path.join(root,'audio-manifest.json'),'utf8'));
-  assert.equal(manifest.voice,'dmitrii-conversation-v1');
-  assert.equal(manifest.tempo,1.2);
+  assert.equal(manifest.voice,'dima golos');
+  assert.equal(manifest.provider,'omnivoice');
+  assert.equal(manifest.profile,'af750ff3');
+  assert.equal(manifest.tempo,1);
   assert.deepEqual(knowledgeNumbers,[1,2,3,4,5,6,7,8,9]);
   const hashes=new Set();
   for(const digit of knowledgeNumbers){
