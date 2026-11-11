@@ -21,7 +21,7 @@ cd Numerom2
 ```env
 MONGO_URL=mongodb://mongodb:27017
 MONGODB_DATABASE=numerom
-CORS_ORIGINS=http://localhost:5128,http://127.0.0.1:5128,https://yourdomain.com
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,https://yourdomain.com
 
 # JWT секретный ключ (сгенерируйте безопасный ключ)
 JWT_SECRET_KEY=your-secret-jwt-key-here
@@ -39,9 +39,9 @@ VAPID_PRIVATE_KEY=
 #### Frontend (.env)
 Создайте файл `frontend/.env`:
 ```env
-REACT_APP_BACKEND_URL=http://localhost:8001
+REACT_APP_BACKEND_URL=http://localhost:8000
 GENERATE_SOURCEMAP=false
-PORT=5128
+PORT=3000
 ```
 
 ### 3. Запуск проекта
@@ -57,28 +57,31 @@ docker-compose up --build -d
 
 ### 4. Доступ к приложению
 
-- **Frontend**: http://localhost:5128
-- **Backend API**: http://localhost:8001
-- **API Документация**: http://localhost:8001/docs
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8000
+- **API Документация**: http://localhost:8000/docs
 
 ### 5. Данные для входа (суперадминистратор)
 
-- **Email**: `dmitrii.malahov@gmail.com`
-- **Пароль**: `756bvy67H`
+Учётные данные суперадминистратора задаются переменными окружения (`SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`) при первом запуске и **не хранятся в репозитории**. Явные пароли по умолчанию отсутствуют.
 
 ## 📋 Структура проекта
 
 ```
-Numerom2/
-├── backend/              # FastAPI backend
-│   ├── init_lessons.py  # Автоматическое создание уроков
-│   ├── docker-entrypoint.sh
-│   └── Dockerfile
-├── frontend/            # React frontend
-│   └── Dockerfile
+Numerom/
+├── backend/              # FastAPI backend (routers/services/domain)
+│   ├── server.py        # Точка входа приложения
+│   ├── routers/         # HTTP-маршруты
+│   ├── services/        # Бизнес-логика
+│   ├── domain/          # Доменные модели
+│   └── tests/           # unittest-тесты
+├── frontend/            # React frontend (CRA/craco)
+├── mobile/              # Expo / React Native приложение
+├── packages/            # Общие пакеты: api-client, brand, knowledge, number-knowledge
+├── scripts/             # Служебные скрипты (озвучка, экспорт)
 ├── docker-compose.yml   # Docker Compose конфигурация
 ├── файлы для запуска/   # Материалы курса (автоматически загружаются)
-└── README.md
+└── docs/                # Документация
 ```
 
 ## 🔧 Управление контейнерами
@@ -141,11 +144,11 @@ cd Numerom2
 ```yaml
 backend:
   ports:
-    - "8001:8000"  # Внешний:Внутренний
+    - "8000:8000"  # Внешний:Внутренний
 
 frontend:
   ports:
-    - "5128:80"
+    - "3000:80"
 ```
 
 ### 5. Запуск
@@ -191,9 +194,9 @@ docker-compose logs -f
 При последующих запусках уроки не создаются повторно (проверка существования).
 
 ### Порты по умолчанию
-- **Backend**: 8001 (внешний) → 8000 (внутренний)
-- **Frontend**: 5128 (внешний) → 80 (внутренний)
-- **MongoDB**: 27017 (только внутри Docker сети)
+- **Backend**: 8000
+- **Frontend**: 3000
+- **MongoDB**: 27017 (локально; внутри Docker-сети обращение через `mongodb:27017`)
 
 ## 🐛 Решение проблем
 
@@ -223,4 +226,6 @@ docker-compose exec backend ls -la /app/lesson_files
 
 ## 📄 Лицензия
 
-Проект NumerOM
+Проект NumerOM — частная разработка владельца. Исходный код и материалы не распространяются публично без явного разрешения.
+
+**Озвучка и лицензия модели.** Записи чисел 1–9 и личные записи озвучиваются локальным движком OmniVoice, веса которого распространяются по лицензии **CC-BY-NC (некоммерческое использование)**. Такие записи предназначены только для личного некоммерческого использования и существующей публикации внутри проекта. Для коммерческого выпуска необходимо сначала разрешить лицензионный вопрос (коммерческие веса или замена движка); до этого записи **не включаются в коммерческую мобильную поставку**.
