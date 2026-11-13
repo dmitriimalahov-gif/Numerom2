@@ -17,7 +17,7 @@ test('every reflection traces to unchanged local material and distinguishes edit
   assert.ok(!path.isAbsolute(source.path));
   const absolute=path.resolve(root,source.path);assert.ok(absolute.startsWith(root+path.sep));
   assert.match(source.sha256,/^[a-f0-9]{64}$/);
-  const privatePdf=source.path.startsWith('backend/uploads/') && source.path.endsWith('.pdf');
+  const privatePdf=source.kind==='course_pdf' && source.path.toLowerCase().endsWith('.pdf');
   await t.test('source integrity: '+source.id,{skip:process.env.CI==='1' && privatePdf && !fs.existsSync(absolute) ? 'Private lesson PDF remains in owner runtime' : false},()=>{
    assert.equal(crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex'),source.sha256);
   });
