@@ -26,7 +26,12 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: mobile/package-lock.json
-      - run: npm ci
+      - run: |
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            sleep 5
+          done
+          exit 1
         working-directory: mobile
       - run: npm run typecheck && npm test
         working-directory: mobile

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Restricted SSH receiver for audited NumerOM browser releases. No shell commands."""
-import io,json,os,re,shutil,sys,tarfile,tempfile,time
+import fcntl,io,json,os,re,shutil,sys,tarfile,tempfile,time
 from pathlib import Path,PurePosixPath
 from urllib.request import Request,urlopen
 
@@ -60,6 +60,9 @@ def receive(sha,stream):
         if stage.exists():shutil.rmtree(stage)
 
 if __name__=='__main__':
-    try:receive(os.environ.get('SSH_ORIGINAL_COMMAND',''),sys.stdin.buffer)
+    try:
+        with (ROOT/'deploy.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            receive(os.environ.get('SSH_ORIGINAL_COMMAND',''),sys.stdin.buffer)
     except Exception as error:
         print('Deployment failed: '+type(error).__name__,file=sys.stderr);sys.exit(1)
