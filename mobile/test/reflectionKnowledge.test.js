@@ -8,7 +8,7 @@ const catalog=require('../../packages/reflection-knowledge/ru.json');
 const pairs=require('../../packages/reflection-knowledge/comparisons.json');
 const root=path.resolve(__dirname,'../..');
 
-test('every reflection traces to unchanged local material and distinguishes editorial content',()=>{
+test('every reflection traces to unchanged local material and distinguishes editorial content',async t=>{
  assert.equal(catalog.scope,'planetary_reflection');
  assert.deepEqual(catalog.items.map(item=>item.digit),[1,2,3,4,5,6,7,8,9]);
  assert.equal(new Set(catalog.sources.map(s=>s.id)).size,catalog.sources.length);
@@ -16,7 +16,11 @@ test('every reflection traces to unchanged local material and distinguishes edit
   assert.ok(source.locator&&source.title);
   assert.ok(!path.isAbsolute(source.path));
   const absolute=path.resolve(root,source.path);assert.ok(absolute.startsWith(root+path.sep));
-  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex'),source.sha256);
+  assert.match(source.sha256,/^[a-f0-9]{64}$/);
+  const privatePdf=source.path.startsWith('backend/uploads/') && source.path.endsWith('.pdf');
+  await t.test('source integrity: '+source.id,{skip:process.env.CI==='1' && privatePdf && !fs.existsSync(absolute) ? 'Private lesson PDF remains in owner runtime' : false},()=>{
+   assert.equal(crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex'),source.sha256);
+  });
  }
  for(let digit=1;digit<=9;digit++){
   const entry=numberReflection(digit);assert.ok(entry.sourceSummary);
