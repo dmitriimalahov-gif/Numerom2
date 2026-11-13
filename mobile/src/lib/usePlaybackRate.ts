@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'react';
 import {Platform} from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import {getPlaybackRate, setPlaybackRate, subscribePlaybackRate, validRate} from './playbackRate';
+import {getPlaybackRate, setPlaybackRate, subscribePlaybackRate, validRate,reportPlaybackRate} from './playbackRate';
 
 const KEY = 'numerom.playback-rate';
 let restored = false;
@@ -32,4 +32,11 @@ export function usePlaybackRate(): [number, (value: number) => void] {
     return unsubscribe;
   }, []);
   return [rate, value => persist(setPlaybackRate(value))];
+}
+
+/** Authored video tempo is the initial rate; explicit player controls override it. */
+export function useReportPlaybackRate(encodedSpeed:number): [number,(value:number)=>void] {
+  const [shared,setShared]=usePlaybackRate();
+  const [selected,setSelected]=useState<number|null>(null);
+  return [reportPlaybackRate(encodedSpeed,selected,shared),value=>{setSelected(value);setShared(value);}];
 }

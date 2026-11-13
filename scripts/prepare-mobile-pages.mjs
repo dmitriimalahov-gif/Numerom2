@@ -4,8 +4,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const output = path.resolve(process.argv[2] || 'mobile/dist-pages');
-const base = process.env.EXPO_PUBLIC_WEB_BASE_PATH || '/numerom-app';
-if (!/^\/[a-zA-Z0-9_-]+$/.test(base)) throw new Error('Invalid Pages path');
+const base = process.env.EXPO_PUBLIC_WEB_BASE_PATH ?? '/numerom-app';
+if (base && !/^\/[a-zA-Z0-9_-]+$/.test(base)) throw new Error('Invalid Pages path');
 const indexPath = path.join(output, 'index.html');
 let html = await fs.readFile(indexPath, 'utf8');
 if (!html.includes('name="numerom-telegram"')) html = html.replace('</head>', '<meta name="numerom-telegram" content="1"/></head>');

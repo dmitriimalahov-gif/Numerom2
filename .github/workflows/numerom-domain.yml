@@ -1,0 +1,52 @@
+name: Deploy NumerOM to 1.numer.om
+on:
+  push:
+    branches: [codex/numerom-production]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: numerom-domain-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_VARIANT: production
+      EXPO_PUBLIC_API_URL: https://1.numer.om
+      EXPO_PUBLIC_SITE_URL: https://1.numer.om
+      EXPO_PUBLIC_WEB_BASE_PATH: ''
+      EXPO_NO_TELEMETRY: '1'
+      CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+        working-directory: mobile
+      - run: npm run typecheck && npm test
+        working-directory: mobile
+      - run: npx expo export --platform web --output-dir dist-domain --clear
+        working-directory: mobile
+      - run: |
+          node scripts/prepare-mobile-pages.mjs mobile/dist-domain
+          node -e 'require("fs").writeFileSync("mobile/dist-domain/release.json", JSON.stringify({commit:process.env.GITHUB_SHA, built_at:new Date().toISOString()}))'
+      - name: Install restricted deployment credentials
+        env:
+          DEPLOY_KEY: ${{ secrets.NUMEROM_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.NUMEROM_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/numerom_deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/numerom_deploy ~/.ssh/known_hosts
+      - name: Atomically publish and verify
+        run: |
+          set -o pipefail
+          tar -C mobile/dist-domain -czf - . | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/numerom_deploy numerom-deploy@llm.myoguz.xyz "$GITHUB_SHA"
+          curl --fail --retry 3 https://1.numer.om/api/health
+          curl --fail https://1.numer.om/release.json

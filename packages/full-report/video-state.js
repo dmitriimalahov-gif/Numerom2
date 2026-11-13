@@ -16,12 +16,16 @@ function videoState(raw, origin) {
     result.url = mediaUrl(raw.url, origin); result.download_url = mediaUrl(raw.download_url, origin);
   } else { delete result.url; delete result.download_url; }
   if (Array.isArray(raw.chapters)) result.chapters = raw.chapters.filter(item => item && typeof item.id === 'string' && typeof item.title === 'string' && Number.isFinite(item.start_seconds) && item.start_seconds >= 0 && Number.isFinite(item.duration_seconds) && item.duration_seconds > 0);
+  if(raw.encoded_speed!==undefined && ![1,1.1,1.2].includes(raw.encoded_speed))throw new Error('Скорость видео не подтверждена.');
+  if(raw.width!==undefined && (!Number.isSafeInteger(raw.width)||raw.width<1||raw.width>4096))throw new Error('Размер видео не подтверждён.');
+  if(raw.height!==undefined && (!Number.isSafeInteger(raw.height)||raw.height<1||raw.height>4096))throw new Error('Размер видео не подтверждён.');
   return result;
 }
 function retainVideo(previous, next, now = Date.now()) {
   if (next.status !== 'ready') return { ...next, link_until: 0 };
   const sameOrigin = previous?.url && new URL(previous.url).origin === new URL(next.url).origin;
-  if (previous?.status === 'ready' && previous.link_until > now && sameOrigin) return { ...next, url: previous.url, download_url: previous.download_url, link_until: previous.link_until };
+  const sameMedia = ['encoded_speed','seconds','bytes','width','height'].every(key => previous?.[key] === next[key]);
+  if (previous?.status === 'ready' && previous.link_until > now && sameOrigin && sameMedia) return { ...next, url: previous.url, download_url: previous.download_url, link_until: previous.link_until };
   return { ...next, link_until: now + Math.max(1, next.expires_in - Math.min(30, next.expires_in / 4)) * 1000 };
 }
 function videoPollDelay(value, now = Date.now()) {

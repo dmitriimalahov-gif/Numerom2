@@ -14,6 +14,7 @@ export default function FullReport({orderId,cancelled=false}:{orderId?:string;ca
  const {api,user,session}=useSession();const uid=user!.id;
  const [catalog,setCatalog]=useState<FullReportCatalog|null>(null),[history,setHistory]=useState<FullReportOrder[]>([]),[order,setOrder]=useState<FullReportOrder|null>(null);
  const [attempt,setAttempt]=useState<FullReportAttempt|null>(null),[birth,setBirth]=useState(user?.birth_date||''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true);
+ const [deleting,setDeleting]=useState<string|null>(null);
  const [useProfile,setUseProfile]=useState(true),[preview,setPreview]=useState<ReportPreview|null>(null),[archive,setArchive]=useState<FullReportOrder|null>(null);
  const alive=useRef(true),lock=useRef(false),selection=useRef(0),scroll=useRef<ScrollView|null>(null);
  const isCurrent=useCallback(()=>alive.current&&session.getSnapshot().status==='signedIn'&&session.getSnapshot().user?.id===uid,[session,uid]);
@@ -23,6 +24,19 @@ export default function FullReport({orderId,cancelled=false}:{orderId?:string;ca
  const paymentUrl=(value:unknown)=>isTelegram?starsCheckoutUrl(value):checkoutUrl(value);
  async function openPayment(url:string){if(isTelegram){await openStarsInvoice(url);return;}if(Platform.OS==='web')window.location.assign(url);else await Linking.openURL(url);}
  const refreshHistory=useCallback(async()=>{const raw=await api.request('/full-reports/history') as {orders:unknown[]};if(!Array.isArray(raw.orders))throw new Error('История пока недоступна.');const orders=raw.orders.map(fullReportOrder);if(isCurrent())setHistory(orders);},[api,isCurrent]);
+ async function deleteOrder(id:string){
+  if(lock.current)return;
+  lock.current=true;setBusy(true);setError('');
+  try{
+   const result=await api.request(`/full-reports/${id}`,{method:'DELETE'}) as {deleted?:boolean};
+   if(!result.deleted)throw new Error('Удаление не подтверждено. Повторите попытку.');
+   if(!isCurrent())return;
+   selection.current++;if(order?.order_id===id){setOrder(null);setArchive(null);}
+   if(attempt?.order_id===id){await saveReportAttempt(uid,null);setAttempt(null);}
+   setHistory(items=>items.filter(item=>item.order_id!==id));setDeleting(null);
+  }catch(e){if(isCurrent())setError(e instanceof Error?e.message:'Не удалось удалить разбор.');}
+  finally{lock.current=false;if(isCurrent())setBusy(false);}
+ }
  const showOrder=useCallback(async(id:string)=>{const seq=++selection.current;setArchive(null);const found=fullReportOrder(await api.request(`/full-reports/${id}`));if(!isCurrent()||seq!==selection.current)return;setOrder(found);if(['paid','failed','expired'].includes(found.status)){const stored=await readReportAttempt(uid);if(!isCurrent())return;if(stored?.order_id===found.order_id){await saveReportAttempt(uid,null);if(isCurrent())setAttempt(null);}}return found;},[api,uid,isCurrent]);
  useEffect(()=>{void(async()=>{try{const [raw,pending]=await Promise.all([api.request(catalogPath),readReportAttempt(uid)]);if(!isCurrent())return;setCatalog(fullReportCatalog(raw));setAttempt(pending);if(pending){setBirth(pending.birth_date);setUseProfile(!!pending.use_profile);}await refreshHistory();const id=orderId||pending?.order_id;if(id&&/^[a-f0-9]{64}$/.test(id))await showOrder(id);}catch(e){if(isCurrent())setError(e instanceof Error?e.message:'Не удалось загрузить услугу.');}finally{if(isCurrent())setLoading(false);}})();},[api,uid,orderId,refreshHistory,showOrder,isCurrent]);
  const retry=useCallback(async()=>{if(lock.current)return;lock.current=true;setBusy(true);setError('');try{if(order)await showOrder(order.order_id);if(!isCurrent())return;await refreshHistory();if(!isCurrent())return;const next=fullReportCatalog(await api.request(catalogPath));if(isCurrent())setCatalog(next);}catch(e){if(isCurrent())setError(e instanceof Error?e.message:'Не удалось обновить заказ.');}finally{lock.current=false;if(isCurrent())setBusy(false);}},[api,order,showOrder,refreshHistory,isCurrent]);
@@ -86,9 +100,11 @@ export default function FullReport({orderId,cancelled=false}:{orderId?:string;ca
   </Card>}
   {!!order?.previous_revisions?.length&&<Card><Text style={s.title}>Версии разбора</Text><Button secondary title={`Текущая версия ${order.revision||1}`} onPress={()=>setArchive(null)}/>{order.previous_revisions.map(item=><Button key={item.revision} secondary title={`Версия ${item.revision}`} disabled={busy} onPress={()=>void openRevision(item.revision)}/>)}{archive&&<Text style={s.small}>Открыта сохранённая версия {archive.revision}. Аудио и видео доступны в текущей версии.</Text>}</Card>}
   {order?.report&&<FullReportDocument key={`${order.order_id}-${archive?.revision||order.revision||1}`} order={archive||order} archived={!!archive}/>}
-  <View style={{gap:12}}><Text style={s.title}>Мои разборы</Text>{history.length===0?<Text style={s.body}>Здесь появятся ваши заказы и готовые отчёты.</Text>:history.map(item=><Button key={item.order_id} secondary title={`${item.person?`${item.person} · `:''}${item.birth_date} · ${fullReportStatus(item.status,item.report_status)}`} disabled={busy} onPress={()=>{setError('');void showOrder(item.order_id).then(found=>{
+  <View style={{gap:12}}><Text style={s.title}>Мои разборы</Text>{history.length===0?<Text style={s.body}>Здесь появятся ваши заказы и готовые отчёты.</Text>:history.map(item=><View key={item.order_id} style={{gap:8}}><Button secondary title={`${item.person?`${item.person} · `:''}${item.birth_date} · ${fullReportStatus(item.status,item.report_status)}`} disabled={busy} onPress={()=>{setError('');void showOrder(item.order_id).then(found=>{
    // The opened report starts at the top of the page, not down at the list it was picked from.
    if(found&&isCurrent())requestAnimationFrame(()=>scroll.current?.scrollTo({y:0,animated:true}));
-  }).catch(e=>{if(isCurrent())setError(e instanceof Error?e.message:'Не удалось открыть отчёт.');});}}/>)}</View>
+  }).catch(e=>{if(isCurrent())setError(e instanceof Error?e.message:'Не удалось открыть отчёт.');});}}/>
+   {deleting===item.order_id?<><Text style={s.body}>Удалить этот разбор из личного кабинета?</Text><Button title="Да, удалить разбор" busy={busy} onPress={()=>void deleteOrder(item.order_id)}/><Button secondary title="Отмена" disabled={busy} onPress={()=>setDeleting(null)}/></>:<Button secondary title="Удалить разбор" disabled={busy} onPress={()=>setDeleting(item.order_id)}/>}
+  </View>)}</View>
  </Screen>;
 }

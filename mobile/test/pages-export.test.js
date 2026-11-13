@@ -26,3 +26,15 @@ test('Pages serves every static mobile route after a direct visit or reload', as
   await walk(path.join(root,'mobile/src/app'));
  } finally {await fs.rm(output,{recursive:true,force:true});}
 });
+
+test('Custom domain export serves root assets and root PWA scope', async()=>{
+ const root=path.resolve(__dirname,'../..');
+ const output=await fs.mkdtemp(path.join(os.tmpdir(),'numerom-domain-routes-'));
+ try {
+  await fs.writeFile(path.join(output,'index.html'),'<html lang="en"><head></head><body><script src="/_expo/entry.js"></script></body></html>');
+  execFileSync(process.execPath,[path.join(root,'scripts/prepare-mobile-pages.mjs'),output],{env:{...process.env,EXPO_PUBLIC_WEB_BASE_PATH:''}});
+  const manifest=JSON.parse(await fs.readFile(path.join(output,'manifest.webmanifest'),'utf8'));
+  assert.equal(manifest.scope,'/');assert.equal(manifest.start_url,'/');
+  assert.match(await fs.readFile(path.join(output,'profile/index.html'),'utf8'),/src="\/_expo\/entry.js"/);
+ } finally {await fs.rm(output,{recursive:true,force:true});}
+});

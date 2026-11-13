@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import requests
 from dotenv import dotenv_values
-from runtime_config import ROOT, CONFIG, atomic_write, sign_config
+from runtime_config import ROOT, CONFIG, atomic_write, sign_config, valid_origin
 from numerom_services import RUNTIME, restart
 from stripe_test_environment import sync_test_webhook
 
@@ -38,6 +38,10 @@ def healthy(origin, local=False):
     return probe(origin, local) == 'ready'
 
 def tunnel_url():
+    pinned=dotenv_values(ENV).get('NUMEROM_PUBLIC_ORIGIN')
+    if pinned:
+        if not valid_origin(pinned):raise ValueError('Invalid permanent public origin')
+        return pinned
     path = RUNTIME/'managed-tunnel.log'
     if not path.exists(): return None
     with path.open('rb') as stream:
@@ -101,7 +105,11 @@ def check(state):
     url=tunnel_url()
     if not url or not healthy(url):
         failures['tunnel']=failures.get('tunnel',0)+1
-        if failures['tunnel']>=3: restart('tunnel');failures['tunnel']=0
+        if failures['tunnel']>=3:
+            if dotenv_values(ENV).get('NUMEROM_PUBLIC_ORIGIN'):
+                subprocess.run(['launchctl','kickstart','-k',f'gui/{os.getuid()}/md.numerom.domain-bridge'],check=False,capture_output=True)
+            else:restart('tunnel')
+            failures['tunnel']=0
         state['public_ready']=False
         return
     failures['tunnel']=0

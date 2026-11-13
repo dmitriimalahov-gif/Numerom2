@@ -26,3 +26,14 @@ test('uncommitted account switch cannot download or publish stale server reply',
 test('waiting analysis hides the audio count while preserving the server message',async()=>{const f=await setup({...pending,status:'waiting_analysis',message:'Работает локальная нейросеть'});try{assert.match(f.text,/Работает локальная нейросеть/);assert.doesNotMatch(f.text,/Готово аудиоглав/);assert.equal(f.source,undefined);assert.equal(document.querySelector('[data-preparing]'),null,'the report card animates the analysis, not a second copy here');}finally{await f.close();}});
 test('failed analysis exposes owner retry instead of an endless preparing state',async()=>{const f=await setup({...pending,status:'failed',stage:'analysis',message:'Смысловой разбор не прошёл проверку'});try{assert.equal(f.timers.size,0);assert.doesNotMatch(f.text,/Готово аудиоглав/);assert.equal(document.querySelector('[data-preparing]'),null,'a failure is not dressed up as progress');await f.click(/Повторить смысловой разбор/);assert.equal(f.calls.at(-1).options.method,'POST');assert.equal(f.calls.at(-1).url,`/full-reports/${id}/video`);assert.equal(f.source,undefined);}finally{await f.close();}});
 test('mobile reexports the shared private URL and expiry contract',()=>{const lib=require('../../packages/full-report/video-state');assert.equal(contract,lib);{assert.equal(lib.videoPollDelay(pending),30000);for(const url of ['http://api.example.invalid/api/student/report-video/a',origin+'/api/student/report-video/a?token=1','https://other.invalid/api/student/report-video/a',origin+'/api/student/report-video/a/b'])assert.throws(()=>lib.videoState({...ready,url},origin));const first=lib.retainVideo(null,ready,0);assert.equal(lib.retainVideo(first,{...ready,url:ready.url+'-new'},1000).url,ready.url);assert.equal(lib.retainVideo(first,{...ready,url:ready.url+'-new'},first.link_until+1).url,ready.url+'-new');}});
+
+test('authored 1.1x speed is accepted and unapproved speeds stay rejected',()=>{
+ assert.equal(contract.videoState({...ready,encoded_speed:1.1},origin).encoded_speed,1.1);
+ assert.throws(()=>contract.videoState({...ready,encoded_speed:1.3},origin));
+});
+
+test('changing authored tempo replaces the old signed video link immediately',()=>{
+ const previous={...ready,encoded_speed:1.2,link_until:100000};
+ const next={...ready,encoded_speed:1.1,url:origin+'/api/student/report-video/new',download_url:origin+'/api/student/report-video/new-download'};
+ assert.equal(contract.retainVideo(previous,next,1000).url,next.url);
+});
