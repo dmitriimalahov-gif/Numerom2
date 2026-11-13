@@ -35,6 +35,7 @@ jobs:
         working-directory: mobile
       - run: npm run typecheck && npm test
         working-directory: mobile
+      - run: python3 scripts/fetch-web-build-assets.py
       - run: npx expo export --platform web --output-dir dist-domain --clear
         working-directory: mobile
       - run: |
