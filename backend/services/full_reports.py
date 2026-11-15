@@ -307,7 +307,8 @@ class FullReports:
         user = await _student(self.db, user_id)
         if not isinstance(order_id, str) or not re.fullmatch('[a-f0-9]{64}', order_id):
             raise HTTPException(404, 'Отчёт не найден в вашем аккаунте')
-        order = await self.db.full_report_orders.find_one({'_id': order_id, 'user_id': user_id})
+        order = await self.db.full_report_orders.find_one(
+            {'_id': order_id, 'user_id': user_id, 'deleted_by_owner_at': {'$exists': False}})
         if not order:
             raise HTTPException(404, 'Отчёт не найден в вашем аккаунте')
         if order.get('payment_provider') != 'telegram' and order['livemode'] != self.config.live:
@@ -392,13 +393,44 @@ class FullReports:
 
     async def history(self, user_id):
         await _student(self.db, user_id)
-        rows = await self.db.full_report_orders.find({'user_id': user_id, '$or': [{'livemode': self.config.live}, {'payment_provider': 'telegram'}]}, {'report.sections': 0, 'report.raw': 0, 'report.narration': 0, 'report.summary': 0, 'report.profile_snapshot': 0, 'profile_snapshot.issues': 0, 'profile_snapshot.current_location': 0, 'profile_snapshot.birth_location': 0, 'revisions.report': 0, 'revisions.profile_snapshot': 0}).sort('created_at', -1).limit(50).to_list(50)
+        rows = await self.db.full_report_orders.find({'user_id': user_id, 'deleted_by_owner_at': {'$exists': False}, '$or': [{'livemode': self.config.live}, {'payment_provider': 'telegram'}]}, {'report.sections': 0, 'report.raw': 0, 'report.narration': 0, 'report.summary': 0, 'report.profile_snapshot': 0, 'profile_snapshot.issues': 0, 'profile_snapshot.current_location': 0, 'profile_snapshot.birth_location': 0, 'revisions.report': 0, 'revisions.profile_snapshot': 0}).sort('created_at', -1).limit(50).to_list(50)
         return {'orders': [self.public(order) for order in rows]}
 
-    async def cancel(self, user_id, order_id):
+    async def delete(self, user_id, order_id):
+        await _student(self.db, user_id)
+        if not isinstance(order_id, str) or not re.fullmatch('[a-f0-9]{64}', order_id):
+            raise HTTPException(404, 'Отчёт не найден в вашем аккаунте')
+        order = await self.db.full_report_orders.find_one(
+            {'_id': order_id, 'user_id': user_id, 'deleted_by_owner_at': {'$exists': False}})
+        if not order:
+            raise HTTPException(404, 'Отчёт не найден в вашем аккаунте')
+        if order.get('state') not in ('paid', 'expired', 'failed'):
+            await self.cancel(user_id, order_id, materialize_report=False)
+            order = await self.db.full_report_orders.find_one(
+                {'_id': order_id, 'user_id': user_id, 'deleted_by_owner_at': {'$exists': False}})
+            if not order:
+                raise HTTPException(404, 'Отчёт не найден в вашем аккаунте')
+            if order.get('state') not in ('paid', 'expired', 'failed'):
+                raise HTTPException(409, 'Оплата ещё не отменена. Разбор оставлен в списке.')
+        result = await self.db.full_report_orders.update_one(
+            {'_id': order_id, 'user_id': user_id, 'state': order['state'],
+             'deleted_by_owner_at': {'$exists': False}},
+            {'$set': {'deleted_by_owner_at': datetime.utcnow()},
+             '$unset': {'report': '', 'revisions': '', 'profile_snapshot': '', 'profile_fingerprint': '',
+                        'checkout_profile_fingerprint': '', 'checkout_use_profile': '', 'birth_date': '',
+                        'as_of_date': '', 'report_created_at': '', 'revision_created_at': '',
+                        'analysis_status': ''}})
+        if not result.matched_count:
+            latest = await self.db.full_report_orders.find_one({'_id': order_id, 'user_id': user_id})
+            if latest and latest.get('deleted_by_owner_at'):
+                return {'deleted': True, 'order_id': order_id}
+            raise HTTPException(409, 'Статус оплаты изменился. Обновите список и повторите удаление.')
+        return {'deleted': True, 'order_id': order_id}
+
+    async def cancel(self, user_id, order_id, *, materialize_report=True):
         _, order = await self.owned(user_id, order_id)
         if order['state'] == 'paid':
-            return self.public(await self.materialize(order), True)
+            return self.public(await self.materialize(order), True) if materialize_report else self.public(order, True)
         if order.get('payment_provider') == 'telegram':
             await self.db.telegram_orders.update_one({'_id': order_id, 'state': 'pending'}, {'$set': {'state': 'expired'}})
             await self.db.full_report_orders.update_one({'_id': order_id, 'state': 'pending'}, {'$set': {'state': 'expired'}})
@@ -412,14 +444,14 @@ class FullReports:
                 {'$set': {'state': 'expired', 'updated_at': datetime.utcnow()}})
             order = await self.db.full_report_orders.find_one({'_id': order['_id']})
             if order['state'] == 'paid':
-                return self.public(await self.materialize(order), True)
+                return self.public(await self.materialize(order), True) if materialize_report else self.public(order, True)
         if order.get('session_id'):
             try:
                 await self.provider.expire(order['session_id'])
             except Exception:
                 pass  # Paid sessions cannot expire; fetch authoritative state below.
             order = await self.reconcile(order)
-        return self.public(await self.materialize(order), True)
+        return self.public(await self.materialize(order), True) if materialize_report else self.public(order, True)
 
     async def narration_source(self, user_id, order_id):
         user, order = await self.owned(user_id, order_id)

@@ -30,6 +30,10 @@ def create_full_reports_router(db, service=None, narration=None, video=None):
     async def history(user=Depends(get_current_user)):
         return await reports.history(user['user_id'])
 
+    @router.delete('/{order_id}')
+    async def delete(order_id: str, user=Depends(get_current_user)):
+        return await reports.delete(user['user_id'], order_id)
+
     @router.get('/{order_id}')
     async def status(order_id: str, user=Depends(get_current_user)):
         return await reports.status(user['user_id'], order_id)
