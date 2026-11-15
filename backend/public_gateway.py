@@ -120,6 +120,7 @@ def _route(method, path):
     if method == 'GET' and re.fullmatch(r'/api/telegram/payments/orders/[a-f0-9]{64}', path):
         return 'read'
     if method=='POST' and re.fullmatch(r'/api/admin/mobile/reports/[a-f0-9]{64}/retry',path):return 'write'
+    if method=='DELETE' and re.fullmatch(r'/api/full-reports/[a-f0-9]{64}',path):return 'write'
     if method=='POST' and re.fullmatch(r'/api/full-reports/[a-f0-9]{64}/extend-profile',path):return 'write'
     if method=='GET' and re.fullmatch(r'/api/full-reports/[a-f0-9]{64}/revisions/[1-9][0-9]{0,5}',path):return 'read'
     if method in ('GET','POST') and re.fullmatch(r'/api/full-reports/[a-f0-9]{64}/video',path):return 'read' if method=='GET' else 'write'

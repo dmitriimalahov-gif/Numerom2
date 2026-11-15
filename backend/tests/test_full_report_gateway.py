@@ -17,11 +17,13 @@ class FullReportGateway(unittest.TestCase):
         self.assertEqual(_route('POST', f'/api/full-reports/{order}/narration/full-report-summary/access'), 'write')
         self.assertEqual(_route('GET', f'/api/full-reports/{order}/video'), 'read')
         self.assertEqual(_route('POST', f'/api/full-reports/{order}/video'), 'write')
+        self.assertEqual(_route('DELETE', f'/api/full-reports/{order}'), 'write')
+        self.assertIsNone(_route('DELETE', '/api/full-reports/all'))
         for method in ('GET', 'HEAD'):
             self.assertEqual(_route(method, '/api/student/report-video/signed.example.token'), 'media')
         self.assertIsNone(_route('POST', '/api/student/report-video/signed.example.token'))
         self.assertIsNone(_route('GET', '/api/student/report-video/../../secret'))
-        for method, path in [('DELETE',f'/api/full-reports/{order}'), ('GET','/api/full-reports/all'), ('POST',f'/api/full-reports/{order}/paid')]:
+        for method, path in [('GET','/api/full-reports/all'), ('POST',f'/api/full-reports/{order}/paid')]:
             self.assertIsNone(_route(method, path))
 
     def test_no_price_override_arbitrary_text_or_extra_fields(self):
