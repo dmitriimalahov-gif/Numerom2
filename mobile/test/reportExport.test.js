@@ -66,7 +66,7 @@ test('report PDF client posts the snapshot with its file name and accepts only a
  const file=await mod.exports.reportPdfUrl('<p>x</p>','10.01.1982 Иван');
  assert.equal(file.url,'https://api.numerom.test/api/student/report-pdf/t/a.pdf');assert.equal(file.filename,'10.01.1982 Иван.pdf');
  assert.ok(file.until>Date.now()+3500*1000&&file.until<=Date.now()+3540*1000,'a minute of margin before the link expires');
- assert.equal(JSON.stringify(calls),JSON.stringify([['/report-pdf',{method:'POST',body:{html:'<p>x</p>',filename:'10.01.1982 Иван'},timeoutMs:120000}]]));
+ assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['/report-pdf',{method:'POST',body:{html:'<p>x</p>',filename:'10.01.1982 Иван'},timeoutMs:120000}]]);
  mod.exports.registerReportPdf(async()=>({url:'javascript:alert(1)'}));
  await assert.rejects(mod.exports.reportPdfUrl('<p>x</p>'),/не вернул ссылку/);
 });

@@ -21,8 +21,11 @@ async function setup(options={}){
  const api={request:async(url,request={})=>{calls.push({url,request});return handler(url,request);}};
  const Box=({children})=>React.createElement('div',null,children);
  const Button=({title,onPress,disabled,busy})=>React.createElement('button',{onClick:onPress,disabled:disabled||busy},title);
+ class AnimatedValue{constructor(value){this.value=value;}setValue(value){this.value=value;}stopAnimation(callback){callback?.(this.value);}}
+ const Animated={Value:AnimatedValue,View:Box,spring:(value,options)=>({start:()=>value.setValue(options.toValue)})};
+ const PanResponder={create:handlers=>({panHandlers:handlers})};
  const deps={react:React,'react/jsx-runtime':require('react/jsx-runtime'),
-  'react-native':{Text:Box,View:Box,Platform:{OS:'ios'},Linking:{openURL:async url=>navigation.push(url)},AppState:{currentState:'active',addEventListener:()=>({remove(){}})}},
+  'react-native':{Text:Box,View:Box,Pressable:({children,onPress})=>React.createElement('button',{onClick:onPress},children),Animated,PanResponder,Platform:{OS:'ios'},Linking:{openURL:async url=>navigation.push(url)},AppState:{currentState:'active',addEventListener:()=>({remove(){}})}},
   '../../../packages/full-report':contract,
   '../components/ui':{Button,Card:Box,Field:({label,value,onChangeText,editable=true})=>React.createElement('input',{'aria-label':label,value,disabled:!editable,onChange:e=>onChangeText(e.target.value)}),Heading:({title})=>React.createElement('h1',null,title),Loading:()=>React.createElement('span',null,'Loading'),Notice:({message,onAction,action})=>React.createElement('div',{role:'alert'},message,onAction&&React.createElement(Button,{title:action,onPress:onAction})),Screen:Box,s:{}},
   '../components/full-report/ReportProfilePreview':{ReportProfilePreview:({birth,useProfile,onPreview})=>{React.useEffect(()=>onPreview({birth_date:birth,use_profile:useProfile,profile_fingerprint:'c'.repeat(64),available:[],excluded:[]}),[birth,useProfile,onPreview]);return null;}},
