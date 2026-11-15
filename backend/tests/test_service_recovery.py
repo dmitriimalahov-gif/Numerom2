@@ -36,7 +36,7 @@ class ServiceRecoveryTests(unittest.TestCase):
 
     def test_public_health_is_allowed_without_opening_user_routes(self):
         async def upstream(request): return httpx.Response(200,json={'status':'ok','service':'numerom'})
-        client=TestClient(create_public_gateway(['https://dmitriimalahov-gif.github.io'],transport=httpx.MockTransport(upstream)))
+        client=TestClient(create_public_gateway(['https://1.numer.om'],transport=httpx.MockTransport(upstream)))
         self.assertEqual(client.get('/api/health').status_code,200)
         self.assertEqual(client.post('/api/health').status_code,404)
         self.assertEqual(client.get('/api/user/profile-v2').status_code,401)

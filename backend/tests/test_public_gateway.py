@@ -9,7 +9,7 @@ import httpx
 from starlette.testclient import TestClient
 from public_gateway import create_public_gateway
 
-ORIGIN = 'https://dmitriimalahov-gif.github.io'
+ORIGIN = 'https://1.numer.om'
 
 
 class PublicGatewayContracts(unittest.TestCase):

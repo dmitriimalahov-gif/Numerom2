@@ -49,7 +49,7 @@ class MobileAdminForwarding(unittest.TestCase):
             self.forwarded.append(request)
             return httpx.Response(self.status, json={'detail': 'private upstream diagnostic'})
         self.client = TestClient(create_public_gateway(
-            ['https://dmitriimalahov-gif.github.io'], transport=httpx.MockTransport(upstream)))
+            ['https://1.numer.om'], transport=httpx.MockTransport(upstream)))
         self.addCleanup(self.client.close)
         self.auth = {'Authorization': 'Bearer synthetic-admin'}
 

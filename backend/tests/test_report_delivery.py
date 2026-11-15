@@ -20,8 +20,8 @@ ORDER = 'a' * 64
 
 class AppUrlTests(unittest.TestCase):
     def test_link_comes_from_the_app_the_reset_link_opens(self):
-        with patch.dict(os.environ, {'PASSWORD_RESET_URL': 'https://example.github.io/numerom-app/reset-password/'}, clear=True):
-            self.assertEqual(app_url(), 'https://example.github.io/numerom-app')
+        with patch.dict(os.environ, {'PASSWORD_RESET_URL': 'https://1.numer.om/reset-password/'}, clear=True):
+            self.assertEqual(app_url(), 'https://1.numer.om')
         with patch.dict(os.environ, {'PUBLIC_APP_URL': 'https://app.example.com/', 'PASSWORD_RESET_URL': 'https://x.example/reset-password/'}, clear=True):
             self.assertEqual(app_url(), 'https://app.example.com')
         for unsafe in ('http://example.com/', 'https://user:pass@example.com/', 'https://example.com/?next=evil'):

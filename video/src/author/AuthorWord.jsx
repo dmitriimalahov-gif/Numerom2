@@ -305,7 +305,7 @@ function Outro({t, range, end}) {
       transform: g.portrait ? `translateY(${(1 - card) * 40}px)` : `translateX(${(1 - card) * 40}px)`}}>
       <div style={{color: C.navy, fontSize: g.portrait ? 52 : 48, fontWeight: 800, lineHeight: 1.15}}>Начните с авторских схем</div>
       <div style={{color: C.muted, fontSize: 28, marginTop: 14}}>или введите дату рождения</div>
-      <div style={{color: C.accent, fontSize: g.portrait ? 24 : 26, marginTop: 30, fontWeight: 700}}>dmitriimalahov-gif.github.io/numerom-app</div>
+      <div style={{color: C.accent, fontSize: g.portrait ? 24 : 26, marginTop: 30, fontWeight: 700}}>1.numer.om</div>
     </div>
   </Scene>;
 }

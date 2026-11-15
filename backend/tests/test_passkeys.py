@@ -1,5 +1,6 @@
 """Software authenticator tests: real P-256 signatures, no mocked verifier."""
 import hashlib,json,os,secrets,sys,unittest,uuid
+from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import cbor2
@@ -34,6 +35,12 @@ class Contracts(unittest.TestCase):
   self.assertEqual(_route('POST','/api/auth/passkeys/options'),'login')
   self.assertTrue(_valid_body('/api/auth/passkeys/options',{}))
   self.assertFalse(_valid_body('/api/auth/passkeys/options',{'user_id':'victim'}))
+ def test_default_passkey_entry_is_only_the_official_domain(self):
+  with patch.dict(os.environ,{},clear=True):
+   service=Passkeys(None)
+  self.assertEqual(service.origin('https://1.numer.om'),('https://1.numer.om','1.numer.om'))
+  with self.assertRaises(HTTPException):
+   service.origin('https://dmitriimalahov-gif.github.io')
 
 @unittest.skipUnless(os.getenv('NUMEROM_TEST_MONGO_URL'),'isolated Mongo only')
 class PasskeyTests(unittest.IsolatedAsyncioTestCase):

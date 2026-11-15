@@ -32,7 +32,7 @@ def _fetch_city(latitude, longitude):
     query = urlencode({'format': 'jsonv2', 'lat': latitude, 'lon': longitude,
                        'zoom': 10, 'addressdetails': 1, 'layer': 'address', 'accept-language': 'ru'})
     request = Request(endpoint + '?' + query, headers={
-        'User-Agent': 'NumerOM/1.0 (https://dmitriimalahov-gif.github.io/numerom-app/)',
+        'User-Agent': 'NumerOM/1.0 (https://1.numer.om/)',
         'Accept': 'application/json'})
     opener = build_opener(ProxyHandler({}), _NoRedirect(),
                          HTTPSHandler(context=ssl.create_default_context(cafile=certifi.where())))

@@ -1,5 +1,4 @@
 """Recover NumerOM and publish only its signed endpoint, never credentials or source."""
-import base64
 import fcntl
 import json
 import os
@@ -14,8 +13,7 @@ from runtime_config import ROOT, CONFIG, atomic_write, sign_config, valid_origin
 from numerom_services import RUNTIME, restart
 from stripe_test_environment import sync_test_webhook
 
-REPOSITORY = 'dmitriimalahov-gif/numerom-app'
-PUBLIC_CONFIG = 'https://dmitriimalahov-gif.github.io/numerom-app/runtime-config.json'
+PUBLIC_CONFIG = 'https://1.numer.om/runtime-config.json'
 ENV = ROOT/'backend/.env'
 STATE = RUNTIME/'watchdog-state.json'
 URL_RE = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
@@ -56,24 +54,11 @@ def update_environment(url):
     atomic_write(ENV, '\n'.join(lines)+f"\nPUBLIC_API_URL='{url}'\n")
     return True
 
-def gh_api(args, payload=None):
-    result = subprocess.run(['/opt/homebrew/bin/gh','api',*args], input=json.dumps(payload) if payload else None,
-                            text=True, capture_output=True, timeout=45)
-    if result.returncode: raise RuntimeError('GitHub publication failed')
-    return json.loads(result.stdout)
-
 def publish_config():
-    endpoint = f'repos/{REPOSITORY}/contents/runtime-config.json'
-    content = CONFIG.read_bytes()
-    try: current = gh_api([endpoint])
-    except RuntimeError:
-        # Distinguish missing file from authorization/network errors before creating it.
-        gh_api([f'repos/{REPOSITORY}'])
-        current = None
-    if current and base64.b64decode(current['content']) == content: return
-    body = {'message':'Update signed NumerOM server address','content':base64.b64encode(content).decode(),'branch':'main'}
-    if current: body['sha'] = current['sha']
-    gh_api(['--method','PUT',endpoint,'--input','-'],body)
+    # The signed config is part of the reviewed 1.numer.om release. Never publish
+    # a runtime endpoint to GitHub Pages or another public host.
+    if not config_is_live():
+        raise RuntimeError('Signed endpoint config is not live on 1.numer.om')
 
 def config_is_live():
     try:

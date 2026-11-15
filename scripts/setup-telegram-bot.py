@@ -107,7 +107,7 @@ def main():
     print('Подключение NumerOM к боту, созданному в @BotFather. Токен не отправляется в чат.')
     token = getpass.getpass('Токен BotFather (ввод скрыт; Enter сохраняет прежний): ').strip()
     if token: values['TELEGRAM_BOT_TOKEN'] = token
-    values.setdefault('TELEGRAM_APP_URL', 'https://dmitriimalahov-gif.github.io/numerom-app')
+    values.setdefault('TELEGRAM_APP_URL', 'https://1.numer.om')
     config = TelegramConfig(values); config.require()
     identity = asyncio.run(BotAPI(config).call('getMe'))
     if not identity.get('is_bot') or str(identity.get('id')) != config.bot_id:

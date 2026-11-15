@@ -4,7 +4,7 @@ const passkeyPreference='numerom.passkey.autologin.v1';
 export const passkeyAutoEntryEnabled=()=>{try{return typeof window!=='undefined'&&window.localStorage.getItem(passkeyPreference)==='1';}catch{return false;}};
 export const rememberPasskeyForAutoEntry=()=>{try{if(typeof window!=='undefined')window.localStorage.setItem(passkeyPreference,'1');}catch{}}
 export const forgetPasskeyForAutoEntry=()=>{try{if(typeof window!=='undefined')window.localStorage.removeItem(passkeyPreference);}catch{}}
-export const currentPasskeyRpId=()=>{if(typeof window==='undefined')return null;const host=window.location.hostname;if(host==='1.numer.om')return '1.numer.om';if(host==='dmitriimalahov-gif.github.io')return host;return null;};
+export const currentPasskeyRpId=()=>{if(typeof window==='undefined')return null;const host=window.location.hostname;if(host==='1.numer.om')return '1.numer.om';return null;};
 const decode=(value:string)=>Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
 const encode=(value:ArrayBuffer|null)=>value?btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''):null;
 type Ceremony={challenge_id:string;options:any};

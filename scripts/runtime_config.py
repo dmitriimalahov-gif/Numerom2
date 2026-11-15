@@ -48,8 +48,8 @@ def initialize():
             stream.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     key = serialization.load_pem_private_key(KEY.read_bytes(), password=None)
     public = key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint).hex()
-    trust = {'publicKey': public, 'configUrl': 'https://dmitriimalahov-gif.github.io/numerom-app/runtime-config.json'}
-    if TRUST.exists() and json.loads(TRUST.read_text()) != trust:
+    trust = {'publicKey': public, 'configUrl': 'https://1.numer.om/runtime-config.json'}
+    if TRUST.exists() and json.loads(TRUST.read_text()).get('publicKey') != public:
         raise RuntimeError('Existing app public key differs; refusing silent key rotation')
     atomic_write(TRUST, json.dumps(trust, indent=2) + '\n', 0o644)
     return key

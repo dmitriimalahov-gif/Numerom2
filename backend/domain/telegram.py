@@ -22,7 +22,7 @@ class TelegramConfig:
         self.token = env.get('TELEGRAM_BOT_TOKEN', '')
         self.enabled = bool(re.fullmatch(r'[0-9]{5,20}:[A-Za-z0-9_-]{20,100}', self.token))
         self.bot_id = self.token.split(':', 1)[0] if self.enabled else ''
-        self.app_url = env.get('TELEGRAM_APP_URL', 'https://dmitriimalahov-gif.github.io/numerom-app').rstrip('/')
+        self.app_url = env.get('TELEGRAM_APP_URL', 'https://1.numer.om').rstrip('/')
         url = urlsplit(self.app_url)
         if url.scheme != 'https' or not url.hostname or url.username or url.password or url.query or url.fragment:
             raise ValueError('TELEGRAM_APP_URL must be an HTTPS application URL')

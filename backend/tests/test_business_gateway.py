@@ -15,7 +15,7 @@ class BusinessGatewayTests(unittest.TestCase):
         async def upstream(request):
             self.forwarded.append(request)
             return httpx.Response(200,json={'ok':True})
-        self.client=TestClient(create_public_gateway(['https://dmitriimalahov-gif.github.io'],transport=httpx.MockTransport(upstream),clock=lambda:self.clock))
+        self.client=TestClient(create_public_gateway(['https://1.numer.om'],transport=httpx.MockTransport(upstream),clock=lambda:self.clock))
         self.addCleanup(self.client.close)
         self.auth={'Authorization':'Bearer synthetic'}
 

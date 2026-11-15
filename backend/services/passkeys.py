@@ -18,7 +18,7 @@ class Passkeys:
         self.db=db
         self.rp_id=rp_id or os.getenv('PASSKEY_RP_ID')
         self.origins=origins or [value.strip() for value in os.getenv(
-            'PASSKEY_ORIGINS','https://1.numer.om,https://dmitriimalahov-gif.github.io').split(',') if value.strip()]
+            'PASSKEY_ORIGINS','https://1.numer.om').split(',') if value.strip()]
 
     def origin(self,origin):
         if origin not in self.origins:raise HTTPException(403,'Этот адрес не настроен для ключей доступа')
@@ -30,8 +30,6 @@ class Passkeys:
             rp_id='1.numer.om'
         elif (host or '').endswith('.numer.om'):
             rp_id='numer.om'
-        elif host=='dmitriimalahov-gif.github.io' or (host or '').endswith('.dmitriimalahov-gif.github.io'):
-            rp_id='dmitriimalahov-gif.github.io'
         else:
             raise HTTPException(503,'Проверьте домен ключей доступа')
         if host!=rp_id and not (host or '').endswith('.'+rp_id):raise HTTPException(503,'Проверьте домен ключей доступа')

@@ -208,7 +208,7 @@ class GatewayLocationTests(unittest.TestCase):
         def upstream(request):
             forwarded.append(request)
             return httpx.Response(200,json={'city':'Кишинёв, Молдова',**COORDS,'timezone':'Europe/Chisinau'})
-        with TestClient(create_public_gateway(['https://dmitriimalahov-gif.github.io'],transport=httpx.MockTransport(upstream))) as client:
+        with TestClient(create_public_gateway(['https://1.numer.om'],transport=httpx.MockTransport(upstream))) as client:
             self.assertEqual(client.post(path,json=COORDS).status_code,401)
             self.assertEqual(forwarded,[])
             auth={'Authorization':'Bearer synthetic-token'}

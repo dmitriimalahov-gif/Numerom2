@@ -4,8 +4,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const output = path.resolve(process.argv[2] || 'mobile/dist-pages');
-const base = process.env.EXPO_PUBLIC_WEB_BASE_PATH ?? '/numerom-app';
-if (base && !/^\/[a-zA-Z0-9_-]+$/.test(base)) throw new Error('Invalid Pages path');
+const base = process.env.EXPO_PUBLIC_WEB_BASE_PATH ?? '';
+if (base && !/^\/[a-zA-Z0-9_-]+$/.test(base)) throw new Error('Invalid web base path');
 const indexPath = path.join(output, 'index.html');
 let html = await fs.readFile(indexPath, 'utf8');
 if (!html.includes('name="numerom-telegram"')) html = html.replace('</head>', '<meta name="numerom-telegram" content="1"/></head>');
@@ -37,7 +37,7 @@ for (const route of ['home','numbers','full-report','relationships','number-tool
 }
 await fs.writeFile(path.join(output, '404.html'), html);
 await fs.writeFile(path.join(output, '.nojekyll'), '');
-await fs.writeFile(path.join(output, 'README.md'), `# NumerOM Mobile\n\nПубличная браузерная версия: https://dmitriimalahov-gif.github.io${base}/\n\nЭтот репозиторий содержит только собранный интерфейс для iPhone, Android и браузера. Подписанные IPA/APK будут выпущены отдельно. Сервер пилота работает на компьютере владельца. Службы автоматически перезапускаются; приложение получает новый HTTPS-адрес из подписанного runtime-config.json без смены ссылки. Во время отключения компьютера серверные функции недоступны.\n\nБаза пользователей, серверный код, ключи и пароли в этот репозиторий не включены.\n`);
+await fs.writeFile(path.join(output, 'README.md'), `# NumerOM Mobile\n\nПубличная браузерная версия: https://1.numer.om${base}/\n\nЭтот репозиторий содержит только собранный интерфейс для iPhone, Android и браузера. Подписанные IPA/APK будут выпущены отдельно. Сервер пилота работает на компьютере владельца. Службы автоматически перезапускаются; приложение получает новый HTTPS-адрес из подписанного runtime-config.json без смены ссылки. Во время отключения компьютера серверные функции недоступны.\n\nБаза пользователей, серверный код, ключи и пароли в этот репозиторий не включены.\n`);
 const forbidden = /(?:\.env(?:\.|$)|\.map$|\.pem$|\.key$|\.sqlite(?:3)?$|credentials|token\.json|^server\.py$)/i;
 let files = 0, bytes = 0;
 async function audit(folder) {

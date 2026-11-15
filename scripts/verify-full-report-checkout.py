@@ -26,7 +26,7 @@ async def main(action):
     mongo=AsyncIOMotorClient(os.environ['MONGO_URL'],serverSelectionTimeoutMS=5000)
     db=mongo[os.environ['MONGODB_DATABASE']]
     provider=StripeProvider(config)
-    async with httpx.AsyncClient(timeout=30,headers={'Origin':'https://dmitriimalahov-gif.github.io'}) as client:
+    async with httpx.AsyncClient(timeout=30,headers={'Origin':'https://1.numer.om'}) as client:
         if action=='prepare':
             if STATE.exists():raise RuntimeError('Finish or clean up the previous QA account first')
             if not config.enabled:raise RuntimeError('Configured Stripe sandbox is unavailable')
