@@ -4,7 +4,7 @@ import {File,Paths} from 'expo-file-system';
 import {Linking} from 'react-native';
 import {reportName} from './reportName';
 /** Native printing renders self-contained HTML locally; nothing is uploaded. */
-export async function deliverReport(html:string,options:{isCurrent?:()=>boolean;filename?:string}={}):Promise<void>{
+export async function deliverReport(html:string,options:{isCurrent?:()=>boolean;filename?:string;orderId?:string}={}):Promise<void>{
  const ensureCurrent=()=>{if(options.isCurrent&&!options.isCurrent())throw new Error('Экспорт отменён');};
  ensureCurrent();
  if(!await Sharing.isAvailableAsync()){

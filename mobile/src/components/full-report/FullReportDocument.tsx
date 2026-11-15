@@ -16,8 +16,8 @@ export function FullReportDocument({order,archived=false}:{order:FullReportOrder
   <Card tinted><Text style={s.title}>Главное в вашем разборе</Text>{report.summary.map((p,n)=><Text selectable key={n} style={s.body}>{p}</Text>)}{report.highlights?.map(group=><View key={group.id} style={{gap:8}}><Text style={s.label}>{group.title}</Text>{group.items.map((item,n)=><View key={n} style={{gap:2}}><Text selectable style={s.body}>• {item.text}</Text><Text selectable style={s.small}>Основание в расчёте: {item.basis}</Text></View>)}</View>)}{!archived&&report.narration?.some(i=>i.id==='full-report-summary')&&<NarrationClip id="full-report-summary"/>}</Card>
   {order.report_status==='preparing'&&(order.analysis_status==='review'?<Card tinted><Text accessibilityLiveRegion="polite" style={s.body}>Подготовка смыслового разбора остановилась. Повторите её кнопкой ниже; новая оплата не нужна.</Text></Card>:<Card tinted><ReportPreparing birthDate={report.birth_date} message="Смысловой разбор по вашим расчётам готовится в локальной нейросети. Числа уже доступны ниже."/></Card>)}
   {!archived&&<FullReportVideo orderId={order.order_id} birthDate={report.birth_date}/>}
-  <SavedReportExport document={()=>fullReportHtml(order)}/>
-  <SavedReportExport document={()=>fullReportSchemesHtml(order)} title="Краткий отчёт: схемы и графики" note="Только схемы, диаграммы и графики — без пояснений и расшифровок."/>
+  <SavedReportExport document={()=>fullReportHtml(order)} orderId={order.order_id}/>
+  <SavedReportExport document={()=>fullReportSchemesHtml(order)} orderId={order.order_id} title="Краткий отчёт: схемы и графики" note="Только схемы, диаграммы и графики — без пояснений и расшифровок."/>
   <Text style={s.small}>Откройте раздел, чтобы увидеть результаты, схему и персональную аудиоглаву. Новые записи готовятся автоматически; готовые появляются здесь.</Text>
   <Button secondary title={opened.length===report.sections.length?'Свернуть все разделы':'Показать весь отчёт'} onPress={()=>setOpened(opened.length===report.sections.length?[]:report.sections.map(i=>i.id))}/>
   {report.sections.map(section=><Card key={section.id}>

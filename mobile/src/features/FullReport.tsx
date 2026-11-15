@@ -1,6 +1,7 @@
 import {telegramApp,openStarsInvoice} from '../lib/telegram';
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {AppState,Linking,Platform,ScrollView,Text,View} from 'react-native';
+import {Animated,AppState,Linking,PanResponder,Platform,Pressable,ScrollView,Text,View} from 'react-native';
+import type {ReactNode} from 'react';
 import {FullReportCatalog,FullReportOrder,fullReportCatalog,fullReportOrder,fullReportStatus,validBirthDate,checkoutUrl,starsCheckoutUrl} from '../../../packages/full-report';
 import {Button,Card,Field,Heading,Loading,Notice,Screen,s} from '../components/ui';
 import {FullReportDocument} from '../components/full-report/FullReportDocument';
@@ -100,11 +101,29 @@ export default function FullReport({orderId,cancelled=false}:{orderId?:string;ca
   </Card>}
   {!!order?.previous_revisions?.length&&<Card><Text style={s.title}>Версии разбора</Text><Button secondary title={`Текущая версия ${order.revision||1}`} onPress={()=>setArchive(null)}/>{order.previous_revisions.map(item=><Button key={item.revision} secondary title={`Версия ${item.revision}`} disabled={busy} onPress={()=>void openRevision(item.revision)}/>)}{archive&&<Text style={s.small}>Открыта сохранённая версия {archive.revision}. Аудио и видео доступны в текущей версии.</Text>}</Card>}
   {order?.report&&<FullReportDocument key={`${order.order_id}-${archive?.revision||order.revision||1}`} order={archive||order} archived={!!archive}/>}
-  <View style={{gap:12}}><Text style={s.title}>Мои разборы</Text>{history.length===0?<Text style={s.body}>Здесь появятся ваши заказы и готовые отчёты.</Text>:history.map(item=><View key={item.order_id} style={{gap:8}}><Button secondary title={`${item.person?`${item.person} · `:''}${item.birth_date} · ${fullReportStatus(item.status,item.report_status)}`} disabled={busy} onPress={()=>{setError('');void showOrder(item.order_id).then(found=>{
+  <View style={{gap:12}}><Text style={s.title}>Мои разборы</Text>{history.length===0?<Text style={s.body}>Здесь появятся ваши заказы и готовые отчёты.</Text>:history.map(item=><SwipeDeleteRow key={item.order_id} disabled={busy} onDelete={()=>setDeleting(item.order_id)}><View style={{gap:8}}><Button secondary title={`${item.person?`${item.person} · `:''}${item.birth_date} · ${fullReportStatus(item.status,item.report_status)}`} disabled={busy} onPress={()=>{setError('');void showOrder(item.order_id).then(found=>{
    // The opened report starts at the top of the page, not down at the list it was picked from.
    if(found&&isCurrent())requestAnimationFrame(()=>scroll.current?.scrollTo({y:0,animated:true}));
   }).catch(e=>{if(isCurrent())setError(e instanceof Error?e.message:'Не удалось открыть отчёт.');});}}/>
-   {deleting===item.order_id?<><Text style={s.body}>Удалить этот разбор из личного кабинета?</Text><Button title="Да, удалить разбор" busy={busy} onPress={()=>void deleteOrder(item.order_id)}/><Button secondary title="Отмена" disabled={busy} onPress={()=>setDeleting(null)}/></>:<Button secondary title="Удалить разбор" disabled={busy} onPress={()=>setDeleting(item.order_id)}/>}
-  </View>)}</View>
+   {deleting===item.order_id?<><Text style={s.body}>Удалить этот разбор из личного кабинета? Доступ к его аудио, видео и новым версиям прекратится.</Text><Button title="Да, удалить разбор" busy={busy} onPress={()=>void deleteOrder(item.order_id)}/><Button secondary title="Отмена" disabled={busy} onPress={()=>setDeleting(null)}/></>:<Text style={s.small}>Смахните влево, чтобы удалить разбор.</Text>}
+  </View></SwipeDeleteRow>)}</View>
  </Screen>;
+}
+
+function SwipeDeleteRow({children,onDelete,disabled}:{children:ReactNode;onDelete:()=>void;disabled:boolean}){
+ const translate=useRef(new Animated.Value(0)).current,open=useRef(false);
+ const close=(next:boolean)=>{open.current=next;Animated.spring(translate,{toValue:next?-92:0,useNativeDriver:true,bounciness:0}).start();};
+ const responder=useRef(PanResponder.create({
+  onMoveShouldSetPanResponder:(_,g)=>!disabled&&Math.abs(g.dx)>14&&Math.abs(g.dx)>Math.abs(g.dy)*1.2,
+  onPanResponderGrant:()=>translate.stopAnimation(),
+  onPanResponderMove:(_,g)=>translate.setValue(Math.max(-92,Math.min(0,(open.current?-92:0)+g.dx))),
+  onPanResponderRelease:(_,g)=>close(g.dx < -42||(open.current&&g.dx<24)),
+  onPanResponderTerminate:()=>close(open.current),
+ })).current;
+ return <View style={{position:'relative',overflow:'hidden',borderRadius:14}}>
+  <View style={{position:'absolute',top:0,right:0,bottom:0,width:92,alignItems:'center',justifyContent:'center',backgroundColor:'#a53f49'}}>
+   <Pressable accessibilityRole="button" accessibilityLabel="Удалить разбор" disabled={disabled} onPress={()=>{close(false);onDelete();}} style={{width:92,height:'100%',alignItems:'center',justifyContent:'center'}}><Text style={{color:'#fff',fontWeight:'700'}}>Удалить</Text></Pressable>
+  </View>
+  <Animated.View {...responder.panHandlers} accessibilityActions={[{name:'delete',label:'Удалить разбор'}]} onAccessibilityAction={event=>{if(event.nativeEvent.actionName==='delete'&&!disabled)onDelete();}} style={{transform:[{translateX:translate}],zIndex:1,backgroundColor:'#fff'}}>{children}</Animated.View>
+ </View>;
 }
