@@ -4,6 +4,7 @@ import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import {clientUrls} from './config';
 import {createBiometricVault} from './biometricVault';
+import {currentPasskeyRpId,passkeyAutoEntryEnabled,rememberPasskeyForAutoEntry} from './passkeys';
 import {appSessionLifecycle} from './appSessionLifecycle';
 import {createCreditNotice} from './creditNotice';
 import {createEndpointResolver} from './runtimeEndpoint';
@@ -33,7 +34,7 @@ const vault=createBiometricVault({plain:nativeStore(key),flag:nativeStore('numer
  available:()=>Platform.OS!=='web'&&Constants.appOwnership!=='expo'&&SecureStore.canUseBiometricAuthentication(),
 });
 const storage = Platform.OS==='web'?{
- get:async()=>window.sessionStorage.getItem(key),set:async(value:string)=>{window.sessionStorage.setItem(key,value);},remove:async()=>{window.sessionStorage.removeItem(key);},
+ get:async()=>{if(passkeyAutoEntryEnabled()){window.sessionStorage.removeItem(key);return null;}return window.sessionStorage.getItem(key);},set:async(value:string)=>{window.sessionStorage.setItem(key,value);},remove:async()=>{window.sessionStorage.removeItem(key);},
 }:vault;
 function createRuntime() {
   let session: SessionController;
@@ -55,10 +56,23 @@ function createRuntime() {
 const Context = createContext<ReturnType<typeof createRuntime> | null>(null);
 export function SessionProvider({children}: {children: React.ReactNode}) {
   const [runtime] = useState(createRuntime);
-  const [telegramReady,setTelegramReady]=useState(false),[telegramError,setTelegramError]=useState('');
+  const [telegramReady,setTelegramReady]=useState(false),[sessionReady,setSessionReady]=useState(false),[telegramError,setTelegramError]=useState('');
   useEffect(() => {let active=true;void(async()=>{
-   try{if(telegramContext())await loadTelegram();if(active){setTelegramReady(true);await runtime.session.restore();}}
+   try{if(telegramContext())await loadTelegram();}
    catch{if(active)setTelegramError('Не удалось подключить Telegram. Закройте мини-приложение и откройте его из меню бота снова.');}
+   if(!active)return;setTelegramReady(true);
+   try{
+    await runtime.session.restore();
+    if(active&&Platform.OS==='web'&&runtime.session.getSnapshot().status==='signedIn'){
+     const rpId=currentPasskeyRpId();
+     if(rpId){
+      try{
+       const result=await runtime.api.request<{keys:{active:boolean;rp_id?:string}[]}>('/user/passkeys');
+       if(active&&result.keys.some(item=>item.active&&(!item.rp_id||item.rp_id===rpId))){rememberPasskeyForAutoEntry();await runtime.session.signOut();}
+      }catch{/* Keep the established session if the optional passkey lookup is unavailable. */}
+     }
+    }
+   }finally{if(active)setSessionReady(true);}
   })();return()=>{active=false;};}, [runtime]);
   const state=useSyncExternalStore(runtime.session.subscribe,runtime.session.getSnapshot,runtime.session.getSnapshot);
   useEffect(()=>{
@@ -82,7 +96,7 @@ export function SessionProvider({children}: {children: React.ReactNode}) {
    if(Platform.OS==='web'){window.addEventListener('online',reconnect);document.addEventListener('visibilitychange',reconnect);}
    return()=>{active=false;clearInterval(timer);listener.remove();if(Platform.OS==='web'){window.removeEventListener('online',reconnect);document.removeEventListener('visibilitychange',reconnect);}};
   },[runtime]);
-  return <Context.Provider value={runtime}>{!telegramReady?<Screen>{telegramError?<Notice message={telegramError}/>:<Loading/>}</Screen>:state.status==='locked'?<BiometricLock/>:children}</Context.Provider>;
+  return <Context.Provider value={runtime}>{!telegramReady||!sessionReady?<Screen>{telegramError?<Notice message={telegramError}/>:<Loading/>}</Screen>:state.status==='locked'?<BiometricLock/>:children}</Context.Provider>;
 }
 export function useSession() {
   const runtime = useContext(Context);

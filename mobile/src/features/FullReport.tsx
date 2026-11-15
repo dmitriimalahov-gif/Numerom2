@@ -111,19 +111,20 @@ export default function FullReport({orderId,cancelled=false}:{orderId?:string;ca
 }
 
 function SwipeDeleteRow({children,onDelete,disabled}:{children:ReactNode;onDelete:()=>void;disabled:boolean}){
- const translate=useRef(new Animated.Value(0)).current,open=useRef(false);
+ const translate=useRef(new Animated.Value(0)).current,open=useRef(false),gestureStart=useRef(0);
  const close=(next:boolean)=>{open.current=next;Animated.spring(translate,{toValue:next?-92:0,useNativeDriver:true,bounciness:0}).start();};
+ const disabledNow=useRef(disabled);disabledNow.current=disabled;
  const responder=useRef(PanResponder.create({
-  onMoveShouldSetPanResponder:(_,g)=>!disabled&&Math.abs(g.dx)>14&&Math.abs(g.dx)>Math.abs(g.dy)*1.2,
-  onPanResponderGrant:()=>translate.stopAnimation(),
-  onPanResponderMove:(_,g)=>translate.setValue(Math.max(-92,Math.min(0,(open.current?-92:0)+g.dx))),
-  onPanResponderRelease:(_,g)=>close(g.dx < -42||(open.current&&g.dx<24)),
+  onMoveShouldSetPanResponder:(_,g)=>!disabledNow.current&&Math.abs(g.dx)>10&&Math.abs(g.dx)>Math.abs(g.dy)*1.15,
+  onPanResponderGrant:()=>translate.stopAnimation(value=>{gestureStart.current=value;}),
+  onPanResponderMove:(_,g)=>translate.setValue(Math.max(-92,Math.min(0,gestureStart.current+g.dx))),
+  onPanResponderRelease:(_,g)=>close(gestureStart.current+g.dx < -46||g.vx < -0.4),
   onPanResponderTerminate:()=>close(open.current),
  })).current;
  return <View style={{position:'relative',overflow:'hidden',borderRadius:14}}>
   <View style={{position:'absolute',top:0,right:0,bottom:0,width:92,alignItems:'center',justifyContent:'center',backgroundColor:'#a53f49'}}>
    <Pressable accessibilityRole="button" accessibilityLabel="Удалить разбор" disabled={disabled} onPress={()=>{close(false);onDelete();}} style={{width:92,height:'100%',alignItems:'center',justifyContent:'center'}}><Text style={{color:'#fff',fontWeight:'700'}}>Удалить</Text></Pressable>
   </View>
-  <Animated.View {...responder.panHandlers} accessibilityActions={[{name:'delete',label:'Удалить разбор'}]} onAccessibilityAction={event=>{if(event.nativeEvent.actionName==='delete'&&!disabled)onDelete();}} style={{transform:[{translateX:translate}],zIndex:1,backgroundColor:'#fff'}}>{children}</Animated.View>
+  <Animated.View {...responder.panHandlers} accessibilityActions={[{name:'delete',label:'Удалить разбор'}]} onAccessibilityAction={event=>{if(event.nativeEvent.actionName==='delete'&&!disabledNow.current)onDelete();}} style={{transform:[{translateX:translate}],zIndex:1,backgroundColor:'#fff',...(Platform.OS==='web'?{touchAction:'pan-y' as any}:{})}}>{children}</Animated.View>
  </View>;
 }
